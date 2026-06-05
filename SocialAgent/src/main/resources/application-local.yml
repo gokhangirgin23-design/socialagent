@@ -1,0 +1,47 @@
+# ===== LOCAL profil: H2 (PostgreSQL uyumlu mod) =====
+spring:
+  datasource:
+    # MODE=PostgreSQL -> SQL'ler prod ile uyumlu çalışsın
+    url: jdbc:h2:mem:socialagent;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  # H2 web console (geliştirme için): /h2-console
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+  jpa:
+    hibernate:
+      # Şema Flyway ile yönetilir
+      ddl-auto: none
+    show-sql: true
+
+  # Flyway local'de de çalışır (V1__init_schema.sql)
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  # Local'de RabbitMQ bağlantısı zorunlu değil; listener eklenince gerekecek
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+
+# ===== Local geliştirme: Google imza doğrulaması KAPALI =====
+# Gerçek Google id_token gerekmesin; token payload'u imzasız çözülür.
+# (Sadece local; prod/test'te true kalır.)
+app:
+  google:
+    verification-enabled: false
+  # Local'de RabbitMQ broker zorunlu olmasın: scheduler kapalı.
+  # Kuyruğu local'de denemek için broker (ör. docker rabbitmq) çalıştırıp true yap.
+  scheduler:
+    enabled: false
+  # Local'de worker (consumer) da kapalı; broker zorunlu olmasın (FAZ 5).
+  # Apify'ı local denemek için broker + APIFY_TOKEN verip true yap.
+  worker:
+    enabled: false

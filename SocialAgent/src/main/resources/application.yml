@@ -1,0 +1,110 @@
+# ===== Ortak ayarlar (tüm profiller) =====
+spring:
+  application:
+    name: SocialAgent
+  profiles:
+    # Aksi belirtilmezse local profil
+    default: local
+
+server:
+  port: 8080
+  # Reverse proxy arkasında doğru host/scheme için (airepo)
+  forward-headers-strategy: framework
+
+# Swagger UI yolu (kök URL buraya yönlenir)
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+# Actuator + Prometheus (airepo)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: always
+
+# ===== Uygulama bazlı ayarlar (FAZ 1: JWT + Google SSO) =====
+app:
+  jwt:
+    # PROD/TEST'te JWT_SECRET env'i zorunlu; local için güvenli olmayan varsayılan
+    secret: ${JWT_SECRET:local-dev-secret-degistir-min-32-karakter-0123456789}
+    # Access token ömrü (dakika)
+    access-token-expiration-minutes: ${JWT_ACCESS_MINUTES:30}
+    # Refresh token ömrü (gün)
+    refresh-token-expiration-days: ${JWT_REFRESH_DAYS:30}
+  google:
+    # Beklenen audience = OAuth client id (prod/test'te env ile verilir)
+    client-id: ${GOOGLE_CLIENT_ID:}
+    # Gerçek imza doğrulaması (local'de application-local.yml ile false yapılır)
+    verification-enabled: ${GOOGLE_VERIFICATION_ENABLED:true}
+  # ===== FAZ 4: RabbitMQ kuyruk adları (vhost profil bazlı yml'den) =====
+  messaging:
+    job-queue: ${JOB_QUEUE:socialagent.job.queue}
+    job-exchange: ${JOB_EXCHANGE:socialagent.job.exchange}
+    job-routing-key: ${JOB_ROUTING_KEY:socialagent.job}
+  # ===== FAZ 4: Scheduler tarama aralığı (ms) =====
+  scheduler:
+    enabled: ${SCHEDULER_ENABLED:true}
+    poll-interval-ms: ${SCHEDULER_POLL_INTERVAL_MS:30000}
+  # ===== FAZ 5: Apify scraping ayarları (D1) =====
+  apify:
+    # Apify API token (prod/test'te env ile verilir; boşsa scraping atlanır)
+    token: ${APIFY_TOKEN:}
+    base-url: ${APIFY_BASE_URL:https://api.apify.com/v2}
+    # Aktör id'leri yolda "~" ile yazılır (apify~actor-name)
+    profile-actor-id: ${APIFY_PROFILE_ACTOR:apify~instagram-search-scraper}
+    post-actor-id: ${APIFY_POST_ACTOR:apify~instagram-post-scraper}
+    # Sektör top-N (D1 -> 5) ve hesap başına son gönderi (-> 5)
+    top-profiles-limit: ${APIFY_TOP_PROFILES:5}
+    recent-posts-limit: ${APIFY_RECENT_POSTS:5}
+    # run-sync okuma zaman aşımı (sn)
+    timeout-seconds: ${APIFY_TIMEOUT_SECONDS:120}
+  # ===== FAZ 5: Worker (RabbitMQ consumer) =====
+  worker:
+    enabled: ${WORKER_ENABLED:true}
+  # ===== FAZ 6: AI analiz (LangChain4j) — TEXT->OpenAI, medya->Gemini (D3) =====
+  ai:
+    # AI analizini tümden açıp kapatma (local'de key zorunlu olmasın diye false yapılabilir)
+    enabled: ${AI_ENABLED:true}
+    openai:
+      # OpenAI API anahtarı (prod/test env ile; boşsa TEXT analizi atlanır)
+      api-key: ${OPENAI_API_KEY:}
+      model: ${OPENAI_MODEL:gpt-4o-mini}
+      temperature: ${OPENAI_TEMPERATURE:0.2}
+      timeout-seconds: ${OPENAI_TIMEOUT_SECONDS:60}
+    gemini:
+      # Gemini API anahtarı (prod/test env ile; boşsa medya analizi atlanır)
+      api-key: ${GEMINI_API_KEY:}
+      model: ${GEMINI_MODEL:gemini-2.0-flash}
+      temperature: ${GEMINI_TEMPERATURE:0.2}
+      timeout-seconds: ${GEMINI_TIMEOUT_SECONDS:60}
+  # ===== FAZ 8: Bildirim (mail + push) =====
+  # Rapor tamamlanınca notification kaydı her zaman yazılır; mail/push kanalları aşağıdaki
+  # bayraklarla açılır. SMTP verilmezse (spring.mail.host yok) mail otomatik atlanır.
+  notification:
+    # E-posta kanalı (prod'da SMTP env'leri verilince MAIL_ENABLED=true yap)
+    mail-enabled: ${MAIL_ENABLED:false}
+    # Push kanalı (FCM stub; cihaz token altyapısı eklenince açılır)
+    push-enabled: ${PUSH_ENABLED:false}
+    # Giden e-posta "from" adresi (boşsa SMTP varsayılanı)
+    from-address: ${MAIL_FROM:}
+
+# ===== FAZ 8: SMTP ayarları (opsiyonel) =====
+# spring.mail.host verildiğinde Spring Boot JavaMailSender bean'ini oluşturur.
+# Aşağıdaki blok env ile beslenir; MAIL_HOST verilmezse blok devreye girmez (mail atlanır).
+# Prod/test'te env üzerinden sağlayın: SPRING_MAIL_HOST, SPRING_MAIL_USERNAME, SPRING_MAIL_PASSWORD.
+#  spring:
+#    mail:
+#      host: ${MAIL_HOST:}
+#      port: ${MAIL_PORT:587}
+#      username: ${MAIL_USERNAME:}
+#      password: ${MAIL_PASSWORD:}
+#      properties:
+#        mail:
+#          smtp:
+#            auth: true
+#            starttls:
+#              enable: true

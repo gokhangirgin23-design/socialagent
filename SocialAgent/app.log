@@ -1,0 +1,96 @@
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::                (v4.0.6)
+
+2026-06-05T22:12:53.531+03:00  INFO 13684 --- [SocialAgent] [           main] com.api.SocialAgentApplication           : Starting SocialAgentApplication v0.0.1-SNAPSHOT using Java 21.0.10 with PID 13684 (C:\Users\Administrator\Desktop\WS\SocialAgent\target\SocialAgent-0.0.1-SNAPSHOT.jar started by Administrator in C:\Users\Administrator\Desktop\WS\SocialAgent)
+2026-06-05T22:12:53.541+03:00  INFO 13684 --- [SocialAgent] [           main] com.api.SocialAgentApplication           : The following 1 profile is active: "local"
+2026-06-05T22:12:54.439+03:00  INFO 13684 --- [SocialAgent] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-06-05T22:12:54.517+03:00  INFO 13684 --- [SocialAgent] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 60 ms. Found 12 JPA repository interfaces.
+2026-06-05T22:12:55.267+03:00  INFO 13684 --- [SocialAgent] [           main] o.s.boot.tomcat.TomcatWebServer          : Tomcat initialized with port 8080 (http)
+2026-06-05T22:12:55.284+03:00  INFO 13684 --- [SocialAgent] [           main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-06-05T22:12:55.284+03:00  INFO 13684 --- [SocialAgent] [           main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/11.0.21]
+2026-06-05T22:12:55.315+03:00  INFO 13684 --- [SocialAgent] [           main] b.w.c.s.WebApplicationContextInitializer : Root WebApplicationContext: initialization completed in 1731 ms
+2026-06-05T22:12:55.683+03:00  INFO 13684 --- [SocialAgent] [           main] org.hibernate.orm.jpa                    : HHH008540: Processing PersistenceUnitInfo [name: default]
+2026-06-05T22:12:55.714+03:00  INFO 13684 --- [SocialAgent] [           main] org.hibernate.orm.core                   : HHH000001: Hibernate ORM core version 7.2.12.Final
+2026-06-05T22:12:56.042+03:00  INFO 13684 --- [SocialAgent] [           main] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-06-05T22:12:56.070+03:00  INFO 13684 --- [SocialAgent] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Starting...
+2026-06-05T22:12:56.211+03:00  INFO 13684 --- [SocialAgent] [           main] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Added connection conn0: url=jdbc:h2:mem:socialagent user=SA
+2026-06-05T22:12:56.211+03:00  INFO 13684 --- [SocialAgent] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Start completed.
+2026-06-05T22:12:56.258+03:00  INFO 13684 --- [SocialAgent] [           main] org.hibernate.orm.connections.pooling    : HHH10001005: Database info:
+	Database JDBC URL [jdbc:h2:mem:socialagent]
+	Database driver: H2 JDBC Driver
+	Database dialect: H2Dialect
+	Database version: 2.4.240
+	Default catalog/schema: socialagent/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: 100
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+2026-06-05T22:12:56.884+03:00  INFO 13684 --- [SocialAgent] [           main] org.hibernate.orm.core                   : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-06-05T22:12:56.898+03:00  INFO 13684 --- [SocialAgent] [           main] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-06-05T22:12:56.914+03:00  WARN 13684 --- [SocialAgent] [           main] com.api.ai.AiAnalysisService             : OpenAI api-key tanımsız; TEXT/caption analizi atlanacak.
+2026-06-05T22:12:56.914+03:00  WARN 13684 --- [SocialAgent] [           main] com.api.ai.AiAnalysisService             : Gemini api-key tanımsız; IMAGE/VIDEO/CAROUSEL analizi atlanacak.
+2026-06-05T22:12:56.930+03:00  INFO 13684 --- [SocialAgent] [           main] com.api.apify.ApifyClient                : ApifyClient hazır: baseUrl=https://api.apify.com/v2, timeoutSeconds=120
+2026-06-05T22:12:57.023+03:00  INFO 13684 --- [SocialAgent] [           main] o.s.d.j.r.query.QueryEnhancerFactories   : Hibernate is in classpath; If applicable, HQL parser will be used.
+2026-06-05T22:12:57.695+03:00  INFO 13684 --- [SocialAgent] [           main] org.flywaydb.core.FlywayExecutor         : Database: jdbc:h2:mem:socialagent (H2 2.4)
+2026-06-05T22:12:57.704+03:00  WARN 13684 --- [SocialAgent] [           main] o.f.c.internal.database.base.Database    : Using H2 2.4.240 which is newer than the version Flyway has been verified with. The latest verified version of H2 is 2.3.232.
+2026-06-05T22:12:57.720+03:00  INFO 13684 --- [SocialAgent] [           main] o.f.c.i.s.JdbcTableSchemaHistory         : Schema history table "public"."flyway_schema_history" does not exist yet
+2026-06-05T22:12:57.736+03:00  INFO 13684 --- [SocialAgent] [           main] o.f.core.internal.command.DbValidate     : Successfully validated 7 migrations (execution time 00:00.013s)
+2026-06-05T22:12:57.736+03:00  INFO 13684 --- [SocialAgent] [           main] o.f.c.i.s.JdbcTableSchemaHistory         : Creating Schema History table "public"."flyway_schema_history" ...
+2026-06-05T22:12:57.751+03:00  INFO 13684 --- [SocialAgent] [           main] o.f.core.internal.command.DbMigrate      : Current version of schema "public": << Empty Schema >>
+2026-06-05T22:12:57.767+03:00  INFO 13684 --- [SocialAgent] [           main] o.f.core.internal.command.DbMigrate      : Migrating schema "public" to version "1 - init schema"
+2026-06-05T22:12:57.798+03:00  INFO 13684 --- [SocialAgent] [           main] o.f.core.internal.command.DbMigrate      : Migrating schema "public" to version "2 - seed sectors"
+2026-06-05T22:12:57.798+03:00  INFO 13684 --- [SocialAgent] [           main] o.f.core.internal.command.DbMigrate      : Migrating schema "public" to version "3 - add job queue tracking"
+2026-06-05T22:12:57.814+03:00  INFO 13684 --- [SocialAgent] [           main] o.f.core.internal.command.DbMigrate      : Migrating schema "public" to version "4 - social post sector index"
+2026-06-05T22:12:57.814+03:00  INFO 13684 --- [SocialAgent] [           main] o.f.core.internal.command.DbMigrate      : Migrating schema "public" to version "5 - add report scheduling"
+2026-06-05T22:12:57.829+03:00  INFO 13684 --- [SocialAgent] [           main] o.f.core.internal.command.DbMigrate      : Migrating schema "public" to version "6 - notification dashboard indexes"
+2026-06-05T22:12:57.829+03:00  INFO 13684 --- [SocialAgent] [           main] o.f.core.internal.command.DbMigrate      : Migrating schema "public" to version "7 - add refresh token index"
+2026-06-05T22:12:57.829+03:00  INFO 13684 --- [SocialAgent] [           main] o.f.core.internal.command.DbMigrate      : Successfully applied 7 migrations to schema "public", now at version v7 (execution time 00:00.032s)
+2026-06-05T22:12:57.923+03:00  WARN 13684 --- [SocialAgent] [           main] JpaBaseConfiguration$JpaWebConfiguration : spring.jpa.open-in-view is enabled by default. Therefore, database queries may be performed during view rendering. Explicitly configure spring.jpa.open-in-view to disable this warning
+2026-06-05T22:12:57.986+03:00  WARN 13684 --- [SocialAgent] [           main] .s.a.UserDetailsServiceAutoConfiguration : 
+
+Using generated security password: b43d7a13-dfad-4427-a54c-9b5fc3a116d5
+
+This generated password is for development use only. Your security configuration must be updated before running your application in production.
+
+2026-06-05T22:12:57.986+03:00  INFO 13684 --- [SocialAgent] [           main] r$InitializeUserDetailsManagerConfigurer : Global AuthenticationManager configured with UserDetailsService bean with name inMemoryUserDetailsManager
+2026-06-05T22:12:58.635+03:00  INFO 13684 --- [SocialAgent] [           main] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 3 endpoints beneath base path '/actuator'
+2026-06-05T22:12:58.703+03:00  INFO 13684 --- [SocialAgent] [           main] o.s.boot.tomcat.TomcatWebServer          : Tomcat started on port 8080 (http) with context path '/'
+2026-06-05T22:12:58.718+03:00  INFO 13684 --- [SocialAgent] [           main] com.api.SocialAgentApplication           : Started SocialAgentApplication in 5.57 seconds (process running for 6.022)
+2026-06-05T22:13:58.735+03:00  INFO 13684 --- [SocialAgent] [nio-8080-exec-1] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring DispatcherServlet 'dispatcherServlet'
+2026-06-05T22:13:58.752+03:00  INFO 13684 --- [SocialAgent] [nio-8080-exec-1] o.s.web.servlet.DispatcherServlet        : Initializing Servlet 'dispatcherServlet'
+2026-06-05T22:13:58.752+03:00  INFO 13684 --- [SocialAgent] [nio-8080-exec-1] o.s.web.servlet.DispatcherServlet        : Completed initialization in 0 ms
+2026-06-05T22:13:58.914+03:00  WARN 13684 --- [SocialAgent] [nio-8080-exec-1] com.api.security.GoogleTokenVerifier     : Google id_token imza doğrulaması KAPALI (sadece local/dev için olmalı)
+Hibernate: select ui1_0.user_id,ui1_0.active,ui1_0.created_date,ui1_0.email,ui1_0.full_name,ui1_0.google_id,ui1_0.profile_photo_url,ui1_0.sector_id,ui1_0.subsector_id,ui1_0.updated_date from user_info ui1_0 where ui1_0.user_id=?
+Hibernate: select rt1_0.refresh_token_id,rt1_0.active,rt1_0.created_date,rt1_0.expire_date,rt1_0.token,rt1_0.updated_date,rt1_0.user_id from refresh_token rt1_0 where rt1_0.refresh_token_id=?
+Hibernate: insert into user_info (active,created_date,email,full_name,google_id,profile_photo_url,sector_id,subsector_id,updated_date,user_id) values (?,?,?,?,?,?,?,?,?,?)
+Hibernate: insert into refresh_token (active,created_date,expire_date,token,updated_date,user_id,refresh_token_id) values (?,?,?,?,?,?,?)
+Hibernate: select ui1_0.user_id,ui1_0.active,ui1_0.created_date,ui1_0.email,ui1_0.full_name,ui1_0.google_id,ui1_0.profile_photo_url,ui1_0.sector_id,ui1_0.subsector_id,ui1_0.updated_date from user_info ui1_0 where ui1_0.user_id=?
+Hibernate: update user_info set active=?,created_date=?,email=?,full_name=?,google_id=?,profile_photo_url=?,sector_id=?,subsector_id=?,updated_date=? where user_id=?
+Hibernate: select ui1_0.user_id,ui1_0.active,ui1_0.created_date,ui1_0.email,ui1_0.full_name,ui1_0.google_id,ui1_0.profile_photo_url,ui1_0.sector_id,ui1_0.subsector_id,ui1_0.updated_date from user_info ui1_0 where ui1_0.user_id=?
+Hibernate: update user_info set active=?,created_date=?,email=?,full_name=?,google_id=?,profile_photo_url=?,sector_id=?,subsector_id=?,updated_date=? where user_id=?
+Hibernate: select usa1_0.user_social_account_id,usa1_0.account_name,usa1_0.active,usa1_0.created_date,usa1_0.platform,usa1_0.profile_url,usa1_0.updated_date,usa1_0.user_id from user_social_account usa1_0 where usa1_0.user_social_account_id=?
+Hibernate: insert into user_social_account (account_name,active,created_date,platform,profile_url,updated_date,user_id,user_social_account_id) values (?,?,?,?,?,?,?,?)
+Hibernate: select ma1_0.monitored_account_id,ma1_0.account_name,ma1_0.active,ma1_0.created_date,ma1_0.platform,ma1_0.updated_date from monitored_account ma1_0 where ma1_0.monitored_account_id=?
+Hibernate: select uma1_0.user_monitored_account_id,uma1_0.active,uma1_0.created_date,uma1_0.monitored_account_id,uma1_0.updated_date,uma1_0.user_id from user_monitored_account uma1_0 where uma1_0.user_monitored_account_id=?
+Hibernate: insert into monitored_account (account_name,active,created_date,platform,updated_date,monitored_account_id) values (?,?,?,?,?,?)
+Hibernate: insert into user_monitored_account (active,created_date,monitored_account_id,updated_date,user_id,user_monitored_account_id) values (?,?,?,?,?,?)
+Hibernate: select ui1_0.user_id,ui1_0.active,ui1_0.created_date,ui1_0.email,ui1_0.full_name,ui1_0.google_id,ui1_0.profile_photo_url,ui1_0.sector_id,ui1_0.subsector_id,ui1_0.updated_date from user_info ui1_0 where ui1_0.user_id=?
+Hibernate: update user_info set active=?,created_date=?,email=?,full_name=?,google_id=?,profile_photo_url=?,sector_id=?,subsector_id=?,updated_date=? where user_id=?
+Hibernate: select ui1_0.user_id,ui1_0.active,ui1_0.created_date,ui1_0.email,ui1_0.full_name,ui1_0.google_id,ui1_0.profile_photo_url,ui1_0.sector_id,ui1_0.subsector_id,ui1_0.updated_date from user_info ui1_0 where ui1_0.user_id=?
+Hibernate: update user_info set active=?,created_date=?,email=?,full_name=?,google_id=?,profile_photo_url=?,sector_id=?,subsector_id=?,updated_date=? where user_id=?
+Hibernate: select usa1_0.user_social_account_id,usa1_0.account_name,usa1_0.active,usa1_0.created_date,usa1_0.platform,usa1_0.profile_url,usa1_0.updated_date,usa1_0.user_id from user_social_account usa1_0 where usa1_0.user_social_account_id=?
+Hibernate: insert into user_social_account (account_name,active,created_date,platform,profile_url,updated_date,user_id,user_social_account_id) values (?,?,?,?,?,?,?,?)
+Hibernate: select uma1_0.user_monitored_account_id,uma1_0.active,uma1_0.created_date,uma1_0.monitored_account_id,uma1_0.updated_date,uma1_0.user_id from user_monitored_account uma1_0 where uma1_0.user_monitored_account_id=?
+Hibernate: update user_monitored_account set active=?,created_date=?,monitored_account_id=?,updated_date=?,user_id=? where user_monitored_account_id=?
+Hibernate: select uj1_0.user_job_id,uj1_0.active,uj1_0.analysis_mode,uj1_0.analysis_period_days,uj1_0.completed,uj1_0.created_date,uj1_0.current_count,uj1_0.job_period,uj1_0.queued,uj1_0.queued_date,uj1_0.repeat_count,uj1_0.selected_user_social_account_id,uj1_0.updated_date,uj1_0.user_id from user_job uj1_0 where uj1_0.user_job_id=?
+Hibernate: insert into user_job (active,analysis_mode,analysis_period_days,completed,created_date,current_count,job_period,queued,queued_date,repeat_count,selected_user_social_account_id,updated_date,user_id,user_job_id) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+2026-06-05T22:13:59.445+03:00  INFO 13684 --- [SocialAgent] [nio-8080-exec-1] com.api.service.ReportQueryService       : Rapor bulunamadı veya erişim yok: userId=4d7b6b77-595a-4122-9dca-0f9c0a23693f, reportId=00000000-0000-0000-0000-000000000000
