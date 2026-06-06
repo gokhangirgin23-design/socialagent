@@ -48,8 +48,9 @@ public class SecurityConfig {
 					"/h2-console/**",
 					"/auth/**",
 					"/api/ping",    // Uygulama canlılık kontrolü — kimlik doğrulaması gerekmez
-					"/sector/list"  // Sektör listesi kimlik doğrulaması gerektirmez (onboarding adım 3)
-				).permitAll()
+					"/sector/list",  // Sektör listesi kimlik doğrulaması gerektirmez (onboarding adım 3)
+					"/socialagent-test-console.html"
+						).permitAll()
 				// Geri kalan tüm uçlar kimlik doğrulaması ister
 				.anyRequest().authenticated()
 			)

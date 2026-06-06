@@ -99,38 +99,8 @@ public class SectorService {
 	}
 
 	/**
-	 * Kullanıcının sektörünü günceller.
-	 * Sektör değişince alt sektör sıfırlanır (CLAUDE.md Bölüm 7, adım 3).
-	 * Endpoint: POST /sector/select (güvenli)
-	 */
-	@Transactional
-	public DataResponse<Void> selectSector(UUID userId, UUID sectorId) {
-		// 1) Sektörün var olup olmadığını kontrol et (active=1)
-		Sector sector = findActiveSectorById(sectorId);
-		if (sector == null) {
-			// Geçersiz sektör id'si; iş anlamında bulunamadı
-			throw new ApiException(ResponseCode.NOT_FOUND, "Sektör bulunamadı: " + sectorId);
-		}
-
-		// 2) Kullanıcıyı JPA ile getir
-		UserInfo user = userInfoRepository.findById(userId)
-				.orElseThrow(() -> new ApiException(ResponseCode.NOT_FOUND, "Kullanıcı bulunamadı"));
-
-		// 3) Sektörü set et; sektör değişince alt sektör sıfırlanmalı
-		user.setSectorId(sectorId);
-		user.setSubsectorId(null); // sektör değişti, alt sektör artık geçersiz
-		user.setUpdatedDate(LocalDateTime.now());
-
-		// 4) JPA ile kaydet
-		userInfoRepository.save(user);
-
-		// 5) Veri döndürülmez, yalnızca başarı kodu
-		return DataResponse.of(ResponseCode.SUCCESS);
-	}
-
-	/**
 	 * Belirtilen sektöre ait aktif alt sektörleri isim sırasıyla listeler.
-	 * Endpoint: POST /subsector/list (güvenli)
+	 * Endpoint: POST /sector/listSubsectors (güvenli)
 	 */
 	@Transactional(readOnly = true)
 	public List<SubsectorDto> listSubsectors(UUID sectorId) {
@@ -148,12 +118,12 @@ public class SectorService {
 	}
 
 	/**
-	 * Kullanıcının alt sektörünü günceller.
+	 * Kullanıcının alt sektörünü kaydeder.
 	 * Alt sektörün, kullanıcının seçili sektörüne ait olduğu kontrol edilir.
-	 * Endpoint: POST /subsector/select (güvenli)
+	 * Endpoint: POST /sector/saveSubsector (güvenli)
 	 */
 	@Transactional
-	public DataResponse<Void> selectSubsector(UUID userId, UUID subsectorId) {
+	public DataResponse<Void> saveSubsector(UUID userId, UUID subsectorId) {
 		// 1) Alt sektörü native sorgu ile doğrula
 		Subsector subsector = findActiveSubsectorById(subsectorId);
 		if (subsector == null) {
@@ -164,12 +134,8 @@ public class SectorService {
 		UserInfo user = userInfoRepository.findById(userId)
 				.orElseThrow(() -> new ApiException(ResponseCode.NOT_FOUND, "Kullanıcı bulunamadı"));
 
-		// 3) Kullanıcının seçili sektörü ile alt sektörün sector_id'si eşleşmeli
-		if (user.getSectorId() == null || !user.getSectorId().equals(subsector.getSectorId())) {
-			// Alt sektör, kullanıcının sektörüne ait değil
-			throw new ApiException(ResponseCode.VALIDATION_ERROR,
-					"Seçilen alt sektör kullanıcının sektörüne ait değil");
-		}
+		// 3) Sektörü alt sektörden türet; subsector'ın ait olduğu sektör otomatik set edilir
+		user.setSectorId(subsector.getSectorId());
 
 		// 4) Alt sektörü set et ve kaydet
 		user.setSubsectorId(subsectorId);
@@ -183,20 +149,6 @@ public class SectorService {
 	// ============================================================
 	// Yardımcı native lookup'lar
 	// ============================================================
-
-	/**
-	 * Aktif sektörü id ile getirir; bulunamazsa null döner.
-	 */
-	private Sector findActiveSectorById(UUID sectorId) {
-		String sql = """
-				SELECT sector_id, name, active, created_date, updated_date
-				FROM sector
-				WHERE sector_id = ? AND active = 1
-				""";
-		List<Sector> rows = jdbcTemplate.query(sql, SECTOR_ROW_MAPPER, sectorId);
-		// Tek kayıt beklenir; yoksa null
-		return rows.isEmpty() ? null : rows.get(0);
-	}
 
 	/**
 	 * Aktif alt sektörü id ile getirir; bulunamazsa null döner.

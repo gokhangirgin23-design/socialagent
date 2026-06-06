@@ -12,7 +12,7 @@ import lombok.Setter;
  */
 @Getter
 @Setter
-public class SelectSubsectorRequest {
+public class SaveSubsectorRequest {
 
 	// Seçilmek istenen alt sektörün id'si (zorunlu)
 	@NotNull(message = "subsectorId zorunludur")
