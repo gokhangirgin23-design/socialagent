@@ -15,10 +15,10 @@ import lombok.Setter;
  * FAZ 5'te worker tarafından Apify'dan çekilip kaydedilir; FAZ 6'da AI ile analiz edilir.
  * İlişkiler nesne referansı ile değil, yalnızca ID kolonları ile tutulur (CLAUDE.md Madde 6).
  *
- * Kaynak hesap kimliği üç şekilde temsil edilir (target tipine göre):
- *  - MONITORED (rakip): monitoredAccountId dolu.
- *  - SECTOR (sektör top 5): platformSector + accountNameSector dolu.
- *  - OWN (kendi hesabı): yukarıdakiler null; job.selectedUserSocialAccountId üzerinden bağlanır.
+ * Kaynak hesap kimliği source_type kolonuna göre temsil edilir:
+ *  - OWN (kendi hesabı): source_type=OWN; sector_account_name + monitored_account_id null.
+ *  - MONITORED (rakip): source_type=MONITORED; monitoredAccountId dolu.
+ *  - SECTOR (sektör araştırması): source_type=SECTOR; sectorAccountName dolu (Apify ownerUsername).
  *
  * UNIQUE(platform, platformPostId) hem şemada hem servis katmanında kontrol edilir (CLAUDE.md Madde 5).
  */
@@ -37,17 +37,17 @@ public class SocialPost {
 	@Column(name = "user_job_id")
 	private UUID userJobId;
 
-	// Rakip hesap id'si (yalnızca MONITORED target'larda dolu; diğerlerinde null)
+	// Rakip hesap id'si (yalnızca MONITORED kaynağında dolu; diğerlerinde null)
 	@Column(name = "monitored_account_id")
 	private UUID monitoredAccountId;
 
-	// Sektör top-5 hesabının platformu (yalnızca SECTOR target'larda dolu; D1)
-	@Column(name = "platform_sector")
-	private String platformSector;
+	// Gönderinin kaynağı: OWN | MONITORED | SECTOR (kaynak ayrımı bu kolondan yapılır)
+	@Column(name = "source_type")
+	private String sourceType;
 
-	// Sektör top-5 hesabının adı (yalnızca SECTOR target'larda dolu; D1)
-	@Column(name = "account_name_sector")
-	private String accountNameSector;
+	// Sektör hesabının adı (yalnızca SECTOR kaynağında dolu; Apify ownerUsername)
+	@Column(name = "sector_account_name")
+	private String sectorAccountName;
 
 	// Gönderinin platformu (örn. "INSTAGRAM")
 	@Column(name = "platform")
@@ -96,6 +96,10 @@ public class SocialPost {
 	// Gönderinin yayınlanma tarihi
 	@Column(name = "post_date")
 	private LocalDateTime postDate;
+
+	// Apify'dan dönen ham JSON (result_json) — OpenAI analiz promptuna ham veri olarak verilir
+	@Column(name = "result_json", columnDefinition = "TEXT")
+	private String resultJson;
 
 	// Kaydın oluşturulma tarihi
 	@Column(name = "created_date")

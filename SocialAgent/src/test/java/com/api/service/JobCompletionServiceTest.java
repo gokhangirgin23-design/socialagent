@@ -24,12 +24,12 @@ import com.api.entity.UserJob;
 /**
  * JobCompletionService için Spring'siz birim testi (DB gerektirmez).
  * JdbcTemplate mock'lanır; UPDATE parametreleri ArgumentCaptor ile doğrulanır.
- * UPDATE parametre sırası: [current_count, completed, next_run_date, updated_date, user_job_id]
+ * UPDATE parametre sırası: [current_count, completed, active, next_run_date, updated_date, user_job_id]
  *
- * Doğrulanan davranışlar (FAZ 7):
- *  - ON_DEMAND -> completed=1, next_run_date=NULL.
- *  - WEEKLY & repeat hedefine ulaşınca -> completed=1, next_run_date=NULL.
- *  - WEEKLY & devam ederken -> completed=0, next_run_date dolu (yeniden zamanlama).
+ * Doğrulanan davranışlar (FAZ 7 + active revizyonu):
+ *  - ON_DEMAND -> completed=1, active=0, next_run_date=NULL.
+ *  - WEEKLY & repeat hedefine ulaşınca -> completed=1, active=0, next_run_date=NULL.
+ *  - WEEKLY & devam ederken -> completed=0, active=1, next_run_date dolu (yeniden zamanlama).
  *  - Job yoksa UPDATE yapılmaz.
  */
 class JobCompletionServiceTest {
@@ -58,8 +58,10 @@ class JobCompletionServiceTest {
 		assertEquals(1, args[0]);
 		// completed = 1 (tek seferlik)
 		assertEquals(1, args[1]);
+		// active = 0 (tamamlandı -> pasifleşir)
+		assertEquals(0, args[2]);
 		// next_run_date NULL (tamamlandı)
-		assertNull(args[2]);
+		assertNull(args[3]);
 	}
 
 	@SuppressWarnings("unchecked")
@@ -73,7 +75,8 @@ class JobCompletionServiceTest {
 		Object[] args = captureUpdateArgs();
 		assertEquals(2, args[0]);     // current_count 1 -> 2
 		assertEquals(1, args[1]);     // completed = 1
-		assertNull(args[2]);          // next_run_date NULL
+		assertEquals(0, args[2]);     // active = 0 (tamamlandı)
+		assertNull(args[3]);          // next_run_date NULL
 	}
 
 	@SuppressWarnings("unchecked")
@@ -87,7 +90,8 @@ class JobCompletionServiceTest {
 		Object[] args = captureUpdateArgs();
 		assertEquals(2, args[0]);     // current_count 1 -> 2
 		assertEquals(0, args[1]);     // completed = 0 (devam ediyor)
-		assertNotNull(args[2]);       // next_run_date dolu (now + 1 hafta)
+		assertEquals(1, args[2]);     // active = 1 (devam ediyor)
+		assertNotNull(args[3]);       // next_run_date dolu (now + 1 hafta)
 	}
 
 	@SuppressWarnings("unchecked")

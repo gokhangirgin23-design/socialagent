@@ -34,29 +34,31 @@ public class MailSender {
 	private final AppProperties appProperties;
 
 	/**
-	 * Tek bir düz metin e-posta gönderir. Yapılandırma yoksa veya hata olursa sessizce geçer.
+	 * Tek bir düz metin e-posta gönderir ve sonucu döner.
+	 * Yapılandırma yoksa success=false + anlamlı sebep; gönderim hatasında success=false + stack trace.
 	 *
 	 * @param to      alıcı e-posta (boşsa gönderilmez)
 	 * @param subject konu
 	 * @param body    düz metin gövde
+	 * @return gönderim sonucu (NotificationService notification satırına yazar)
 	 */
-	public void send(String to, String subject, String body) {
+	public SendResult send(String to, String subject, String body) {
 		// 1) Bildirim mail kanalı kapalıysa atla
 		if (!appProperties.getNotification().isMailEnabled()) {
 			log.debug("Mail bildirimi kapalı (app.notification.mail-enabled=false), atlandı.");
-			return;
+			return SendResult.fail("Mail bildirimi kapalı (app.notification.mail-enabled=false)");
 		}
 		// 2) Alıcı yoksa gönderilmez
 		if (to == null || to.isBlank()) {
 			log.debug("Alıcı e-posta boş, mail gönderilmedi.");
-			return;
+			return SendResult.fail("Alıcı e-posta adresi boş");
 		}
 		// 3) JavaMailSender bean'i var mı? (spring.mail.host verilmemişse yoktur)
 		JavaMailSender mailSender = mailSenderProvider.getIfAvailable();
 		if (mailSender == null) {
 			// Yapılandırma yok -> sessizce atla (uygulama çökmesin)
 			log.debug("JavaMailSender yapılandırılmamış (spring.mail.host yok), mail atlandı: to={}", to);
-			return;
+			return SendResult.fail("JavaMailSender yapılandırılmamış (spring.mail.host yok)");
 		}
 		try {
 			// 4) Basit metin e-postası kur ve gönder
@@ -71,9 +73,11 @@ public class MailSender {
 			message.setText(body);
 			mailSender.send(message);
 			log.info("Bildirim e-postası gönderildi: to={}, subject={}", to, subject);
+			return SendResult.ok();
 		} catch (Exception ex) {
 			// Gönderim hatası bildirim akışını bozmasın (CLAUDE.md graceful-degradation felsefesi)
 			log.warn("Bildirim e-postası gönderilemedi: to={}, hata={}", to, ex.getMessage());
+			return SendResult.fail(ex);
 		}
 	}
 }

@@ -71,6 +71,14 @@ public class UserJob {
 	@Column(name = "queued_date")
 	private LocalDateTime queuedDate;
 
+	// Sonraki çalışma zamanı (periyot bazlı yeniden zamanlama); nullable (FAZ 7)
+	@Column(name = "next_run_date")
+	private LocalDateTime nextRunDate;
+
+	// En son COMPLETED rapor zamanı; scheduler son analysis_period_days gün içindeyse kuyruğa basmaz
+	@Column(name = "last_report_date")
+	private LocalDateTime lastReportDate;
+
 	// Kaydın oluşturulma tarihi
 	@Column(name = "created_date")
 	private LocalDateTime createdDate;

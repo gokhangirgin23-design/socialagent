@@ -42,6 +42,9 @@ public class JobService {
 	// UserJob entity -> DTO dönüştürücü
 	private final UserJobMapper userJobMapper;
 
+	// analysisPeriodDays istekten alınmaz; tüm job'larda uygulanan varsayılan tekrar-analiz penceresi (gün)
+	private static final int DEFAULT_ANALYSIS_PERIOD_DAYS = 3;
+
 	// UserJob satırlarını entity'ye çeviren RowMapper (liste sorguları için)
 	private static final RowMapper<UserJob> JOB_ROW_MAPPER = (rs, rowNum) -> {
 		UserJob j = new UserJob();
@@ -78,14 +81,27 @@ public class JobService {
 		// 1) jobPeriod geçerli bir enum değeri mi?
 		JobPeriod period = parseJobPeriod(req.getJobPeriod());
 
-		// 2) ON_DEMAND değilse repeatCount zorunlu
+		// 2) Sektör zorunlu: kullanıcı sektör seçmemişse job oluşturulamaz (subsector opsiyonel).
+		//    Sektör, NONE/OWN_ONLY modlarında hashtag araştırmasının girdisidir.
+		if (!hasSectorSelected(userId)) {
+			throw new ApiException(ResponseCode.VALIDATION_ERROR,
+					"Job oluşturmadan önce sektör seçilmelidir");
+		}
+
+		// 3) ON_DEMAND ("şu an") tek seferliktir; repeatCount gönderilmemelidir
+		if (period == JobPeriod.ON_DEMAND && req.getRepeatCount() != null) {
+			throw new ApiException(ResponseCode.VALIDATION_ERROR,
+					"ON_DEMAND (şu an) seçildiğinde repeatCount gönderilemez");
+		}
+
+		// 4) ON_DEMAND değilse repeatCount zorunlu
 		if (period != JobPeriod.ON_DEMAND && req.getRepeatCount() == null) {
 			throw new ApiException(ResponseCode.VALIDATION_ERROR,
 					"ON_DEMAND dışı periyotlarda repeatCount zorunludur");
 		}
 
-		// 3) analysisPeriodDays null ise varsayılan 7 gün
-		int analysisPeriodDays = (req.getAnalysisPeriodDays() != null) ? req.getAnalysisPeriodDays() : 7;
+		// 5) analysisPeriodDays istekten alınmaz; backend default uygular (tekrar-analiz penceresi)
+		int analysisPeriodDays = DEFAULT_ANALYSIS_PERIOD_DAYS;
 
 		// 4) Kullanıcının kendi hesabı var mı? (active=1)
 		String ownAccountSql = """
@@ -176,14 +192,16 @@ public class JobService {
 		// OFFSET hesapla
 		int offset = safePage * safeSize;
 
-		// Kullanıcının aktif job'larını sayfalı çek
+		// Kullanıcının job'larını sayfalı çek.
+		// Tamamlanınca active=0 yapıldığından (iş sonu muhasebesi), tamamlanan job'lar da
+		// listelenebilsin diye filtre: active=1 (devam eden) VEYA completed=1 (tamamlanmış).
 		String sql = """
 				SELECT user_job_id, user_id, selected_user_social_account_id,
 				       analysis_mode, job_period, analysis_period_days,
 				       repeat_count, current_count, completed, active,
 				       created_date, updated_date
 				FROM user_job
-				WHERE user_id = ? AND active = 1
+				WHERE user_id = ? AND (active = 1 OR completed = 1)
 				ORDER BY created_date DESC
 				LIMIT ? OFFSET ?
 				""";
@@ -197,6 +215,23 @@ public class JobService {
 	// ============================================================
 	// Yardımcı metodlar
 	// ============================================================
+
+	/**
+	 * Kullanıcı sektör seçmiş mi? (job oluşturma ön koşulu — subsector opsiyonel).
+	 * user_info.sector_id NULL değilse true.
+	 */
+	private boolean hasSectorSelected(UUID userId) {
+		String sql = """
+				SELECT sector_id
+				FROM user_info
+				WHERE user_id = ? AND active = 1
+				""";
+		List<UUID> rows = jdbcTemplate.query(sql,
+				(rs, rowNum) -> rs.getObject("sector_id", UUID.class),
+				userId);
+		// Kayıt yoksa ya da sector_id NULL ise sektör seçilmemiştir
+		return !rows.isEmpty() && rows.get(0) != null;
+	}
 
 	/**
 	 * String değeri JobPeriod enum'una çevirir; geçersiz değerde VALIDATION_ERROR fırlatır.

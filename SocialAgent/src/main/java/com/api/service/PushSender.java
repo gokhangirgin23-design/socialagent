@@ -28,25 +28,29 @@ public class PushSender {
 	private final AppProperties appProperties;
 
 	/**
-	 * Bir kullanıcıya push bildirimi gönderir (stub). Kapalıysa/hata olursa sessizce geçer.
+	 * Bir kullanıcıya push bildirimi gönderir (stub) ve sonucu döner.
+	 * Kapalıysa success=false + sebep; hata olursa success=false + stack trace.
 	 *
 	 * @param userId  hedef kullanıcı
 	 * @param title   başlık
 	 * @param message gövde
+	 * @return gönderim sonucu (NotificationService notification satırına yazar)
 	 */
-	public void send(UUID userId, String title, String message) {
+	public SendResult send(UUID userId, String title, String message) {
 		// Push kanalı kapalıysa atla (varsayılan kapalı; cihaz token altyapısı henüz yok)
 		if (!appProperties.getNotification().isPushEnabled()) {
 			log.debug("Push bildirimi kapalı (app.notification.push-enabled=false), atlandı.");
-			return;
+			return SendResult.fail("Push bildirimi kapalı (app.notification.push-enabled=false)");
 		}
 		try {
 			// TODO(FCM): Gerçek entegrasyon — kullanıcının cihaz token'larını çek (örn. device_token
 			// tablosu) ve FCM/APNs sağlayıcısına gönder. Şimdilik niyet loglanır (uygulama çökmesin).
 			log.info("Push bildirimi (stub) hazırlandı: userId={}, title={}", userId, title);
+			return SendResult.ok();
 		} catch (Exception ex) {
 			// Push hatası bildirim akışını bozmasın
 			log.warn("Push bildirimi gönderilemedi: userId={}, hata={}", userId, ex.getMessage());
+			return SendResult.fail(ex);
 		}
 	}
 }

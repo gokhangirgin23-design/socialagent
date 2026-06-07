@@ -49,7 +49,8 @@ public class SecurityConfig {
 					"/auth/**",
 					"/api/ping",    // Uygulama canlılık kontrolü — kimlik doğrulaması gerekmez
 					"/sector/list",  // Sektör listesi kimlik doğrulaması gerektirmez (onboarding adım 3)
-					"/socialagent-test-console.html"
+					"/socialagent-test-console.html",
+					"/local/**"      // LOCAL iç-test uçları (controller yalnızca local profilde oluşur)
 						).permitAll()
 				// Geri kalan tüm uçlar kimlik doğrulaması ister
 				.anyRequest().authenticated()

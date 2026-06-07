@@ -35,6 +35,10 @@ public class MonitoredAccount {
 	@Column(name = "account_name")
 	private String accountName;
 
+	// Profil sayfası url'i (platforma göre otomatik üretilir; INSTAGRAM için instagram.com/{account_name}/)
+	@Column(name = "profile_url")
+	private String profileUrl;
+
 	// Aktiflik bayrağı (0/1)
 	@Column(name = "active")
 	private Integer active;

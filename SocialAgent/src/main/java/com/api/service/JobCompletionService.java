@@ -69,11 +69,12 @@ public class JobCompletionService {
 		LocalDateTime now = LocalDateTime.now();
 		LocalDateTime nextRun = completed ? null : computeNextRun(job.getJobPeriod(), now);
 
-		// 5) Tek UPDATE ile durum kolonlarını yaz (queued reset dahil)
+		// 5) Tek UPDATE ile durum kolonlarını yaz (queued reset + tamamlanınca active=0)
 		String sql = """
 				UPDATE user_job
 				SET current_count = ?,
 				    completed = ?,
+				    active = ?,
 				    queued = 0,
 				    queued_date = NULL,
 				    next_run_date = ?,
@@ -83,12 +84,13 @@ public class JobCompletionService {
 		jdbcTemplate.update(sql,
 				newCount,
 				completed ? 1 : 0,
+				completed ? 0 : 1,
 				(nextRun != null ? Timestamp.valueOf(nextRun) : null),
 				Timestamp.valueOf(now),
 				userJobId);
 
-		log.info("İş sonu muhasebesi: userJobId={}, currentCount={}, completed={}, nextRun={}",
-				userJobId, newCount, completed, nextRun);
+		log.info("İş sonu muhasebesi: userJobId={}, currentCount={}, completed={}, active={}, nextRun={}",
+				userJobId, newCount, completed, completed ? 0 : 1, nextRun);
 	}
 
 	/**

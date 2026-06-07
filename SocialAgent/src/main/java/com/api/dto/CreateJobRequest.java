@@ -7,6 +7,7 @@ import lombok.Setter;
 /**
  * Yeni job oluşturma isteği (POST /job/create body).
  * analysisMode otomatik belirlenir (kullanıcının hesap durumuna göre).
+ * analysisPeriodDays istekten alınmaz; backend default 3 uygular.
  * userId JWT'den alınır, istekten okunmaz (CLAUDE.md Madde 4, Bölüm 8).
  */
 @Getter
@@ -17,9 +18,6 @@ public class CreateJobRequest {
 	@NotBlank(message = "jobPeriod zorunludur")
 	private String jobPeriod;
 
-	// Tekrar analizi önleme penceresi (gün); null ise varsayılan 7 uygulanır
-	private Integer analysisPeriodDays;
-
-	// Toplam çalışma sayısı; ON_DEMAND ise null bırakılır, diğerlerinde girilmesi zorunludur
+	// Toplam çalışma sayısı; ON_DEMAND ise null/gönderilmez, diğerlerinde girilmesi zorunludur
 	private Integer repeatCount;
 }

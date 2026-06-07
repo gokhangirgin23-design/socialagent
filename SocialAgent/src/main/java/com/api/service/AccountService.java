@@ -19,6 +19,7 @@ import com.api.dto.repository.MonitoredAccountRepository;
 import com.api.dto.repository.UserMonitoredAccountRepository;
 import com.api.dto.repository.UserSocialAccountRepository;
 import com.api.entity.MonitoredAccount;
+import com.api.entity.Platform;
 import com.api.entity.UserMonitoredAccount;
 import com.api.entity.UserSocialAccount;
 import com.api.mapper.UserSocialAccountMapper;
@@ -81,7 +82,8 @@ public class AccountService {
 		// Platform string olarak saklanır (enum doğrulaması iş katmanında yapılabilir)
 		account.setPlatform(req.getPlatform().toUpperCase());
 		account.setAccountName(req.getAccountName());
-		account.setProfileUrl(req.getProfileUrl());
+		// profileUrl istekten alınmaz; platforma göre otomatik üretilir (INSTAGRAM şimdilik)
+		account.setProfileUrl(buildProfileUrl(req.getPlatform().toUpperCase(), req.getAccountName()));
 		account.setActive(1);
 		account.setCreatedDate(now);
 		account.setUpdatedDate(now);
@@ -163,6 +165,8 @@ public class AccountService {
 			ma.setMonitoredAccountId(UUID.randomUUID());
 			ma.setPlatform(platformNorm);
 			ma.setAccountName(accountName);
+			// profileUrl platforma göre otomatik üretilir (INSTAGRAM şimdilik)
+			ma.setProfileUrl(buildProfileUrl(platformNorm, accountName));
 			ma.setActive(1);
 			ma.setCreatedDate(now);
 			ma.setUpdatedDate(now);
@@ -207,6 +211,7 @@ public class AccountService {
 		dto.setMonitoredAccountId(monitoredAccountId);
 		dto.setPlatform(platformNorm);
 		dto.setAccountName(accountName);
+		dto.setProfileUrl(buildProfileUrl(platformNorm, accountName));
 		return dto;
 	}
 
@@ -222,7 +227,8 @@ public class AccountService {
 				SELECT uma.user_monitored_account_id,
 				       ma.monitored_account_id,
 				       ma.platform,
-				       ma.account_name
+				       ma.account_name,
+				       ma.profile_url
 				FROM user_monitored_account uma, monitored_account ma
 				WHERE uma.user_id = ?
 				  AND uma.monitored_account_id = ma.monitored_account_id
@@ -237,6 +243,7 @@ public class AccountService {
 			dto.setMonitoredAccountId(rs.getObject("monitored_account_id", UUID.class));
 			dto.setPlatform(rs.getString("platform"));
 			dto.setAccountName(rs.getString("account_name"));
+			dto.setProfileUrl(rs.getString("profile_url"));
 			return dto;
 		}, userId);
 	}
@@ -283,5 +290,23 @@ public class AccountService {
 
 		// Veri döndürülmez, yalnızca başarı kodu
 		return DataResponse.of(ResponseCode.SUCCESS);
+	}
+
+	/**
+	 * Platforma göre profil URL'i üretir. Şimdilik yalnız INSTAGRAM desteklenir;
+	 * ileride farklı platformlar eklenince buraya logic eklenir.
+	 *
+	 * @return INSTAGRAM için "https://www.instagram.com/{accountName}/"; bilinmeyen platformda null
+	 */
+	private String buildProfileUrl(String platform, String accountName) {
+		if (platform == null || accountName == null) {
+			return null;
+		}
+		// INSTAGRAM: kanonik profil URL'i
+		if (Platform.INSTAGRAM.name().equalsIgnoreCase(platform)) {
+			return "https://www.instagram.com/" + accountName + "/";
+		}
+		// Diğer platformlar henüz tanımlı değil
+		return null;
 	}
 }

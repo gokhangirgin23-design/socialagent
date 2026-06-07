@@ -50,19 +50,20 @@ public class JobScheduler {
 		// 1) Henüz kuyruğa basılmamış uygun job adaylarını çek
 		//    Scheduler bu sorguda idx_user_job_active_completed index'ini kullanır.
 		//    FAZ 7: next_run_date filtresi — NULL (hemen uygun) ya da zamanı gelmiş job'lar.
+		//    Rapor kapısı (last_report_date) Java tarafında uygulanır: "son analysis_period_days gün"
+		//    karşılaştırması H2/PostgreSQL'de tek dialektte güvenli yazılamadığından (INTERVAL vs DATEADD).
 		//    CURRENT_TIMESTAMP kullanılır (bound param yok); H2 (MODE=PostgreSQL) ve PostgreSQL uyumlu.
 		String selectSql = """
-				SELECT user_job_id
+				SELECT user_job_id, last_report_date, analysis_period_days
 				FROM user_job
 				WHERE active = 1 AND completed = 0 AND queued = 0
 				  AND (next_run_date IS NULL OR next_run_date <= CURRENT_TIMESTAMP)
 				ORDER BY created_date ASC
 				""";
-		List<UUID> candidateIds = jdbcTemplate.query(selectSql,
-				(rs, rowNum) -> rs.getObject("user_job_id", UUID.class));
+		List<Candidate> candidates = jdbcTemplate.query(selectSql, CANDIDATE_ROW_MAPPER);
 
 		// Aday yoksa erken çık (gürültüsüz)
-		if (candidateIds.isEmpty()) {
+		if (candidates.isEmpty()) {
 			log.debug("Kuyruğa basılacak uygun job bulunamadı.");
 			return;
 		}
@@ -70,8 +71,16 @@ public class JobScheduler {
 		// Bu turda başarıyla kuyruğa basılan job sayısı
 		int queuedCount = 0;
 
-		// 2) Her aday için atomik claim + publish
-		for (UUID jobId : candidateIds) {
+		// 2) Her aday için rapor kapısı + atomik claim + publish
+		LocalDateTime now = LocalDateTime.now();
+		for (Candidate c : candidates) {
+			UUID jobId = c.jobId();
+			// Rapor kapısı: son analysis_period_days gün içinde rapor üretildiyse kuyruğa hiç basma
+			if (recentlyReported(c, now)) {
+				log.debug("Rapor kapısı: job son {} günde raporlanmış, kuyruğa basılmıyor: userJobId={}",
+						c.analysisPeriodDays(), jobId);
+				continue;
+			}
 			// Tek satırda claim: yalnızca hâlâ queued=0 ise sahiplen
 			// Çift instance senaryosunda yalnızca bir instance 1 satır günceller
 			if (!tryClaim(jobId)) {
@@ -92,8 +101,35 @@ public class JobScheduler {
 		}
 
 		// Tur özeti
-		log.info("Scheduler turu tamamlandı: aday={}, kuyruğa basılan={}", candidateIds.size(), queuedCount);
+		log.info("Scheduler turu tamamlandı: aday={}, kuyruğa basılan={}", candidates.size(), queuedCount);
 	}
+
+	/**
+	 * Rapor kapısı: job son analysis_period_days gün içinde rapor ürettiyse true (kuyruğa basılmamalı).
+	 * last_report_date NULL ise hiç raporlanmamış demektir -> false (uygun).
+	 */
+	private boolean recentlyReported(Candidate c, LocalDateTime now) {
+		if (c.lastReportDate() == null) {
+			return false;
+		}
+		// analysis_period_days null gelirse 3 varsay
+		int days = (c.analysisPeriodDays() != null) ? c.analysisPeriodDays() : 3;
+		// Son rapor, (now - days) anından daha yeniyse pencere içindedir
+		return c.lastReportDate().isAfter(now.minusDays(days));
+	}
+
+	// Aday job satırını taşıyan kayıt (rapor kapısı için last_report_date + analysis_period_days dahil).
+	// Test (aynı paket) bunu doğrudan kurabilsin diye package-private.
+	record Candidate(UUID jobId, LocalDateTime lastReportDate, Integer analysisPeriodDays) {
+	}
+
+	// Aday satır -> Candidate dönüştürücü
+	private static final org.springframework.jdbc.core.RowMapper<Candidate> CANDIDATE_ROW_MAPPER =
+			(rs, rowNum) -> new Candidate(
+					rs.getObject("user_job_id", UUID.class),
+					rs.getTimestamp("last_report_date") != null
+							? rs.getTimestamp("last_report_date").toLocalDateTime() : null,
+					rs.getObject("analysis_period_days", Integer.class));
 
 	/**
 	 * Job'ı atomik olarak claim eder (queued=0 -> 1).

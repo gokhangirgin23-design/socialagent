@@ -171,16 +171,17 @@
     <!-- 2 · SETTINGS / SECTOR -->
     <section class="panel-view" id="view-settings">
       <h2>Ayarlar · Sektör &amp; Alt Sektör</h2>
-      <p class="sub">Zamanlanmış görev oluşturabilmek için sektör <b>ve</b> alt sektör seçimi zorunludur. Yeni kullanıcı buraya yönlendirilir.</p>
+      <p class="sub">Zamanlanmış görev oluşturabilmek için <b>sektör</b> seçimi zorunludur. Alt sektör <b>opsiyoneldir</b>. Yeni kullanıcı buraya yönlendirilir.</p>
       <div id="settingsBanner"></div>
       <div class="card">
-        <h3>1 · Sektör seç <code>/sector/list</code></h3>
+        <h3>1 · Sektör seç (zorunlu) <code>/sector/list</code> · <code>/sector/saveSector</code></h3>
         <div class="field"><label>Sektör</label>
           <select id="sectorSel" onchange="onSectorChange()"><option value="">— yükleniyor —</option></select>
         </div>
+        <button onclick="saveSector()" id="btnSelSec" disabled>Sektörü Kaydet</button>
       </div>
       <div class="card">
-        <h3>2 · Alt sektör seç <code>/sector/listSubsectors</code> · <code>/sector/saveSubsector</code></h3>
+        <h3>2 · Alt sektör seç (opsiyonel) <code>/sector/listSubsectors</code> · <code>/sector/saveSubsector</code></h3>
         <div class="field"><label>Alt sektör</label>
           <select id="subSel"><option value="">— önce sektör seçin —</option></select>
         </div>
@@ -202,7 +203,7 @@
           <div class="field" style="flex:1;margin:0"><label>Rakip Instagram hesap adı</label><input id="monName" placeholder="ör. rakip_marka"></div>
           <button onclick="addMonitored()" id="btnAddMon">Rakip Ekle</button>
         </div>
-        <table><thead><tr><th>#</th><th>Hesap</th><th>Platform</th><th></th></tr></thead><tbody id="monTable"></tbody></table>
+        <table><thead><tr><th>#</th><th>Hesap</th><th>Platform</th><th>Profil URL</th><th></th></tr></thead><tbody id="monTable"></tbody></table>
       </div>
     </section>
 
@@ -219,7 +220,6 @@
         </div>
         <div class="grid2" id="repeatFields">
           <div class="field"><label>repeatCount (ON_DEMAND dışı zorunlu)</label><input id="repeatCount" type="number" min="1" value="4"></div>
-          <div class="field"><label>analysisPeriodDays (ops · varsayılan 7)</label><input id="analysisDays" type="number" min="1" placeholder="7"></div>
         </div>
         <button onclick="createJob()" id="btnCreateJob" disabled>Görev Kaydet</button>
         <div class="hint" id="jobHint"></div>
@@ -242,7 +242,7 @@
       <div class="card">
         <h3>Bildirimler <span id="unreadBadge" class="badge">okunmamış: ?</span> <code>/notification/*</code>
           <button class="ghost" style="margin-left:auto" onclick="loadNotifications()">Yenile</button></h3>
-        <table><thead><tr><th>Başlık</th><th>Mesaj</th><th>Durum</th><th></th></tr></thead><tbody id="notifTable"></tbody></table>
+        <table><thead><tr><th>Başlık</th><th>Mesaj</th><th>Kanal</th><th>Gönderim</th><th>Durum</th><th></th></tr></thead><tbody id="notifTable"></tbody></table>
       </div>
     </section>
   </main>
@@ -395,10 +395,10 @@ async function onLoggedIn(silent){
     S.user = me.data;
   }
   renderSession();
-  // Onboarding kuralı: sektör/alt sektör seçilmemişse ayarlara yönlendir
-  const needsSetup = !S.user.sectorId || !S.user.subsectorId;
+  // Onboarding kuralı: sektör seçilmemişse ayarlara yönlendir (alt sektör opsiyonel)
+  const needsSetup = !S.user.sectorId;
   if(needsSetup){
-    if(!silent) toast('Sektör/alt sektör seçimi gerekli — Ayarlar açıldı','');
+    if(!silent) toast('Sektör seçimi gerekli — Ayarlar açıldı','');
     go('settings');
   } else if(!silent){
     go('accounts');
@@ -410,11 +410,11 @@ function renderSession(){
   const sc=el('sSector'), su=el('sSub');
   sc.textContent = S.user.sectorId ? 'seçildi':'seçilmedi'; sc.className='badge '+(S.user.sectorId?'ok':'no');
   su.textContent = S.user.subsectorId ? 'seçildi':'seçilmedi'; su.className='badge '+(S.user.subsectorId?'ok':'no');
-  markDone('settings', S.user.sectorId && S.user.subsectorId);
-  // settings banner
-  el('settingsBanner').innerHTML = (S.user.sectorId && S.user.subsectorId)
-    ? '<div class="banner info">Sektör ve alt sektör seçili. Zamanlanmış görev oluşturabilirsin.</div>'
-    : '<div class="banner warn">Yeni kullanıcı / eksik kurulum: sektör ve alt sektör seçilmeden görev oluşturamazsın.</div>';
+  markDone('settings', !!S.user.sectorId);
+  // settings banner (alt sektör opsiyonel)
+  el('settingsBanner').innerHTML = (S.user.sectorId)
+    ? '<div class="banner info">Sektör seçili. Görev oluşturabilirsin. (Alt sektör opsiyonel.)</div>'
+    : '<div class="banner warn">Yeni kullanıcı / eksik kurulum: sektör seçilmeden görev oluşturamazsın. (Alt sektör opsiyonel.)</div>';
 }
 async function refreshAccessToken(){
   if(!S.refreshToken){ toast('refresh token yok','err'); return; }
@@ -448,12 +448,26 @@ async function onSectorChange(){
   const sectorId = el('sectorSel').value;
   const sub = el('subSel');
   el('btnSelSub').disabled = true;
+  // Sektör seçiliyse "Sektörü Kaydet" aktif (alt sektör opsiyonel)
+  el('btnSelSec').disabled = !sectorId;
   if(!sectorId){ sub.innerHTML='<option value="">— önce sektör seçin —</option>'; return; }
   const r = await api('/sector/listSubsectors', {sectorId});
   if(!ok(r)){ sub.innerHTML='<option value="">— hata —</option>'; return; }
   sub.innerHTML = '<option value="">— alt sektör seçin —</option>' +
     r.data.map(s=>'<option value="'+s.subsectorId+'" '+(s.subsectorId===S.user.subsectorId?'selected':'')+'>'+esc(s.name)+'</option>').join('');
   el('btnSelSub').disabled = false;
+}
+async function saveSector(){
+  const sectorId = el('sectorSel').value;
+  if(!sectorId){ toast('Sektör seçin','err'); return; }
+  const r = await api('/sector/saveSector', {sectorId});
+  if(ok(r)){
+    S.user.sectorId = sectorId;
+    // Sektör değişmiş olabilir; alt sektör listesi/seçimi tazelensin (backend uyumsuz alt sektörü temizler)
+    await onSectorChange();
+    renderSession();
+    toast('Sektör kaydedildi · Hesaplar/Görev açık (alt sektör opsiyonel)','ok');
+  } else toast('Kaydedilemedi','err');
 }
 async function saveSubsector(){
   const subsectorId = el('subSel').value;
@@ -487,14 +501,14 @@ function renderOwn(){
     el('ownArea').innerHTML =
       '<div class="flexrow"><div class="field" style="flex:1;margin:0"><label>Kendi Instagram hesap adın</label>'+
       '<input id="ownName" placeholder="ör. benim_markam"></div>'+
-      '<div class="field" style="flex:1;margin:0"><label>Profil URL (ops.)</label><input id="ownUrl" placeholder="https://instagram.com/..."></div>'+
-      '<button onclick="addOwn()">Ekle</button></div>';
+      '<button onclick="addOwn()">Ekle</button></div>'+
+      '<div class="hint">Profil URL backend tarafında otomatik üretilir (instagram.com/{hesap}/).</div>';
   }
 }
 async function addOwn(){
   const accountName = el('ownName').value.trim();
   if(!accountName){ toast('Hesap adı gir','err'); return; }
-  const r = await api('/account/own/add', {platform:'INSTAGRAM', accountName, profileUrl: el('ownUrl').value.trim()||null});
+  const r = await api('/account/own/add', {platform:'INSTAGRAM', accountName});
   if(ok(r)){ S.ownAccount=r.data; renderOwn(); toast('Kendi hesabı eklendi','ok'); }
   else if(r.responseCode===3) toast('Bu hesap zaten ekli (DUPLICATE)','err');
   else toast('Eklenemedi','err');
@@ -509,9 +523,10 @@ function renderMonitored(){
   el('monCount').textContent = S.monitored.length+' / 5';
   el('btnAddMon').disabled = S.monitored.length>=5;
   if(S.monitored.length>=5) el('monName').placeholder='Limit doldu (5)';
-  if(!S.monitored.length){ t.innerHTML='<tr><td colspan="4" class="empty">Henüz rakip hesap yok</td></tr>'; return; }
+  if(!S.monitored.length){ t.innerHTML='<tr><td colspan="5" class="empty">Henüz rakip hesap yok</td></tr>'; return; }
   t.innerHTML = S.monitored.map((m,i)=>
     '<tr><td>'+(i+1)+'</td><td><b>'+esc(m.accountName)+'</b></td><td>'+esc(m.platform)+'</td>'+
+    '<td class="mono" style="font-size:11px">'+esc(m.profileUrl||'')+'</td>'+
     '<td><button class="danger" style="padding:3px 9px" onclick="removeMon(\''+m.userMonitoredAccountId+'\')">Kaldır</button></td></tr>'
   ).join('');
 }
@@ -541,9 +556,9 @@ const PERIODS = [
   {v:'ON_DEMAND', l:'Şu an'}
 ];
 async function prepareJobs(){
-  const ready = S.user && S.user.sectorId && S.user.subsectorId;
+  const ready = S.user && S.user.sectorId;
   el('jobGate').innerHTML = ready ? '' :
-    '<div class="banner warn">Önce <b>Ayarlar</b> adımında sektör ve alt sektör seç. Aksi halde görev oluşturulamaz.</div>';
+    '<div class="banner warn">Önce <b>Ayarlar</b> adımında sektör seç. Aksi halde görev oluşturulamaz. (Alt sektör opsiyonel.)</div>';
   el('jobForm').style.display = ready ? 'block':'none';
   if(!ready) return;
   // Tamamlanmamış zamanlı görev var mı? → "Şu an" disable
@@ -583,8 +598,6 @@ async function createJob(){
     if(!rc || rc<1){ toast('repeatCount gerekli','err'); return; }
     body.repeatCount = rc;
   }
-  const days = parseInt(el('analysisDays').value,10);
-  if(days>0) body.analysisPeriodDays = days;
   const r = await api('/job/create', body);
   if(ok(r)){ toast('Görev oluşturuldu · mode='+r.data.analysisMode,'ok'); prepareJobs(); }
   else if(r.responseCode===2) toast('Validasyon: '+r.responseDescription,'err');
@@ -627,9 +640,11 @@ async function loadNotifications(){
   const t = el('notifTable'); const rows = ok(r)? r.data:[];
   t.innerHTML = rows.length ? rows.map(n=>
     '<tr><td><b>'+esc(n.title||'')+'</b></td><td>'+esc(n.message||'')+'</td>'+
+    '<td class="mono" style="font-size:11px">'+esc(n.channel||'')+'</td>'+
+    '<td>'+(n.success===1?'<span class="badge ok">başarılı</span>':(n.success===0?'<span class="badge no">başarısız</span>':'–'))+'</td>'+
     '<td>'+(n.isRead? '<span class="badge ok">okundu</span>':'<span class="badge no">yeni</span>')+'</td>'+
     '<td>'+(n.isRead?'':'<button class="ghost" style="padding:3px 9px" onclick="markRead(\''+n.notificationId+'\')">Okundu</button>')+'</td></tr>'
-  ).join('') : '<tr><td colspan="4" class="empty">Bildirim yok</td></tr>';
+  ).join('') : '<tr><td colspan="6" class="empty">Bildirim yok</td></tr>';
 }
 async function markRead(id){
   const r = await api('/notification/read', {notificationId:id});

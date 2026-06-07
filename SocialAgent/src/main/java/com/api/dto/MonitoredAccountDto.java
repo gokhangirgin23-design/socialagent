@@ -25,4 +25,7 @@ public class MonitoredAccountDto {
 
 	// Hesap kullanıcı adı
 	private String accountName;
+
+	// Profil sayfası url'i (backend tarafından üretilir)
+	private String profileUrl;
 }

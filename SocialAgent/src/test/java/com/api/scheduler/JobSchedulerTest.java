@@ -47,7 +47,7 @@ class JobSchedulerTest {
 	void claimBasariliIseKuyrugaBasilir() {
 		// SELECT -> bir aday job döndür
 		when(jdbcTemplate.query(anyString(), any(RowMapper.class)))
-				.thenReturn(List.of(jobId));
+				.thenReturn(List.of(new JobScheduler.Candidate(jobId, null, 3)));
 		// Claim UPDATE -> 1 satır (claim başarılı)
 		when(jdbcTemplate.update(anyString(), (Object[]) any()))
 				.thenReturn(1);
@@ -64,7 +64,7 @@ class JobSchedulerTest {
 	void claimBasarisizIseKuyrugaBasilmaz() {
 		// SELECT -> bir aday job
 		when(jdbcTemplate.query(anyString(), any(RowMapper.class)))
-				.thenReturn(List.of(jobId));
+				.thenReturn(List.of(new JobScheduler.Candidate(jobId, null, 3)));
 		// Claim UPDATE -> 0 satır (başka instance almış)
 		when(jdbcTemplate.update(anyString(), (Object[]) any()))
 				.thenReturn(0);
@@ -80,7 +80,7 @@ class JobSchedulerTest {
 	void publishHataAtarsaClaimGeriAlinir() {
 		// SELECT -> bir aday job
 		when(jdbcTemplate.query(anyString(), any(RowMapper.class)))
-				.thenReturn(List.of(jobId));
+				.thenReturn(List.of(new JobScheduler.Candidate(jobId, null, 3)));
 		// Tüm UPDATE'ler 1 satır döner (claim ve release)
 		when(jdbcTemplate.update(anyString(), (Object[]) any()))
 				.thenReturn(1);

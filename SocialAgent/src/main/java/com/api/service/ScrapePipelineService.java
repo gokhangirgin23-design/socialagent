@@ -85,21 +85,23 @@ public class ScrapePipelineService {
 				// Hedef yoksa scraping atlanır; analiz/rapor yine de denenir (mevcut veriyle no-op olabilir)
 				log.info("Job için hedef hesap çıkmadı: userJobId={}, mode={}", userJobId, job.getAnalysisMode());
 			} else {
-				// analysis_period_days null ise varsayılan 7 (tekrar-analiz penceresi)
-				int periodDays = (job.getAnalysisPeriodDays() != null) ? job.getAnalysisPeriodDays() : 7;
-				// Çekilecek son gönderi sayısı (config; D1 varsayılan 5)
+				// Çekilecek gönderi sayısı (config; URL başına — WorkerPrompt: 30)
 				int recentLimit = appProperties.getApify().getRecentPostsLimit();
+
+				// Tekrar-analiz penceresi job'tan gelir (default 3); null gelirse 3 uygula
+				int analysisPeriodDays = (job.getAnalysisPeriodDays() != null) ? job.getAnalysisPeriodDays() : 3;
 
 				int totalInserted = 0;
 				// 3) Her hedef için pipeline
 				for (ScrapeTarget target : targets) {
-					// Tekrar-analiz koruması: son pencerede analiz edildiyse Apify'a gitme
-					if (socialPostService.isRecentlyAnalyzed(target, periodDays)) {
+					// Tekrar-analiz koruması: pencere içinde analiz edildiyse hem Apify hem AI atlanır
+					if (socialPostService.isRecentlyAnalyzed(target, analysisPeriodDays)) {
 						continue;
 					}
-					// Apify'dan son N gönderiyi çek
-					List<ApifyPost> posts = apifyClient.fetchRecentPosts(target.accountName(), recentLimit);
-					// social_post'a yaz (dedup'lı); eklenen sayıyı topla
+					// Apify'dan URL bazlı post çek (directUrls yaklaşımı — WorkerPrompt b-maddesi)
+					List<ApifyPost> posts = apifyClient.fetchPostsByUrls(
+							List.of(target.url()), recentLimit);
+					// social_post'a yaz (dedup'lı, result_json dahil); eklenen sayıyı topla
 					totalInserted += socialPostService.saveRecentPosts(userJobId, target, posts);
 				}
 

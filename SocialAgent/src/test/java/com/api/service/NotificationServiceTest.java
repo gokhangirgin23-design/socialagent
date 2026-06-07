@@ -22,6 +22,7 @@ import org.springframework.jdbc.core.RowMapper;
 import com.api.dto.NotificationDto;
 import com.api.dto.repository.NotificationRepository;
 import com.api.entity.Notification;
+import com.api.entity.NotificationChannel;
 import com.api.entity.ReferenceType;
 import com.api.mapper.NotificationMapper;
 
@@ -67,20 +68,30 @@ class NotificationServiceTest {
 				new NotificationService.ReportTarget(reportId, userId, "BOTH", "user@example.com");
 		when(jdbcTemplate.query(anyString(), any(RowMapper.class), (Object[]) any()))
 				.thenReturn(List.of(target));
+		// Sender'lar artık SendResult döner; ok() döndür ki NPE olmasın
+		when(mailSender.send(anyString(), anyString(), anyString())).thenReturn(SendResult.ok());
+		when(pushSender.send(any(), anyString(), anyString())).thenReturn(SendResult.ok());
 
 		service.notifyReportCompleted(jobId);
 
-		// notification insert (JPA save) yapılmalı; alanlar doğru set edilmeli
+		// Her rapor için kanal başına 1 satır = toplam 2 notification (MAIL + PUSH_NOTIFICATION)
 		ArgumentCaptor<Notification> captor = ArgumentCaptor.forClass(Notification.class);
-		verify(notificationRepository, times(1)).save(captor.capture());
-		Notification saved = captor.getValue();
-		assertEquals(userId, saved.getUserId());
-		assertEquals(reportId, saved.getReferenceId());
-		assertEquals(ReferenceType.REPORT.name(), saved.getReferenceType());
-		assertEquals(Integer.valueOf(0), saved.getIsRead());
-		assertTrue(saved.getMessage().contains("BOTH"));
+		verify(notificationRepository, times(2)).save(captor.capture());
+		List<Notification> saved = captor.getAllValues();
+		// Ortak alanlar her iki satırda da doğru olmalı
+		for (Notification n : saved) {
+			assertEquals(userId, n.getUserId());
+			assertEquals(reportId, n.getReferenceId());
+			assertEquals(ReferenceType.REPORT.name(), n.getReferenceType());
+			assertEquals(Integer.valueOf(0), n.getIsRead());
+			assertTrue(n.getMessage().contains("BOTH"));
+		}
+		// Kanallar: bir MAIL + bir PUSH_NOTIFICATION satırı yazılmalı
+		List<String> channels = saved.stream().map(Notification::getChannel).toList();
+		assertTrue(channels.contains(NotificationChannel.MAIL.name()));
+		assertTrue(channels.contains(NotificationChannel.PUSH_NOTIFICATION.name()));
 
-		// mail + push gönderilmeli
+		// mail + push birer kez gönderilmeli
 		verify(mailSender, times(1)).send(eq("user@example.com"), anyString(), anyString());
 		verify(pushSender, times(1)).send(eq(userId), anyString(), anyString());
 	}

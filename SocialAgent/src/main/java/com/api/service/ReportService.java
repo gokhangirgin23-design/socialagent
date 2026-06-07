@@ -17,12 +17,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * report yazma + durum akışı yönetimi (FAZ 7 — CLAUDE.md Bölüm 11).
- * Service interface yok (CLAUDE.md Madde 1); concrete @Service.
+ * report yazma + durum akışı yönetimi (FAZ 7 — CLAUDE.md Bölüm 11). Service interface yok (CLAUDE.md Madde 1); concrete @Service.
  *
- * Her job için TEK rapor tutulur: kayıt yoksa insert (JPA save), varsa aynı kayıt yenilenir.
- * "Job'ın raporu var mı" lookup'ı JdbcTemplate native; durum geçişleri (GENERATING/COMPLETED/
- * FAILED) native UPDATE ile yapılır (CLAUDE.md Madde 6 — insert JPA, join/lookup/update native).
+ * Her job için TEK rapor tutulur: kayıt yoksa insert (JPA save), varsa aynı kayıt yenilenir. "Job'ın raporu var mı" lookup'ı JdbcTemplate native; durum geçişleri (GENERATING/COMPLETED/ FAILED) native
+ * UPDATE ile yapılır (CLAUDE.md Madde 6 — insert JPA, join/lookup/update native).
  *
  * Durum akışı: PENDING -> GENERATING -> COMPLETED | FAILED.
  */
@@ -38,8 +36,7 @@ public class ReportService {
 	private final ReportRepository reportRepository;
 
 	/**
-	 * Bu job için var olan rapor kaydının id'sini döndürür (yoksa null).
-	 * Her job için tek rapor tutulduğundan, varsa aynı kayıt yenilenir (recurring job'larda).
+	 * Bu job için var olan rapor kaydının id'sini döndürür (yoksa null). Her job için tek rapor tutulduğundan, varsa aynı kayıt yenilenir (recurring job'larda).
 	 *
 	 * @return mevcut report_id ya da null
 	 */
@@ -76,7 +73,7 @@ public class ReportService {
 		report.setUpdatedDate(now);
 
 		// JPA save ile insert
-		reportRepository.save(report);
+		reportRepository.saveAndFlush(report);
 		log.info("report oluşturuldu (PENDING): userJobId={}, reportId={}", userJobId, report.getReportId());
 		return report.getReportId();
 	}
@@ -121,8 +118,7 @@ public class ReportService {
 	}
 
 	/**
-	 * Durum + (opsiyonel) içerik güncellemesini native UPDATE ile uygular.
-	 * content null ise yalnızca durum güncellenir (mevcut içerik bozulmaz).
+	 * Durum + (opsiyonel) içerik güncellemesini native UPDATE ile uygular. content null ise yalnızca durum güncellenir (mevcut içerik bozulmaz).
 	 */
 	private void updateStatus(UUID reportId, ReportStatus status, String content) {
 		LocalDateTime now = LocalDateTime.now();

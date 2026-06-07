@@ -26,11 +26,20 @@ public class NotificationDto {
 	// Bildirim metni
 	private String message;
 
-	// Referans tipi: REPORT | JOB
+	// Referans tipi: REPORT
 	private String referenceType;
 
 	// Referans id (rapor ise report_id)
 	private UUID referenceId;
+
+	// Gönderim kanalı: MAIL | PUSH_NOTIFICATION
+	private String channel;
+
+	// Gönderim sonucu (0/1)
+	private Integer success;
+
+	// success=0 ise hata detayı / sebep
+	private String errorDetail;
 
 	// Okundu bilgisi (0/1)
 	private Integer isRead;

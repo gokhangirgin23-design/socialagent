@@ -133,23 +133,32 @@ public class ApifyClient {
 	}
 
 	/**
-	 * Bir hesabın son N gönderisini çeker (CLAUDE.md Bölüm 10).
+	 * Instagram URL listesinden (profil veya hashtag explore sayfası) gönderi çeker.
+	 * directUrls yaklaşımı: hem hesap sayfaları hem hashtag explore URL'leri desteklenir.
 	 *
-	 * @param accountName hesap kullanıcı adı
-	 * @param limit       çekilecek maksimum gönderi sayısı (son 5)
+	 * URL örnekleri:
+	 *   Hesap   : https://www.instagram.com/kullaniciadi/
+	 *   Hashtag : https://www.instagram.com/explore/tags/makyaj/
+	 *
+	 * @param directUrls   çekilecek Instagram URL listesi
+	 * @param resultsLimit URL başına çekilecek maksimum gönderi sayısı
 	 * @return gönderi listesi; token yoksa/hata olursa boş liste
 	 */
-	public List<ApifyPost> fetchRecentPosts(String accountName, int limit) {
+	public List<ApifyPost> fetchPostsByUrls(List<String> directUrls, int resultsLimit) {
+		if (directUrls == null || directUrls.isEmpty()) {
+			return List.of();
+		}
 		// Token yoksa çağrı yapma
 		if (!hasToken()) {
-			log.warn("Apify token tanımsız; post çekme atlandı (account={}).", accountName);
+			log.warn("Apify token tanımsız; post çekme atlandı (urlSayısı={}).", directUrls.size());
 			return List.of();
 		}
 		AppProperties.Apify cfg = appProperties.getApify();
-		// Aktör girdisi. TODO(uyum): seçilen post scraper aktörüne göre alan adlarını düzelt.
+		// directUrls + resultsType:posts + resultsLimit ile aktör girdisi
 		Map<String, Object> input = Map.of(
-				"username", List.of(accountName),
-				"resultsLimit", limit);
+				"directUrls", directUrls,
+				"resultsType", "posts",
+				"resultsLimit", resultsLimit);
 		// Aktörü çağır
 		JsonNode items = runActor(cfg.getPostActorId(), input);
 		if (items == null || !items.isArray()) {
@@ -164,6 +173,8 @@ public class ApifyClient {
 			if (postId == null || postId.isBlank()) {
 				continue;
 			}
+			// Gönderiyi paylaşan hesabın kullanıcı adı (SECTOR postlarında sector_account_name)
+			String ownerUsername = firstText(node, "ownerUsername", "username", "owner", "handle");
 			String url = firstText(node, "url", "postUrl", "permalink");
 			String caption = firstText(node, "caption", "text", "title");
 			// Hashtag'ler dizi olabilir -> "#a #b" formatına getir
@@ -177,15 +188,26 @@ public class ApifyClient {
 			Long views = firstLongOrNull(node, "videoViewCount", "viewsCount", "views", "videoPlayCount");
 			Long shares = firstLongOrNull(node, "sharesCount", "shares", "reshareCount");
 			LocalDateTime postDate = extractTimestamp(node, "timestamp", "takenAt", "taken_at_timestamp");
-			posts.add(new ApifyPost(postId, url, caption, hashtags, mediaUrl, mediaType,
-					likes, comments, views, shares, postDate));
+			// Ham JSON node'unu metin olarak sakla (result_json kolonuna gidecek)
+			String rawJson = node.toString();
+			posts.add(new ApifyPost(postId, ownerUsername, url, caption, hashtags, mediaUrl, mediaType,
+					likes, comments, views, shares, postDate, rawJson));
 		}
-		// En yeni gönderiler önce (post_date desc), ilk N'i al
-		posts.sort(Comparator.comparing(ApifyPost::postDate,
-				Comparator.nullsLast(Comparator.reverseOrder())));
-		List<ApifyPost> recent = posts.subList(0, Math.min(limit, posts.size()));
-		log.info("Apify post çekme: account={}, bulunan={}, dönen={}", accountName, posts.size(), recent.size());
-		return new ArrayList<>(recent);
+		log.info("Apify post çekme (directUrls): urlSayısı={}, toplamGelen={}", directUrls.size(), posts.size());
+		return posts;
+	}
+
+	/**
+	 * Bir hesabın son N gönderisini kullanıcı adı ile çeker.
+	 * Geriye uyum için korunur; içeride fetchPostsByUrls'e delege eder.
+	 *
+	 * @param accountName hesap kullanıcı adı
+	 * @param limit       çekilecek maksimum gönderi sayısı
+	 * @return gönderi listesi; token yoksa/hata olursa boş liste
+	 */
+	public List<ApifyPost> fetchRecentPosts(String accountName, int limit) {
+		String profileUrl = "https://www.instagram.com/" + accountName + "/";
+		return fetchPostsByUrls(List.of(profileUrl), limit);
 	}
 
 	// ============================================================

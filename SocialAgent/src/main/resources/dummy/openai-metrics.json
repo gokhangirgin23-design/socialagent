@@ -1,0 +1,12 @@
+[
+  { "engagementRate": 5.8, "engagementLevel": "YÜKSEK",  "contentType": { "isReel": true,  "format": "REEL" },     "bestPostingTime": "19:00-21:00", "summary": "Reel içerikler yüksek etkileşim alıyor." },
+  { "engagementRate": 2.1, "engagementLevel": "DÜŞÜK",   "contentType": { "isReel": false, "format": "IMAGE" },    "bestPostingTime": "12:00-13:00", "summary": "Statik görsellerde etkileşim ortalamanın altında." },
+  { "engagementRate": 4.3, "engagementLevel": "ORTA",    "contentType": { "isReel": false, "format": "CAROUSEL" }, "bestPostingTime": "20:00-22:00", "summary": "Carousel gönderiler kaydırma oranını artırıyor." },
+  { "engagementRate": 7.2, "engagementLevel": "YÜKSEK",  "contentType": { "isReel": true,  "format": "REEL" },     "bestPostingTime": "18:00-20:00", "summary": "Kısa video formatı en çok erişimi sağlıyor." },
+  { "engagementRate": 3.0, "engagementLevel": "ORTA",    "contentType": { "isReel": false, "format": "IMAGE" },    "bestPostingTime": "09:00-11:00", "summary": "Sabah paylaşımları orta düzey etkileşim alıyor." },
+  { "engagementRate": 6.5, "engagementLevel": "YÜKSEK",  "contentType": { "isReel": true,  "format": "REEL" },     "bestPostingTime": "21:00-23:00", "summary": "Akşam reel'leri yorum sayısını ciddi artırıyor." },
+  { "engagementRate": 1.6, "engagementLevel": "DÜŞÜK",   "contentType": { "isReel": false, "format": "IMAGE" },    "bestPostingTime": "14:00-16:00", "summary": "Öğleden sonra görseller zayıf performans gösteriyor." },
+  { "engagementRate": 4.9, "engagementLevel": "ORTA",    "contentType": { "isReel": false, "format": "CAROUSEL" }, "bestPostingTime": "19:00-21:00", "summary": "Bilgilendirici carousel'ler kaydetme oranını yükseltiyor." },
+  { "engagementRate": 8.1, "engagementLevel": "YÜKSEK",  "contentType": { "isReel": true,  "format": "REEL" },     "bestPostingTime": "20:00-22:00", "summary": "Trend sesli reel'ler viral potansiyeli taşıyor." },
+  { "engagementRate": 3.7, "engagementLevel": "ORTA",    "contentType": { "isReel": false, "format": "IMAGE" },    "bestPostingTime": "17:00-19:00", "summary": "Ürün odaklı görseller dengeli etkileşim sağlıyor." }
+]

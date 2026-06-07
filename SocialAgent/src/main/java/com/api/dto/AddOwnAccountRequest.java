@@ -6,7 +6,7 @@ import lombok.Setter;
 
 /**
  * Kullanıcının kendi sosyal hesabını ekleme isteği (POST /account/own/add body).
- * platform ve accountName zorunludur; profileUrl opsiyoneldir.
+ * platform ve accountName zorunludur; profileUrl istekten alınmaz, backend üretir.
  * userId JWT'den alınır, istekten okunmaz (CLAUDE.md Madde 4).
  */
 @Getter
@@ -20,7 +20,4 @@ public class AddOwnAccountRequest {
 	// Hesap kullanıcı adı (zorunlu)
 	@NotBlank(message = "accountName zorunludur")
 	private String accountName;
-
-	// Profil sayfası url'i (opsiyonel)
-	private String profileUrl;
 }

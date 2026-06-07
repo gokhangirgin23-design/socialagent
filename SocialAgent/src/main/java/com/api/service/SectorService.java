@@ -118,6 +118,41 @@ public class SectorService {
 	}
 
 	/**
+	 * Kullanıcının sektörünü tek başına kaydeder (alt sektör opsiyonel).
+	 * Mevcut alt sektör yeni sektöre ait değilse tutarlılık için temizlenir.
+	 * Endpoint: POST /sector/saveSector (güvenli)
+	 */
+	@Transactional
+	public DataResponse<Void> saveSector(UUID userId, UUID sectorId) {
+		// 1) Sektörü native sorgu ile doğrula (aktif mi?)
+		Sector sector = findActiveSectorById(sectorId);
+		if (sector == null) {
+			throw new ApiException(ResponseCode.NOT_FOUND, "Sektör bulunamadı: " + sectorId);
+		}
+
+		// 2) Kullanıcıyı JPA ile getir
+		UserInfo user = userInfoRepository.findById(userId)
+				.orElseThrow(() -> new ApiException(ResponseCode.NOT_FOUND, "Kullanıcı bulunamadı"));
+
+		// 3) Sektörü set et
+		user.setSectorId(sectorId);
+
+		// 4) Mevcut alt sektör bu sektöre ait değilse temizle (alt sektör opsiyonel kalır)
+		if (user.getSubsectorId() != null) {
+			Subsector current = findActiveSubsectorById(user.getSubsectorId());
+			if (current == null || !sectorId.equals(current.getSectorId())) {
+				user.setSubsectorId(null);
+			}
+		}
+
+		user.setUpdatedDate(LocalDateTime.now());
+		userInfoRepository.save(user);
+
+		// 5) Veri döndürülmez, yalnızca başarı kodu
+		return DataResponse.of(ResponseCode.SUCCESS);
+	}
+
+	/**
 	 * Kullanıcının alt sektörünü kaydeder.
 	 * Alt sektörün, kullanıcının seçili sektörüne ait olduğu kontrol edilir.
 	 * Endpoint: POST /sector/saveSubsector (güvenli)
@@ -149,6 +184,19 @@ public class SectorService {
 	// ============================================================
 	// Yardımcı native lookup'lar
 	// ============================================================
+
+	/**
+	 * Aktif sektörü id ile getirir; bulunamazsa null döner.
+	 */
+	private Sector findActiveSectorById(UUID sectorId) {
+		String sql = """
+				SELECT sector_id, name, active, created_date, updated_date
+				FROM sector
+				WHERE sector_id = ? AND active = 1
+				""";
+		List<Sector> rows = jdbcTemplate.query(sql, SECTOR_ROW_MAPPER, sectorId);
+		return rows.isEmpty() ? null : rows.get(0);
+	}
 
 	/**
 	 * Aktif alt sektörü id ile getirir; bulunamazsa null döner.

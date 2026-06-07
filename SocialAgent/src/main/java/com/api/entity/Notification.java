@@ -48,6 +48,18 @@ public class Notification {
 	@Column(name = "reference_id")
 	private UUID referenceId;
 
+	// Gönderim kanalı: MAIL | PUSH_NOTIFICATION (NotificationChannel enum)
+	@Column(name = "channel")
+	private String channel;
+
+	// Gönderim sonucu (0 = başarısız, 1 = başarılı)
+	@Column(name = "success")
+	private Integer success;
+
+	// success=0 ise hata detayı (exception stack trace) veya anlamlı sebep
+	@Column(name = "error_detail")
+	private String errorDetail;
+
 	// Okundu bilgisi (0 = okunmadı, 1 = okundu)
 	@Column(name = "is_read")
 	private Integer isRead;

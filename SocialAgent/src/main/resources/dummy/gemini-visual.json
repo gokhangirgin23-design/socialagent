@@ -1,0 +1,12 @@
+[
+  { "hasHuman": true,  "hasModel": true,  "isProductFocused": false, "dominantColors": ["pembe", "beyaz"],   "mood": "enerjik",   "description": "Model ürünü sergiliyor, canlı arka plan." },
+  { "hasHuman": false, "hasModel": false, "isProductFocused": true,  "dominantColors": ["siyah", "altın"],   "mood": "lüks",      "description": "Ürün stüdyo ışığında tek başına çekilmiş." },
+  { "hasHuman": true,  "hasModel": false, "isProductFocused": false, "dominantColors": ["mavi", "yeşil"],    "mood": "doğal",     "description": "Günlük yaşam karesi, açık hava." },
+  { "hasHuman": false, "hasModel": false, "isProductFocused": true,  "dominantColors": ["beyaz", "gri"],     "mood": "minimal",   "description": "Sade zeminde ürün yakın çekim." },
+  { "hasHuman": true,  "hasModel": true,  "isProductFocused": true,  "dominantColors": ["kırmızı"],          "mood": "iddialı",   "description": "Model ürünü kullanırken gösteriyor." },
+  { "hasHuman": false, "hasModel": false, "isProductFocused": false, "dominantColors": ["turuncu", "sarı"],  "mood": "sıcak",     "description": "Atmosfer odaklı mekan görseli." },
+  { "hasHuman": true,  "hasModel": false, "isProductFocused": true,  "dominantColors": ["kahve", "krem"],    "mood": "samimi",    "description": "Kişi ürünü elinde tutuyor, yakın plan." },
+  { "hasHuman": false, "hasModel": false, "isProductFocused": true,  "dominantColors": ["yeşil", "beyaz"],   "mood": "ferah",     "description": "Doğal ışıkta ürün düzenlemesi." },
+  { "hasHuman": true,  "hasModel": true,  "isProductFocused": false, "dominantColors": ["mor", "pembe"],     "mood": "trend",     "description": "Grup karesi, sosyal ortam." },
+  { "hasHuman": false, "hasModel": false, "isProductFocused": true,  "dominantColors": ["lacivert"],         "mood": "kurumsal",  "description": "Teknolojik ürün izole çekim." }
+]

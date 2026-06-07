@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.api.common.DataResponse;
 import com.api.dto.SectorDto;
+import com.api.dto.SaveSectorRequest;
 import com.api.dto.SaveSubsectorRequest;
 import com.api.dto.SubsectorDto;
 import com.api.dto.SubsectorListRequest;
@@ -50,6 +51,17 @@ public class SectorController {
 		// sectorId request'ten alınır; filtreleme parametresidir, userId değildir
 		List<SubsectorDto> subsectors = sectorService.listSubsectors(request.getSectorId());
 		return DataResponse.success(subsectors);
+	}
+
+	/**
+	 * Kullanıcının sektörünü kaydeder (alt sektör opsiyonel). Güvenli uç — JWT zorunlu.
+	 */
+	@PostMapping("/saveSector")
+	public DataResponse<Void> saveSector(@Valid @RequestBody SaveSectorRequest request) {
+		// userId JWT'den al (CLAUDE.md Madde 4)
+		UUID userId = SecurityUtil.getCurrentUserId();
+		// İş katmanına devret
+		return sectorService.saveSector(userId, request.getSectorId());
 	}
 
 	/**

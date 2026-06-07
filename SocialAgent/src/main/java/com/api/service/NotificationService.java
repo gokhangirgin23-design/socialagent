@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import com.api.dto.NotificationDto;
 import com.api.dto.repository.NotificationRepository;
 import com.api.entity.Notification;
+import com.api.entity.NotificationChannel;
 import com.api.entity.ReferenceType;
 import com.api.mapper.NotificationMapper;
 
@@ -75,27 +76,45 @@ public class NotificationService {
 			return;
 		}
 
-		// 2) notification kaydını oluştur (JPA save)
+		// 2) Ortak bildirim metni
 		LocalDateTime now = LocalDateTime.now();
-		Notification notification = new Notification();
-		notification.setNotificationId(UUID.randomUUID());
-		notification.setUserId(target.userId());
-		notification.setTitle("Raporunuz hazır");
+		String title = "Raporunuz hazır";
 		// analiz modu bilgisini metne kat (örn. "BOTH analiz raporunuz oluşturuldu.")
 		String modeText = (target.analysisMode() != null) ? target.analysisMode() : "Analiz";
-		notification.setMessage(modeText + " raporunuz oluşturuldu. Detay için panele göz atın.");
-		notification.setReferenceType(ReferenceType.REPORT.name());
-		notification.setReferenceId(target.reportId());
-		notification.setIsRead(0);
-		notification.setCreatedDate(now);
-		notification.setUpdatedDate(now);
-		notificationRepository.save(notification);
-		log.info("Bildirim oluşturuldu (REPORT): userId={}, reportId={}, notificationId={}",
-				target.userId(), target.reportId(), notification.getNotificationId());
+		String message = modeText + " raporunuz oluşturuldu. Detay için panele göz atın.";
 
-		// 3) Mail + push gönder (adaptörler kendi içinde guard'lı; hata sızdırmaz)
-		mailSender.send(target.email(), notification.getTitle(), notification.getMessage());
-		pushSender.send(target.userId(), notification.getTitle(), notification.getMessage());
+		// 3) Her kanalı ayrı ayrı gönder; sonucu (success/error_detail) ayrı notification satırına yaz.
+		//    Dashboard listesi/okunmamış sayımı PUSH_NOTIFICATION satırını gösterir (opsiyon b);
+		//    MAIL satırı yalnız gönderim kaydı olarak tutulur.
+		SendResult mailRes = mailSender.send(target.email(), title, message);
+		saveChannelNotification(target, title, message, NotificationChannel.MAIL, mailRes, now);
+
+		SendResult pushRes = pushSender.send(target.userId(), title, message);
+		saveChannelNotification(target, title, message, NotificationChannel.PUSH_NOTIFICATION, pushRes, now);
+	}
+
+	/**
+	 * Tek bir kanal için notification satırı yazar (JPA save).
+	 * reference_type=REPORT, reference_id=report_id; success/error_detail kanal sonucundan gelir.
+	 */
+	private void saveChannelNotification(ReportTarget target, String title, String message,
+			NotificationChannel channel, SendResult result, LocalDateTime now) {
+		Notification n = new Notification();
+		n.setNotificationId(UUID.randomUUID());
+		n.setUserId(target.userId());
+		n.setTitle(title);
+		n.setMessage(message);
+		n.setReferenceType(ReferenceType.REPORT.name());
+		n.setReferenceId(target.reportId());
+		n.setChannel(channel.name());
+		n.setSuccess(result.success() ? 1 : 0);
+		n.setErrorDetail(result.errorDetail());
+		n.setIsRead(0);
+		n.setCreatedDate(now);
+		n.setUpdatedDate(now);
+		notificationRepository.save(n);
+		log.info("Bildirim oluşturuldu: userId={}, reportId={}, channel={}, success={}, notificationId={}",
+				target.userId(), target.reportId(), channel, result.success(), n.getNotificationId());
 	}
 
 	/**
@@ -111,13 +130,17 @@ public class NotificationService {
 		int safeSize = (size > 0) ? size : 10;
 		int offset = safePage * safeSize;
 
-		// Temel sorgu (kullanıcı bazlı); onlyUnread bayrağına göre okunmamış filtresi statik eklenir.
+		// Temel sorgu (kullanıcı bazlı); dashboard yalnız PUSH_NOTIFICATION satırlarını gösterir (opsiyon b).
+		// Böylece her rapor için tek bildirim görünür; MAIL satırı yalnız gönderim kaydıdır.
+		// onlyUnread bayrağına göre okunmamış filtresi statik eklenir.
 		// Kullanıcı girdisi (userId/size/offset) DAİMA "?" parametresi olarak geçer (injection güvenliği).
 		String baseSql = """
 				SELECT notification_id, user_id, title, message,
-				       reference_type, reference_id, is_read, created_date, updated_date
+				       reference_type, reference_id, channel, success, error_detail,
+				       is_read, created_date, updated_date
 				FROM notification
 				WHERE user_id = ?
+				  AND channel = 'PUSH_NOTIFICATION'
 				""";
 		// onlyUnread ise yalnız okunmamışlar
 		String filterSql = onlyUnread ? "AND is_read = 0\n" : "";
@@ -165,6 +188,7 @@ public class NotificationService {
 				SELECT COUNT(*)
 				FROM notification
 				WHERE user_id = ? AND is_read = 0
+				  AND channel = 'PUSH_NOTIFICATION'
 				""";
 		Long count = jdbcTemplate.queryForObject(sql, Long.class, userId);
 		return (count != null) ? count : 0L;
@@ -209,6 +233,9 @@ public class NotificationService {
 				n.setReferenceType(rs.getString("reference_type"));
 				// reference_id nullable olabilir
 				n.setReferenceId(rs.getObject("reference_id", UUID.class));
+				n.setChannel(rs.getString("channel"));
+				n.setSuccess(rs.getObject("success", Integer.class));
+				n.setErrorDetail(rs.getString("error_detail"));
 				n.setIsRead(rs.getObject("is_read", Integer.class));
 				if (rs.getTimestamp("created_date") != null) {
 					n.setCreatedDate(rs.getTimestamp("created_date").toLocalDateTime());
