@@ -24,14 +24,13 @@ import com.api.entity.SocialPost;
 
 /**
  * SocialPostService için Spring'siz birim testi (broker/DB gerektirmez).
- * JdbcTemplate ve SocialPostRepository mock'lanır.
- * Doğrulanan davranışlar:
+ * Doğrulanan davranışlar (WorkerPrompt revizyonu):
  *  - isRecentlyAnalyzed: pencere içinde kayıt varsa true, yoksa false.
+ *  - isRecentlyAnalyzed: SECTOR tipi her zaman false döner (her zaman taze çekilir).
  *  - saveRecentPosts: dedup boşsa save çağrılır; doluysa (zaten kayıtlı) save çağrılmaz.
  */
 class SocialPostServiceTest {
 
-	// Mock bağımlılıklar
 	private JdbcTemplate jdbcTemplate;
 	private SocialPostRepository socialPostRepository;
 	private SocialPostService service;
@@ -43,7 +42,6 @@ class SocialPostServiceTest {
 	void setUp() {
 		jdbcTemplate = org.mockito.Mockito.mock(JdbcTemplate.class);
 		socialPostRepository = org.mockito.Mockito.mock(SocialPostRepository.class);
-		// @RequiredArgsConstructor sırası: jdbcTemplate, socialPostRepository
 		service = new SocialPostService(jdbcTemplate, socialPostRepository);
 	}
 
@@ -55,30 +53,40 @@ class SocialPostServiceTest {
 				.thenReturn(List.of(UUID.randomUUID()));
 
 		ScrapeTarget target = ScrapeTarget.monitored("INSTAGRAM", "rakip_hesap", monitoredId);
-		boolean recent = service.isRecentlyAnalyzed(target, 7);
+		// imza: isRecentlyAnalyzed(ScrapeTarget) — sabit 30 gün
+		boolean recent = service.isRecentlyAnalyzed(target);
 
-		// Son 7 günde analiz var -> Apify atlanmalı
 		assertTrue(recent);
 	}
 
 	@SuppressWarnings("unchecked")
 	@Test
 	void recentKayitYoksaFalseDoner() {
-		// Pencere içinde kayıt yok
 		when(jdbcTemplate.query(anyString(), any(RowMapper.class), (Object[]) any()))
 				.thenReturn(List.of());
 
 		ScrapeTarget target = ScrapeTarget.monitored("INSTAGRAM", "rakip_hesap", monitoredId);
-		boolean recent = service.isRecentlyAnalyzed(target, 7);
+		boolean recent = service.isRecentlyAnalyzed(target);
 
-		// Analiz yok -> Apify'a gidilmeli
 		assertFalse(recent);
+	}
+
+	@Test
+	void sectorTipiHerZamanFalseDoner() {
+		// SECTOR tipi: sorgu hiç yapılmaz, her zaman false (her zaman taze çek)
+		ScrapeTarget target = ScrapeTarget.sector("INSTAGRAM",
+				"https://www.instagram.com/explore/tags/makyaj/");
+		boolean recent = service.isRecentlyAnalyzed(target);
+
+		assertFalse(recent);
+		// JDBC'ye hiç gidilmemeli
+		verify(jdbcTemplate, never()).query(anyString(), any(RowMapper.class), (Object[]) any());
 	}
 
 	@SuppressWarnings("unchecked")
 	@Test
 	void yeniGonderilerKaydedilir() {
-		// Dedup sorgusu her zaman boş -> tüm gönderiler yeni
+		// Dedup sorgusu boş -> tüm gönderiler yeni
 		when(jdbcTemplate.query(anyString(), any(RowMapper.class), (Object[]) any()))
 				.thenReturn(List.of());
 
@@ -87,7 +95,6 @@ class SocialPostServiceTest {
 
 		int inserted = service.saveRecentPosts(jobId, target, posts);
 
-		// İki gönderi de yeni -> 2 save, eklenen=2
 		verify(socialPostRepository, times(2)).save(any(SocialPost.class));
 		assertTrue(inserted == 2);
 	}
@@ -95,7 +102,7 @@ class SocialPostServiceTest {
 	@SuppressWarnings("unchecked")
 	@Test
 	void zatenKayitliGonderiAtlanir() {
-		// Dedup sorgusu her zaman dolu -> gönderi zaten kayıtlı
+		// Dedup sorgusu dolu -> gönderi zaten kayıtlı
 		when(jdbcTemplate.query(anyString(), any(RowMapper.class), (Object[]) any()))
 				.thenReturn(List.of(UUID.randomUUID()));
 
@@ -104,21 +111,22 @@ class SocialPostServiceTest {
 
 		int inserted = service.saveRecentPosts(jobId, target, posts);
 
-		// Hepsi zaten var -> hiç save edilmemeli, eklenen=0
 		verify(socialPostRepository, never()).save(any(SocialPost.class));
 		assertTrue(inserted == 0);
 	}
 
-	// Test için örnek ApifyPost üretir
+	// ApifyPost: yeni imzayla (ownerUsername + rawJson eklendi)
 	private ApifyPost samplePost(String postId) {
 		return new ApifyPost(
 				postId,
+				"rakip_hesap",
 				"https://instagram.com/p/" + postId,
 				"örnek caption",
 				"#a #b",
 				"https://cdn/img.jpg",
 				"IMAGE",
 				100L, 10L, 0L, 0L,
-				LocalDateTime.now());
+				LocalDateTime.now(),
+				"{\"id\":\"" + postId + "\",\"likesCount\":100}");
 	}
 }

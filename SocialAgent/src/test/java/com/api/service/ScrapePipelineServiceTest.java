@@ -25,14 +25,12 @@ import com.api.entity.UserJob;
 
 /**
  * ScrapePipelineService için Spring'siz birim testi (broker/DB gerektirmez).
- * JdbcTemplate + TargetResolver + ApifyClient + SocialPostService mock'lanır; AppProperties gerçek.
- * Doğrulanan davranışlar:
- *  - Hedef yakın zamanda analiz EDİLMEMİŞSE: Apify'dan çekilir ve social_post'a yazılır.
- *  - Hedef yakın zamanda analiz EDİLMİŞSE: tekrar-analiz koruması Apify'ı atlar.
+ * Doğrulanan davranışlar (WorkerPrompt revizyonu):
+ *  - Hedef son 30 günde analiz EDİLMEMİŞSE: Apify'dan çekilir ve social_post'a yazılır.
+ *  - Hedef son 30 günde analiz EDİLMİŞSE: tekrar-analiz koruması Apify + AI'ı atlar.
  */
 class ScrapePipelineServiceTest {
 
-	// Mock bağımlılıklar
 	private JdbcTemplate jdbcTemplate;
 	private TargetResolver targetResolver;
 	private ApifyClient apifyClient;
@@ -56,10 +54,7 @@ class ScrapePipelineServiceTest {
 		reportPipelineService = org.mockito.Mockito.mock(ReportPipelineService.class);
 		notificationService = org.mockito.Mockito.mock(NotificationService.class);
 		jobCompletionService = org.mockito.Mockito.mock(JobCompletionService.class);
-		// Gerçek AppProperties: getApify().getRecentPostsLimit() = 5
 		appProperties = new AppProperties();
-		// @RequiredArgsConstructor sırası: jdbcTemplate, targetResolver, apifyClient, socialPostService,
-		// analysisPipelineService, reportPipelineService, notificationService, jobCompletionService, appProperties
 		pipeline = new ScrapePipelineService(jdbcTemplate, targetResolver, apifyClient, socialPostService,
 				analysisPipelineService, reportPipelineService, notificationService, jobCompletionService,
 				appProperties);
@@ -68,73 +63,67 @@ class ScrapePipelineServiceTest {
 	@SuppressWarnings("unchecked")
 	@Test
 	void analizEdilmemisHedefApifydanCekilirVeYazilir() {
-		// loadJob -> aktif job (analysis_period_days = 7)
+		// loadJob -> aktif job
 		when(jdbcTemplate.query(anyString(), any(RowMapper.class), (Object[]) any()))
-				.thenReturn(List.of(job(7)));
-		// Mod çözümü -> tek hedef
+				.thenReturn(List.of(job()));
+		// Mod çözümü -> tek MONITORED hedef
 		ScrapeTarget target = ScrapeTarget.monitored("INSTAGRAM", "rakip1", UUID.randomUUID());
 		when(targetResolver.resolve(any(UserJob.class))).thenReturn(List.of(target));
-		// Tekrar-analiz koruması -> hayır, analiz yok
-		when(socialPostService.isRecentlyAnalyzed(any(ScrapeTarget.class), anyInt())).thenReturn(false);
-		// Apify -> bir gönderi
-		when(apifyClient.fetchRecentPosts(anyString(), anyInt())).thenReturn(List.of(samplePost("p1")));
-		// FAZ 8: rapor COMPLETED -> bildirim tetiklenmeli
+		// Tekrar-analiz koruması -> son 30 günde analiz yok
+		when(socialPostService.isRecentlyAnalyzed(any(ScrapeTarget.class))).thenReturn(false);
+		// Apify -> bir gönderi (fetchPostsByUrls — directUrls yaklaşımı)
+		when(apifyClient.fetchPostsByUrls(any(List.class), anyInt())).thenReturn(List.of(samplePost("p1")));
+		// Rapor COMPLETED -> bildirim tetiklenmeli
 		when(reportPipelineService.generateReport(eq(jobId))).thenReturn(true);
 
 		pipeline.processJob(jobId);
 
-		// Apify çekilmeli ve social_post'a yazılmalı
-		verify(apifyClient, times(1)).fetchRecentPosts(eq("rakip1"), anyInt());
+		// Apify URL bazlı çekilmeli
+		verify(apifyClient, times(1)).fetchPostsByUrls(any(List.class), anyInt());
 		verify(socialPostService, times(1)).saveRecentPosts(eq(jobId), eq(target), any());
-		// FAZ 7: analiz + rapor + iş sonu muhasebesi zinciri tetiklenmeli
 		verify(analysisPipelineService, times(1)).analyzeJob(eq(jobId));
 		verify(reportPipelineService, times(1)).generateReport(eq(jobId));
 		verify(jobCompletionService, times(1)).finalizeJob(eq(jobId));
-		// FAZ 8: rapor tamamlandığından bildirim gönderilmeli
 		verify(notificationService, times(1)).notifyReportCompleted(eq(jobId));
 	}
 
 	@SuppressWarnings("unchecked")
 	@Test
 	void yakinZamandaAnalizEdilenHedefApifyAtlar() {
-		// loadJob -> aktif job
 		when(jdbcTemplate.query(anyString(), any(RowMapper.class), (Object[]) any()))
-				.thenReturn(List.of(job(7)));
-		// Mod çözümü -> tek hedef
+				.thenReturn(List.of(job()));
 		ScrapeTarget target = ScrapeTarget.monitored("INSTAGRAM", "rakip1", UUID.randomUUID());
 		when(targetResolver.resolve(any(UserJob.class))).thenReturn(List.of(target));
-		// Tekrar-analiz koruması -> evet, son pencerede analiz edilmiş
-		when(socialPostService.isRecentlyAnalyzed(any(ScrapeTarget.class), anyInt())).thenReturn(true);
+		// Son 30 günde analiz edilmiş -> hem Apify hem AI atlanır
+		when(socialPostService.isRecentlyAnalyzed(any(ScrapeTarget.class))).thenReturn(true);
 
 		pipeline.processJob(jobId);
 
-		// Apify'a hiç gidilmemeli ve yazma yapılmamalı
-		verify(apifyClient, never()).fetchRecentPosts(anyString(), anyInt());
+		verify(apifyClient, never()).fetchPostsByUrls(any(List.class), anyInt());
 		verify(socialPostService, never()).saveRecentPosts(any(), any(), any());
-		// FAZ 8: rapor tamamlanmadığından (generateReport default false) bildirim de gönderilmemeli
 		verify(notificationService, never()).notifyReportCompleted(any());
 	}
 
-	// Test için örnek UserJob üretir
-	private UserJob job(int periodDays) {
+	private UserJob job() {
 		UserJob j = new UserJob();
 		j.setUserJobId(jobId);
 		j.setUserId(UUID.randomUUID());
 		j.setAnalysisMode("COMPETITOR_ONLY");
-		j.setAnalysisPeriodDays(periodDays);
 		return j;
 	}
 
-	// Test için örnek ApifyPost üretir
+	// ApifyPost: yeni imzayla (ownerUsername + rawJson eklendi)
 	private ApifyPost samplePost(String postId) {
 		return new ApifyPost(
 				postId,
+				"rakip1",
 				"https://instagram.com/p/" + postId,
 				"örnek caption",
 				"#a #b",
 				"https://cdn/img.jpg",
 				"IMAGE",
 				100L, 10L, 0L, 0L,
-				LocalDateTime.now());
+				LocalDateTime.now(),
+				"{\"id\":\"" + postId + "\",\"likesCount\":100}");
 	}
 }

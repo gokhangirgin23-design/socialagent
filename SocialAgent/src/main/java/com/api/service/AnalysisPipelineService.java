@@ -58,10 +58,9 @@ public class AnalysisPipelineService {
 		}
 
 		int analyzed = 0;
-		// 2) Her gönderi için: yönlendir -> analiz et -> yaz
+		// 2) Her gönderi için: OpenAI(result_json) + Gemini Vision(media_url) → birleşik analiz → yaz
 		for (SocialPost post : posts) {
-			// Medya türüne göre OpenAI/Gemini'ye yönlendir (D3)
-			String analysisJson = aiAnalysisService.analyze(post);
+			String analysisJson = aiAnalysisService.analyzeFull(post);
 			// Sonucu post_analysis'e yaz (dedup'lı; null ise yazmaz)
 			if (postAnalysisService.saveAnalysis(post.getSocialPostId(), analysisJson)) {
 				analyzed++;
@@ -78,9 +77,12 @@ public class AnalysisPipelineService {
 	 */
 	private List<SocialPost> loadUnanalyzedPosts(UUID userJobId) {
 		// NOT EXISTS ile "analizi olmayan" postlar (idempotent yeniden çalışma)
+		// result_json: OpenAI metrik prompt'una ham Apify verisi olarak gider
 		String sql = """
 				SELECT sp.social_post_id, sp.platform, sp.media_type, sp.media_url,
-				       sp.caption, sp.hashtags, sp.likes_count, sp.comments_count, sp.views_count
+				       sp.post_url, sp.caption, sp.hashtags,
+				       sp.likes_count, sp.comments_count, sp.views_count,
+				       sp.result_json
 				FROM social_post sp
 				WHERE sp.user_job_id = ?
 				  AND NOT EXISTS (
@@ -94,11 +96,13 @@ public class AnalysisPipelineService {
 			sp.setPlatform(rs.getString("platform"));
 			sp.setMediaType(rs.getString("media_type"));
 			sp.setMediaUrl(rs.getString("media_url"));
+			sp.setPostUrl(rs.getString("post_url"));
 			sp.setCaption(rs.getString("caption"));
 			sp.setHashtags(rs.getString("hashtags"));
 			sp.setLikesCount(rs.getObject("likes_count", Long.class));
 			sp.setCommentsCount(rs.getObject("comments_count", Long.class));
 			sp.setViewsCount(rs.getObject("views_count", Long.class));
+			sp.setResultJson(rs.getString("result_json"));
 			return sp;
 		}, userJobId);
 	}

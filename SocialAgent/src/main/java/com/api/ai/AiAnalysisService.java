@@ -6,7 +6,6 @@ import org.springframework.stereotype.Service;
 
 import com.api.ai.prompt.AnalysisPrompts;
 import com.api.config.AppProperties;
-import com.api.entity.MediaType;
 import com.api.entity.SocialPost;
 
 import dev.langchain4j.data.message.ImageContent;
@@ -97,75 +96,74 @@ public class AiAnalysisService {
 	}
 
 	/**
-	 * Bir gönderiyi medya türüne göre uygun modele yönlendirip analiz JSON'ı üretir.
+	 * Her post için OpenAI (result_json metrik analizi) + Gemini Vision (görsel analiz) çalıştırır.
+	 * Sonuçlar birleştirilip tek JSON olarak döner: {"metrics": {...}, "visual": {...}}.
+	 * Her iki model de isteğe bağlıdır; biri yoksa ilgili alan null kalır, uygulama çökmez.
 	 *
-	 * @param post analiz edilecek social_post
-	 * @return analiz JSON metni; ilgili model yoksa/hata olursa null (çağıran kaydı atlar)
+	 * @param post analiz edilecek social_post (result_json + media_url dolu olmalı)
+	 * @return birleşik analiz JSON metni; her iki model de yoksa null
 	 */
-	public String analyze(SocialPost post) {
-		// Medya türünü normalize et (ham string -> enum); null -> TEXT
-		MediaType type = MediaType.fromRaw(post.getMediaType());
+	public String analyzeFull(SocialPost post) {
+		// 1) OpenAI: result_json (ham Apify metrik verisi) ile metrik analizi
+		String metricsJson = analyzeMetrics(post);
 
-		// TEXT -> OpenAI; diğerleri -> Gemini Vision (D3)
-		if (type == MediaType.TEXT) {
-			return analyzeText(post);
+		// 2) Gemini Vision: media_url ile görsel analiz
+		String visualJson = analyzeVisual(post);
+
+		// İkisi de null ise post_analysis'e yazma (çağıran atlar)
+		if (metricsJson == null && visualJson == null) {
+			return null;
 		}
-		return analyzeMedia(post, type);
+
+		// Birleşik JSON: {"metrics": ..., "visual": ...}
+		String metrics = metricsJson != null ? metricsJson : "null";
+		String visual = visualJson != null ? visualJson : "null";
+		return "{\"metrics\":" + metrics + ",\"visual\":" + visual + "}";
 	}
 
 	/**
-	 * TEXT/caption yolu: OpenAI metin modeline prompt gönderir.
+	 * OpenAI: result_json (ham Apify JSON) bazlı metrik/etkileşim analizi.
 	 */
-	private String analyzeText(SocialPost post) {
-		// Model kurulmadıysa (key yok) atla
+	private String analyzeMetrics(SocialPost post) {
 		if (openAiModel == null) {
-			log.debug("OpenAI modeli yok; TEXT analizi atlandı (postId={}).", post.getSocialPostId());
+			log.debug("OpenAI modeli yok; metrik analizi atlandı (postId={}).", post.getSocialPostId());
 			return null;
 		}
 		try {
-			// Prompt'u üret ve modeli çağır
-			String prompt = AnalysisPrompts.forText(post);
+			String prompt = AnalysisPrompts.forMetrics(post);
 			String raw = openAiModel.chat(prompt);
-			// Modelin döndürdüğü metni JSON'a sadeleştir
 			return cleanJson(raw);
 		} catch (Exception ex) {
-			// AI/ağ hatası -> logla, null dön (pipeline dayanıklı kalır)
-			log.error("OpenAI TEXT analizi başarısız: postId={}, hata={}", post.getSocialPostId(), ex.getMessage());
+			log.error("OpenAI metrik analizi başarısız: postId={}, hata={}", post.getSocialPostId(), ex.getMessage());
 			return null;
 		}
 	}
 
 	/**
-	 * IMAGE/VIDEO/CAROUSEL yolu: Gemini Vision'a görsel + metin gönderir.
-	 * Görsel yoksa metinle (caption) devam edilir.
+	 * Gemini Vision: media_url görsel bazlı içerik analizi (insan/model tespiti, ürün odaklılık vb.).
+	 * Görsel URL yoksa yalnızca caption ile devam edilir.
 	 */
-	private String analyzeMedia(SocialPost post, MediaType type) {
-		// Model kurulmadıysa (key yok) atla
+	private String analyzeVisual(SocialPost post) {
 		if (geminiModel == null) {
-			log.debug("Gemini modeli yok; {} analizi atlandı (postId={}).", type, post.getSocialPostId());
+			log.debug("Gemini modeli yok; görsel analiz atlandı (postId={}).", post.getSocialPostId());
 			return null;
 		}
 		try {
-			// Prompt metni + (varsa) görsel içeriği birleştir
-			String prompt = AnalysisPrompts.forMedia(post);
+			String prompt = AnalysisPrompts.forVisual(post);
 			UserMessage message;
 			if (hasText(post.getMediaUrl())) {
-				// Görsel URL'i ile multimodal mesaj
-				// TODO(uyum): ImageContent.from(url) imzasını sürüme göre doğrula
+				// TODO(uyum): ImageContent.from(url) imzasını LangChain4j sürümüne göre doğrula
 				message = UserMessage.from(
 						TextContent.from(prompt),
 						ImageContent.from(post.getMediaUrl()));
 			} else {
-				// Görsel yoksa yalnızca metinle ilerle
 				message = UserMessage.from(TextContent.from(prompt));
 			}
-			// Modeli çağır ve yanıt metnini al
 			ChatResponse response = geminiModel.chat(message);
 			String raw = response.aiMessage().text();
 			return cleanJson(raw);
 		} catch (Exception ex) {
-			// AI/ağ hatası -> logla, null dön
-			log.error("Gemini medya analizi başarısız: postId={}, hata={}", post.getSocialPostId(), ex.getMessage());
+			log.error("Gemini görsel analizi başarısız: postId={}, hata={}", post.getSocialPostId(), ex.getMessage());
 			return null;
 		}
 	}

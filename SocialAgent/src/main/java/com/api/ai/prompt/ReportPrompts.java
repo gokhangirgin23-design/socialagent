@@ -2,100 +2,129 @@ package com.api.ai.prompt;
 
 import java.util.List;
 
-import com.api.dto.ReportPostRow;
+import com.api.dto.AccountReportRow;
 
 /**
- * Rapor üretim prompt template'i (FAZ 7 — CLAUDE.md Bölüm 11).
- * FAZ 6'da post başına üretilen analiz JSON'ları toplanır ve OpenAI'a verilir; model
- * tek bir TÜRKÇE Markdown rapor üretir (analiz JSON'ı değil — rapor metni).
+ * Rapor üretim prompt template'i (FAZ 7 — WorkerPrompt revizyonu, CLAUDE.md Bölüm 11).
  *
- * Çıktı sözleşmesi: salt Markdown (kod bloğu sarmalaması olmadan). Rapor; kendi/rakip/sektör
- * hesaplarını karşılaştırır, etkileşim/tema/ton/hashtag stratejisini özetler ve uygulanabilir
- * öneriler verir. Analiz JSON'ları toleranslı okunur (FAZ 6 katı şema doğrulaması yapmıyordu).
+ * OpenAI'ya ham post satırları yerine hesap bazlı özetler gönderilir:
+ *   → Token verimliliği (150 post satırı yerine 5-10 hesap özeti)
+ *   → Daha yapısal ve karşılaştırılabilir veri
+ *
+ * analysisMode'a göre iki rapor tipi:
+ *   - OWN_ONLY / BOTH → Karşılaştırmalı: kendi hesabı vs. rakip/sektör
+ *   - NONE / COMPETITOR_ONLY → Başarı faktörü: nerede ve neden başarılı
+ *
+ * Başlıklar: Özet | İçerik Önerileri | Hashtag Önerileri | Paylaşım Takvimi |
+ *            Rakiplerden Öğren | Aksiyon Planı
  */
 public final class ReportPrompts {
 
-	// Yardımcı sınıf; örneklenmez
 	private ReportPrompts() {
 	}
 
-	// Caption gibi uzun alanları prompt'ta sınırlamak için üst sınır
-	private static final int CAPTION_MAX = 280;
+	private static final String COMPARISON_RULE = """
+			Sen kıdemli bir sosyal medya strateji danışmanısın. Sana bir kullanıcının Instagram analiz
+			işine ait hesap bazlı istatistikler veriliyor (her hesap için: ortalama beğeni, içerik tipi
+			dağılımı, reel oranı, insan/model kullanımı, ürün odaklılık vb.).
 
-	// Modelin rolünü ve Markdown çıktı kuralını veren ortak yönerge
-	private static final String SYSTEM_RULE = """
-			Sen kıdemli bir sosyal medya strateji danışmanısın. Sana bir kullanıcının analiz işine
-			ait gönderi analizleri (JSON) veriliyor. Bunları sentezleyerek TEK bir TÜRKÇE rapor üret.
+			Veriler; kullanıcının KENDİ hesabı ile rakip/sektör hesaplarını içermektedir.
+			Karşılaştırmalı bir Türkçe rapor üret.
 
 			Çıktı kuralları:
 			- SADECE Markdown döndür. Kod bloğu (```), JSON veya ön/son açıklama EKLEME.
 			- Profesyonel, okunaklı ve uygulanabilir bir rapor yaz.
-			- Aşağıdaki başlık iskeletini kullan (gereksiz başlıkları atlama):
+			- Aşağıdaki başlık iskeletini kullan:
 
 			# Sosyal Medya Analiz Raporu
-			## Genel Özet
-			## Etkileşim Değerlendirmesi
-			## Öne Çıkan Temalar ve Ton
-			## Hashtag Stratejisi
-			## Kendi Hesap vs. Rakip/Sektör Karşılaştırması
-			## Uygulanabilir Öneriler
+			## Özet
+			## Etkileşim Karşılaştırması (Kendi Hesabın vs. Rakip/Sektör)
+			## İçerik Önerileri
+			## Hashtag Önerileri
+			## Paylaşım Takvimi
+			## Rakiplerden Öğren
+			## Aksiyon Planı
 
 			Notlar:
+			- Takipçi sayısı yoksa ortalama beğeni + yorum sayısı etkileşim karşılaştırma metriği olarak kullan.
 			- Veri azsa bunu dürüstçe belirt; uydurma sayı/iddia ekleme.
-			- "Kendi Hesap" yoksa karşılaştırma bölümünü sektör/rakip ekseninde yaz.
+			""";
+
+	private static final String SUCCESS_FACTOR_RULE = """
+			Sen kıdemli bir sosyal medya strateji danışmanısın. Sana bir Instagram analiz işine ait
+			hesap bazlı istatistikler veriliyor (sektördeki başarılı hesaplar veya rakipler).
+
+			Bu hesapların nerelerde ve neden başarılı olduğunu analiz eden bir Türkçe rapor üret.
+
+			Çıktı kuralları:
+			- SADECE Markdown döndür. Kod bloğu (```), JSON veya ön/son açıklama EKLEME.
+			- Profesyonel, okunaklı ve uygulanabilir bir rapor yaz.
+			- Aşağıdaki başlık iskeletini kullan:
+
+			# Sosyal Medya Sektör Analiz Raporu
+			## Özet
+			## Başarılı Hesapların Ortak Özellikleri
+			## İçerik Önerileri
+			## Hashtag Önerileri
+			## Paylaşım Takvimi
+			## Rakiplerden Öğren
+			## Aksiyon Planı
+
+			Notlar:
+			- Takipçi sayısı yoksa ortalama beğeni + yorum sayısı etkileşim metriği olarak kullan.
+			- Veri azsa bunu dürüstçe belirt; uydurma sayı/iddia ekleme.
 			""";
 
 	/**
-	 * Bir job'ın tüm analizlerinden Markdown rapor prompt'u üretir.
+	 * Hesap bazlı özetlerden Markdown rapor prompt'u üretir.
 	 *
-	 * @param rows post_analysis ⋈ social_post satırları (kaynak etiketi + analiz JSON'ı)
-	 * @return OpenAI'a verilecek tek parça prompt metni
+	 * @param summaries hesap başına aggregate istatistikler (AccountReportRow)
+	 * @param analysisMode job'ın analiz modu
+	 * @return OpenAI'a verilecek prompt
 	 */
-	public static String forJob(List<ReportPostRow> rows) {
-		// Her analiz satırını numaralı, okunaklı bir blok olarak prompt'a yaz
+	public static String forJob(List<AccountReportRow> summaries, String analysisMode) {
+		boolean isComparison = "OWN_ONLY".equals(analysisMode) || "BOTH".equals(analysisMode);
+		String systemRule = isComparison ? COMPARISON_RULE : SUCCESS_FACTOR_RULE;
+
 		StringBuilder sb = new StringBuilder();
-		int i = 1;
-		for (ReportPostRow r : rows) {
-			sb.append("### Gönderi ").append(i++).append('\n');
-			sb.append("- Kaynak: ").append(safe(r.source())).append('\n');
-			sb.append("- Medya türü: ").append(safe(r.mediaType())).append('\n');
-			sb.append("- Caption: ").append(clip(r.caption())).append('\n');
-			sb.append("- Hashtag'ler: ").append(safe(r.hashtags())).append('\n');
-			sb.append("- Beğeni: ").append(nz(r.likesCount()))
-					.append(", Yorum: ").append(nz(r.commentsCount()))
-					.append(", Görüntülenme: ").append(nz(r.viewsCount())).append('\n');
-			// FAZ 6 analiz JSON'ı (ham; model toleranslı okur)
-			sb.append("- Analiz JSON: ").append(safe(r.analysisJson())).append("\n\n");
+		for (AccountReportRow r : summaries) {
+			sb.append("### ").append(r.source()).append(" — @").append(r.accountName()).append('\n');
+			sb.append("- Analiz edilen gönderi sayısı: ").append(r.postCount()).append('\n');
+			sb.append("- Ortalama beğeni: ").append(r.avgLikes()).append('\n');
+			sb.append("- Ortalama yorum: ").append(r.avgComments()).append('\n');
+			sb.append("- Ortalama görüntülenme: ").append(r.avgViews()).append('\n');
+
+			// İçerik tipi dağılımı
+			sb.append("- İçerik tipi dağılımı: ")
+					.append("Fotoğraf=").append(r.imageCount())
+					.append(", Video=").append(r.videoCount())
+					.append(", Carousel=").append(r.carouselCount())
+					.append(", Reel=").append(r.reelCount()).append('\n');
+
+			// Görsel analiz metrikleri (Gemini Vision'dan)
+			long total = r.postCount() > 0 ? r.postCount() : 1;
+			sb.append("- İnsan/model içeren gönderi: ")
+					.append(r.humanCount()).append(" / ").append(total)
+					.append(" (Model: ").append(r.modelCount()).append(')').append('\n');
+			sb.append("- Ürün odaklı gönderi: ")
+					.append(r.productFocusedCount()).append(" / ").append(total).append('\n');
+			sb.append('\n');
 		}
 
-		// Yönerge + toplam gönderi sayısı + analiz blokları
 		return """
 				%s
 
-				Analiz edilen toplam gönderi sayısı: %d
-				Aşağıda gönderi bazlı analizler verilmiştir:
+				Analiz modu: %s
+				Analiz edilen hesap sayısı: %d
+
+				Aşağıda hesap bazlı istatistikler verilmiştir:
 
 				%s
-				Şimdi yukarıdaki tüm analizleri sentezleyip Markdown raporu üret.
-				""".formatted(SYSTEM_RULE, rows.size(), sb.toString());
+				Şimdi yukarıdaki verileri sentezleyip Markdown raporu üret.
+				""".formatted(systemRule, safe(analysisMode), summaries.size(), sb.toString());
 	}
 
-	// null Long -> 0 (prompt'ta güvenli sayı)
-	private static long nz(Long v) {
-		return v != null ? v : 0L;
-	}
-
-	// null/blank metin -> "-" (prompt okunaklı kalsın)
 	private static String safe(String v) {
 		return (v == null || v.isBlank()) ? "-" : v;
-	}
-
-	// Uzun caption'ı prompt boyutunu şişirmemek için kısalt
-	private static String clip(String v) {
-		if (v == null || v.isBlank()) {
-			return "-";
-		}
-		String t = v.strip();
-		return t.length() <= CAPTION_MAX ? t : t.substring(0, CAPTION_MAX) + "…";
 	}
 }

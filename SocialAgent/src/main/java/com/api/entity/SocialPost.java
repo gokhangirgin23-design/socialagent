@@ -97,6 +97,10 @@ public class SocialPost {
 	@Column(name = "post_date")
 	private LocalDateTime postDate;
 
+	// Apify'dan dönen ham JSON (result_json) — OpenAI analiz promptuna ham veri olarak verilir
+	@Column(name = "result_json", columnDefinition = "TEXT")
+	private String resultJson;
+
 	// Kaydın oluşturulma tarihi
 	@Column(name = "created_date")
 	private LocalDateTime createdDate;

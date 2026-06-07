@@ -7,9 +7,6 @@ import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-import com.api.apify.ApifyClient;
-import com.api.apify.ApifyProfile;
-import com.api.config.AppProperties;
 import com.api.entity.AnalysisMode;
 import com.api.entity.Platform;
 import com.api.entity.UserJob;
@@ -18,18 +15,17 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * Bir job için analysis_mode'a göre çekilecek hesap kümesini belirler (FAZ 5 — CLAUDE.md Bölüm 10).
+ * Bir job için analysis_mode'a göre çekilecek hedef listesini belirler (WorkerPrompt revizyonu).
  * Service interface yok (CLAUDE.md Madde 1); concrete @Component.
  *
- * | Mode             | Hesaplar                                  |
- * | NONE             | sektör top 5                               |
- * | OWN_ONLY         | sektör top 5 + kendi (tek) hesap           |
- * | COMPETITOR_ONLY  | yalnızca rakip (monitored) hesaplar        |
- * | BOTH             | kendi + rakip hesaplar                     |
+ * | Mode             | Hedefler                                                        |
+ * | NONE             | Sektör hashtag explore URL'leri (OpenAI → top 5 hashtag)        |
+ * | OWN_ONLY         | Kendi hesabı + sektör hashtag explore URL'leri                  |
+ * | COMPETITOR_ONLY  | Yalnızca rakip (monitored) hesap profil URL'leri                |
+ * | BOTH             | Kendi hesabı + rakip hesap profil URL'leri                      |
  *
- * Sektör top 5 (D1): kullanıcının alt-sektör (yoksa sektör) adı keyword olarak Apify'a verilir,
- * follower/engagement'a göre sıralanıp ilk 5 alınır. COMPETITOR_ONLY/BOTH modlarında Apify
- * profil araması ÇAĞRILMAZ (gereksiz maliyet önlenir).
+ * Sektör araştırması (NONE / OWN_ONLY): Apify profil araması KALDIRILDI.
+ * Yerine HashtagService → OpenAI → top 5 hashtag → Instagram explore tag URL'leri kullanılır.
  *
  * Lookup'lar JdbcTemplate native; ilişkili tablolar eski stil "=" join (CLAUDE.md Madde 6).
  */
@@ -41,39 +37,35 @@ public class TargetResolver {
 	// Native sorgular için JdbcTemplate
 	private final JdbcTemplate jdbcTemplate;
 
-	// Sektör top-5 keyword araması için Apify istemcisi
-	private final ApifyClient apifyClient;
-
-	// Sektör top-N limiti gibi ayarlar için (tek kaynak: app.apify.*)
-	private final AppProperties appProperties;
+	// OpenAI ile sektör hashtag'lerini ve explore URL'lerini üreten servis
+	private final HashtagService hashtagService;
 
 	/**
-	 * Job'ın moduna göre hedef hesap listesini üretir.
+	 * Job'ın moduna göre hedef listesini üretir.
 	 *
-	 * @param job işlenecek job (analysisMode, userId, selectedUserSocialAccountId, analysisPeriodDays içerir)
+	 * @param job işlenecek job
 	 * @return çekilecek hedefler (boş olabilir)
 	 */
 	public List<ScrapeTarget> resolve(UserJob job) {
-		// Mod string -> enum (geçersizse NONE gibi davran, gürültüsüz)
 		AnalysisMode mode = parseMode(job.getAnalysisMode());
 		List<ScrapeTarget> targets = new ArrayList<>();
 
 		switch (mode) {
 			case NONE -> {
-				// Yalnızca sektör top 5
-				targets.addAll(resolveSectorTop5(job.getUserId()));
+				// Yalnızca sektör hashtag explore URL'leri
+				targets.addAll(resolveSectorHashtags(job.getUserId()));
 			}
 			case OWN_ONLY -> {
-				// Sektör top 5 + kendi hesap
-				targets.addAll(resolveSectorTop5(job.getUserId()));
+				// Önce kendi hesabı, sonra sektör hashtag explore URL'leri
 				addIfPresent(targets, resolveOwn(job.getSelectedUserSocialAccountId()));
+				targets.addAll(resolveSectorHashtags(job.getUserId()));
 			}
 			case COMPETITOR_ONLY -> {
-				// Yalnızca rakip hesaplar (Apify profil araması yok)
+				// Yalnızca rakip hesap profil URL'leri
 				targets.addAll(resolveMonitored(job.getUserId()));
 			}
 			case BOTH -> {
-				// Kendi + rakip (Apify profil araması yok)
+				// Kendi hesabı + rakip hesap profil URL'leri (sektör araştırması yok)
 				addIfPresent(targets, resolveOwn(job.getSelectedUserSocialAccountId()));
 				targets.addAll(resolveMonitored(job.getUserId()));
 			}
@@ -89,48 +81,17 @@ public class TargetResolver {
 	// ============================================================
 
 	/**
-	 * Sektör top 5 (D1): alt-sektör (yoksa sektör) adı keyword -> Apify keyword araması -> ilk N.
+	 * Sektör araştırması: OpenAI → top 5 hashtag → Instagram explore tag URL'leri → SECTOR hedefler.
 	 */
-	private List<ScrapeTarget> resolveSectorTop5(UUID userId) {
-		// 1) Kullanıcının sektör/alt-sektör id'lerini al (tek tablo lookup)
-		String refSql = """
-				SELECT sector_id, subsector_id
-				FROM user_info
-				WHERE user_id = ? AND active = 1
-				""";
-		List<SectorRef> refs = jdbcTemplate.query(refSql, (rs, rowNum) -> new SectorRef(
-				rs.getObject("sector_id", UUID.class),
-				rs.getObject("subsector_id", UUID.class)), userId);
-
-		// Kullanıcı/sektör yoksa boş dön
-		if (refs.isEmpty() || refs.get(0).sectorId() == null) {
-			log.warn("Sektör top-5 için sektör bulunamadı: userId={}", userId);
+	private List<ScrapeTarget> resolveSectorHashtags(UUID userId) {
+		List<String> exploreUrls = hashtagService.resolveExploreUrls(userId);
+		if (exploreUrls.isEmpty()) {
+			log.warn("Sektör hashtag URL'leri oluşturulamadı: userId={}", userId);
 			return List.of();
 		}
-		SectorRef ref = refs.get(0);
-
-		// 2) Keyword belirle: alt-sektör adı öncelikli, yoksa sektör adı
-		String keyword = null;
-		if (ref.subsectorId() != null) {
-			keyword = lookupName("subsector", "subsector_id", ref.subsectorId());
-		}
-		if (keyword == null) {
-			keyword = lookupName("sector", "sector_id", ref.sectorId());
-		}
-		// Keyword hâlâ yoksa boş dön
-		if (keyword == null || keyword.isBlank()) {
-			log.warn("Sektör top-5 için keyword belirlenemedi: userId={}", userId);
-			return List.of();
-		}
-
-		// 3) Apify keyword araması -> top N profil (limit config'ten — D1 varsayılan 5)
-		int limit = appProperties.getApify().getTopProfilesLimit();
-		List<ApifyProfile> profiles = apifyClient.searchTopProfiles(keyword, limit);
-
-		// 4) Profilleri SECTOR hedefine çevir (platform: Instagram)
 		List<ScrapeTarget> targets = new ArrayList<>();
-		for (ApifyProfile p : profiles) {
-			targets.add(ScrapeTarget.sector(Platform.INSTAGRAM.name(), p.accountName()));
+		for (String url : exploreUrls) {
+			targets.add(ScrapeTarget.sector(Platform.INSTAGRAM.name(), url));
 		}
 		return targets;
 	}
@@ -139,11 +100,9 @@ public class TargetResolver {
 	 * Kendi (tek) hesabı OWN hedefine çevirir; hesap yoksa null.
 	 */
 	private ScrapeTarget resolveOwn(UUID selectedUserSocialAccountId) {
-		// Seçili hesap yoksa OWN hedefi üretilemez
 		if (selectedUserSocialAccountId == null) {
 			return null;
 		}
-		// Hesabın platform + account_name'ini çek
 		String sql = """
 				SELECT platform, account_name
 				FROM user_social_account
@@ -182,28 +141,12 @@ public class TargetResolver {
 	// Yardımcılar
 	// ============================================================
 
-	/**
-	 * Tek tablodan ad (name) çeker; bulunamazsa null. (sector / subsector için ortak.)
-	 */
-	private String lookupName(String table, String idColumn, UUID id) {
-		// Tablo/kolon adları sabit literallerden geldiği için SQL injection riski yok
-		String sql = "SELECT name FROM " + table + " WHERE " + idColumn + " = ? AND active = 1";
-		List<String> names = jdbcTemplate.query(sql, (rs, rowNum) -> rs.getString("name"), id);
-		return names.isEmpty() ? null : names.get(0);
-	}
-
-	/**
-	 * Listeye null olmayan hedefi ekler.
-	 */
 	private void addIfPresent(List<ScrapeTarget> targets, ScrapeTarget target) {
 		if (target != null) {
 			targets.add(target);
 		}
 	}
 
-	/**
-	 * Mod string'ini enum'a çevirir; geçersizse NONE.
-	 */
 	private AnalysisMode parseMode(String value) {
 		try {
 			return AnalysisMode.valueOf(value);
@@ -211,11 +154,5 @@ public class TargetResolver {
 			log.warn("Geçersiz analysisMode='{}', NONE varsayıldı.", value);
 			return AnalysisMode.NONE;
 		}
-	}
-
-	/**
-	 * user_info'dan çekilen sektör/alt-sektör id taşıyıcısı (iç kullanım; test erişimi için paket-özel).
-	 */
-	record SectorRef(UUID sectorId, UUID subsectorId) {
 	}
 }

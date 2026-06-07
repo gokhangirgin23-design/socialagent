@@ -1,6 +1,8 @@
 package com.api.ai;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
@@ -24,13 +26,11 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 
 /**
  * AiAnalysisService için Spring'siz birim testi (gerçek AI/ağ gerektirmez).
- * Modeller (openAiModel/geminiModel) reflection ile mock ChatLanguageModel'lerle değiştirilir;
- * @PostConstruct init() çağrılmaz (key olmadan model kurulmaz zaten).
+ * Modeller reflection ile mock ChatLanguageModel'lerle değiştirilir.
  *
- * Doğrulanan davranış (FAZ 6 — D3, yönlendirme kuralı):
- *  - media_type=TEXT  -> OpenAI modeli çağrılır, Gemini ÇAĞRILMAZ.
- *  - media_type=IMAGE -> Gemini modeli çağrılır, OpenAI ÇAĞRILMAZ.
- *  - Model çıktısındaki ``` ve fazla metin temizlenip JSON döndürülür.
+ * Yeni davranış (WorkerPrompt revizyonu): analyzeFull() her post için
+ * hem OpenAI (metrik analizi) hem Gemini Vision (görsel analiz) çalıştırır.
+ * Sonuç {"metrics":{...},"visual":{...}} birleşik JSON'udur.
  */
 class AiAnalysisServiceTest {
 
@@ -40,79 +40,100 @@ class AiAnalysisServiceTest {
 
 	@BeforeEach
 	void setUp() throws Exception {
-		// AppProperties yalnızca alan erişimi için; init() çağrılmadığından içeriği önemsiz
 		service = new AiAnalysisService(new AppProperties());
 		openAiModel = org.mockito.Mockito.mock(ChatLanguageModel.class);
 		geminiModel = org.mockito.Mockito.mock(ChatLanguageModel.class);
-		// @PostConstruct yerine modelleri reflection ile enjekte et
 		setField("openAiModel", openAiModel);
 		setField("geminiModel", geminiModel);
 	}
 
 	@Test
-	void textGonderiOpenAiyeGider() {
-		// OpenAI metin çağrısı JSON döndürsün (``` ile sarılı -> temizlenmeli)
-		when(openAiModel.chat(anyString())).thenReturn("```json\n{\"tone\":\"samimi\"}\n```");
+	void herPostIcinHerIkiModelCalisir() {
+		// OpenAI metrik analizi JSON döndürsün
+		when(openAiModel.chat(anyString())).thenReturn("{\"engagement\":{\"level\":\"HIGH\"}}");
+		// Gemini görsel analizi JSON döndürsün
+		AiMessage aiMsg = AiMessage.from("{\"hasHuman\":true}");
+		ChatResponse response = ChatResponse.builder().aiMessage(aiMsg).build();
+		when(geminiModel.chat(any(UserMessage.class))).thenReturn(response);
 
-		String json = service.analyze(textPost());
+		String json = service.analyzeFull(postWithMedia());
 
-		// TEXT -> OpenAI çağrılmalı, Gemini hiç çağrılmamalı
+		// Her iki model de çağrılmalı
 		verify(openAiModel, times(1)).chat(anyString());
-		verify(geminiModel, never()).chat(any(UserMessage.class));
-		// ``` temizlenmiş, geçerli JSON gövdesi dönmeli
+		verify(geminiModel, times(1)).chat(any(UserMessage.class));
+		// Birleşik JSON döner: metrics + visual anahtarları içermeli
 		assertNotNull(json);
-		org.junit.jupiter.api.Assertions.assertTrue(json.startsWith("{") && json.endsWith("}"));
+		assertTrue(json.contains("metrics"));
+		assertTrue(json.contains("visual"));
 	}
 
 	@Test
-	void gorselGonderiGeminiyeGider() {
-		// Gemini multimodal yanıtı (ChatResponse -> AiMessage -> text)
-		AiMessage aiMessage = AiMessage.from("{\"tone\":\"kurumsal\"}");
-		ChatResponse response = ChatResponse.builder().aiMessage(aiMessage).build();
+	void openAiYoksaSadaceGeminiSonucuDoner() {
+		// OpenAI modeli null (key yok) -> metrik analizi atlanır
+		setFieldSilent("openAiModel", null);
+		AiMessage aiMsg = AiMessage.from("{\"hasHuman\":false}");
+		ChatResponse response = ChatResponse.builder().aiMessage(aiMsg).build();
 		when(geminiModel.chat(any(UserMessage.class))).thenReturn(response);
 
-		String json = service.analyze(imagePost());
+		String json = service.analyzeFull(postWithMedia());
 
-		// IMAGE -> Gemini çağrılmalı, OpenAI hiç çağrılmamalı
-		verify(geminiModel, times(1)).chat(any(UserMessage.class));
-		verify(openAiModel, never()).chat(anyString());
+		// Sadece Gemini çalışır; metrics null, visual dolu → birleşik JSON döner
 		assertNotNull(json);
-		org.junit.jupiter.api.Assertions.assertTrue(json.contains("kurumsal"));
+		assertTrue(json.contains("\"metrics\":null"));
+		assertTrue(json.contains("visual"));
+	}
+
+	@Test
+	void geminiYoksaSadaceOpenAiSonucuDoner() {
+		// Gemini modeli null (key yok) -> görsel analiz atlanır
+		setFieldSilent("geminiModel", null);
+		when(openAiModel.chat(anyString())).thenReturn("{\"engagement\":{\"level\":\"LOW\"}}");
+
+		String json = service.analyzeFull(postWithMedia());
+
+		// Sadece OpenAI çalışır; metrics dolu, visual null → birleşik JSON döner
+		assertNotNull(json);
+		assertTrue(json.contains("metrics"));
+		assertTrue(json.contains("\"visual\":null"));
+	}
+
+	@Test
+	void herIkiModelYoksaNullDoner() {
+		// Her iki model de null -> hiçbir analiz yapılamaz
+		setFieldSilent("openAiModel", null);
+		setFieldSilent("geminiModel", null);
+
+		String json = service.analyzeFull(postWithMedia());
+
+		assertNull(json);
 	}
 
 	// ---- yardımcılar ----
 
-	// TEXT türünde örnek gönderi
-	private SocialPost textPost() {
-		SocialPost sp = basePost();
-		sp.setMediaType("TEXT");
-		sp.setCaption("Bugün harika bir gün!");
-		return sp;
-	}
-
-	// IMAGE türünde (görsel URL'li) örnek gönderi
-	private SocialPost imagePost() {
-		SocialPost sp = basePost();
-		sp.setMediaType("IMAGE");
-		sp.setMediaUrl("https://cdn.example.com/img.jpg");
-		return sp;
-	}
-
-	// Ortak alanlar
-	private SocialPost basePost() {
+	private SocialPost postWithMedia() {
 		SocialPost sp = new SocialPost();
 		sp.setSocialPostId(UUID.randomUUID());
 		sp.setPlatform("INSTAGRAM");
+		sp.setMediaType("IMAGE");
+		sp.setMediaUrl("https://cdn.example.com/img.jpg");
+		sp.setCaption("Test gönderisi");
+		sp.setResultJson("{\"id\":\"abc\",\"likesCount\":120,\"commentsCount\":8}");
 		sp.setLikesCount(120L);
 		sp.setCommentsCount(8L);
-		sp.setViewsCount(0L);
 		return sp;
 	}
 
-	// Private alanı reflection ile set eder (init() yerine model enjeksiyonu)
 	private void setField(String name, Object value) throws Exception {
 		Field f = AiAnalysisService.class.getDeclaredField(name);
 		f.setAccessible(true);
 		f.set(service, value);
+	}
+
+	private void setFieldSilent(String name, Object value) {
+		try {
+			setField(name, value);
+		} catch (Exception e) {
+			throw new RuntimeException(e);
+		}
 	}
 }
