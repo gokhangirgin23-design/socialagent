@@ -48,6 +48,8 @@ public class AccountService {
 
 	// UserSocialAccount entity -> DTO dönüştürücü
 	private final UserSocialAccountMapper userSocialAccountMapper;
+	
+	//test
 
 	/**
 	 * Kullanıcının kendi sosyal medya hesabını ekler.
