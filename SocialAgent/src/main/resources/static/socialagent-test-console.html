@@ -563,7 +563,7 @@ const REPORT_TYPES = [
 async function prepareJobs(){
   // Sektör uyarısı bilgilendirme amaçlı; formu gizlemez (sunucu doğrular)
   if(S.user && !S.user.sectorId){
-    el('jobGate').innerHTML = '<div class=”banner warn”>Sektör seçilmemiş — NONE ve OWN_ONLY istekleri sektör gerektirdiğinden sunucu reddedebilir. (<a href=”#” onclick=”go(\'settings\');return false;”>Ayarlar</a>)</div>';
+    el('jobGate').innerHTML = '<div class="banner warn">Sektör seçilmemiş — NONE ve OWN_ONLY istekleri sektör gerektirdiğinden sunucu reddedebilir. (<a href="#" onclick="go(\'settings\');return false;">Ayarlar</a>)</div>';
   } else {
     el('jobGate').innerHTML = '';
   }
@@ -571,7 +571,7 @@ async function prepareJobs(){
   S.reportType = null;
   el('btnCreateJob').disabled = true;
   // Pilleri “yükleniyor” durumuna al
-  el('typePills').innerHTML = '<span style=”color:var(--muted);font-size:13px”>Tipler yükleniyor…</span>';
+  el('typePills').innerHTML = '<span style="color:var(--muted);font-size:13px">Tipler yükleniyor…</span>';
   el('jobHint').textContent = '';
   await loadAvailableTypes();
 }
@@ -580,7 +580,7 @@ async function loadAvailableTypes(){
   const bar = el('typePills');
   const hints = el('typeHints');
   if(!ok(r)){
-    bar.innerHTML = '<span style=”color:var(--err);font-size:13px”>Tipler yüklenemedi ('+(r.responseCode||'ağ hatası')+') — yukarıdaki “Tipleri Yenile” butonunu kullan.</span>';
+    bar.innerHTML = '<span style="color:var(--err);font-size:13px">Tipler yüklenemedi ('+(r.responseCode||'ağ hatası')+') — yukarıdaki “Tipleri Yenile” butonunu kullan.</span>';
     el('jobHint').textContent = '';
     if(hints) hints.innerHTML = '';
     return;
@@ -592,9 +592,9 @@ async function loadAvailableTypes(){
   bar.innerHTML = REPORT_TYPES.map(t=>{
     const enabled = sel[t.key] !== false;
     if(enabled){
-      return '<button type=”button” class=”pill” data-v=”'+t.v+'” onclick=”pickType(\''+t.v+'\')”>'+t.l+'</button>';
+      return '<button type="button" class="pill" data-v="'+t.v+'" onclick="pickType(\''+t.v+'\')">'+t.l+'</button>';
     }
-    return '<span class=”pill disabled” data-v=”'+t.v+'” title=”Hesap durumuna göre devre dışı”>'+t.l+'</span>';
+    return '<span class="pill disabled" data-v="'+t.v+'" title="Hesap durumuna göre devre dışı">'+t.l+'</span>';
   }).join('');
 
   // Hesap eksikliği ipuçları
@@ -602,8 +602,8 @@ async function loadAvailableTypes(){
   if(!sel.ownSelectable)        hintLines.push('Kendi hesabını ekle → <b>Kendi Hesabımı Kıyasla</b> aktif olur');
   if(!sel.competitorSelectable) hintLines.push('Rakip hesap ekle → <b>Rakip Hesap Analizi</b> aktif olur');
   if(hints) hints.innerHTML = hintLines.length
-    ? '<span style=”color:var(--muted);font-size:12px”>'+hintLines.join(' &nbsp;|&nbsp; ')+'</span>'
-    : '<span style=”color:var(--ok);font-size:12px”>✓ Tüm analiz tipleri kullanılabilir</span>';
+    ? '<span style="color:var(--muted);font-size:12px">'+hintLines.join(' &nbsp;|&nbsp; ')+'</span>'
+    : '<span style="color:var(--ok);font-size:12px">✓ Tüm analiz tipleri kullanılabilir</span>';
 
   // Daha önce seçili tip hâlâ geçerliyse koru, değilse sıfırla
   if(S.reportType){
@@ -650,19 +650,19 @@ async function loadRequests(){
   const t = el('requestTable'); const rows = ok(r)? r.data:[];
   t.innerHTML = rows.length ? rows.map(req=>
     '<tr><td><b>'+esc(req.reportType||'–')+'</b></td>'+
-    '<td>'+(req.queuePushed ? '<span class=”badge ok”>✓ '+fmt(req.queuePushDate)+'</span>' : '<span class=”badge no”>hayır</span>')+'</td>'+
-    '<td class=”mono” style=”font-size:11px;color:var(--err)”>'+esc(req.queueError||'')+'</td>'+
-    '<td class=”mono” style=”font-size:11px”>'+fmt(req.createdDate)+'</td></tr>'
-  ).join('') : '<tr><td colspan=”4” class=”empty”>Rapor isteği yok</td></tr>';
+    '<td>'+(req.queuePushed ? '<span class="badge ok">✓ '+fmt(req.queuePushDate)+'</span>' : '<span class="badge no">hayır</span>')+'</td>'+
+    '<td class="mono" style="font-size:11px;color:var(--err)">'+esc(req.queueError||'')+'</td>'+
+    '<td class="mono" style="font-size:11px">'+fmt(req.createdDate)+'</td></tr>'
+  ).join('') : '<tr><td colspan="4" class="empty">Rapor isteği yok</td></tr>';
 }
 async function loadReports(){
   const r = await api('/report/list', {page:0,size:20});
   const t = el('reportTable'); const rows = ok(r)? r.data:[];
   t.innerHTML = rows.length ? rows.map(rp=>
     '<tr><td>'+esc(rp.status)+'</td><td>'+esc(rp.reportType||'–')+'</td>'+
-    '<td class=”mono” style=”font-size:11px”>'+fmt(rp.createdDate)+'</td>'+
-    '<td><button class=”ghost” style=”padding:3px 9px” onclick=”reportDetail(\''+rp.reportId+'\')”>Detay</button></td></tr>'
-  ).join('') : '<tr><td colspan=”4” class=”empty”>Rapor yok</td></tr>';
+    '<td class="mono" style="font-size:11px">'+fmt(rp.createdDate)+'</td>'+
+    '<td><button class="ghost" style="padding:3px 9px" onclick="reportDetail(\''+rp.reportId+'\')">Detay</button></td></tr>'
+  ).join('') : '<tr><td colspan="4" class="empty">Rapor yok</td></tr>';
   el('reportDetail').innerHTML='';
 }
 async function reportDetail(id){
