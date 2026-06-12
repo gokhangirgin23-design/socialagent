@@ -71,25 +71,31 @@ public class ReportRequestService {
         // 1) reportType geçerli bir enum değeri mi?
         AnalysisMode mode = parseAnalysisMode(req.getReportType());
 
-        // 2) Kendi hesap kontrolü (OWN_ONLY / BOTH modunda zorunlu)
+        // 2) BOTH modu artık desteklenmiyor; yalnızca NONE / OWN_ONLY / COMPETITOR_ONLY kabul edilir
+        if (mode == AnalysisMode.BOTH) {
+            throw new ApiException(ResponseCode.VALIDATION_ERROR,
+                    "BOTH modu desteklenmemektedir. Geçerli tipler: NONE, OWN_ONLY, COMPETITOR_ONLY");
+        }
+
+        // 3) Kendi hesap kontrolü (OWN_ONLY için zorunlu)
         UUID ownAccountId = null;
-        if (mode == AnalysisMode.OWN_ONLY || mode == AnalysisMode.BOTH) {
+        if (mode == AnalysisMode.OWN_ONLY) {
             ownAccountId = findOwnAccountId(userId);
             if (ownAccountId == null) {
                 throw new ApiException(ResponseCode.VALIDATION_ERROR,
-                        mode.name() + " modu için aktif kendi hesabınız bulunmamaktadır. Önce hesap ekleyin.");
+                        "OWN_ONLY modu için aktif kendi hesabınız bulunmamaktadır. Önce hesap ekleyin.");
             }
         }
 
-        // 3) Rakip hesap kontrolü (COMPETITOR_ONLY / BOTH modunda zorunlu)
-        if (mode == AnalysisMode.COMPETITOR_ONLY || mode == AnalysisMode.BOTH) {
+        // 4) Rakip hesap kontrolü (COMPETITOR_ONLY için zorunlu)
+        if (mode == AnalysisMode.COMPETITOR_ONLY) {
             if (!hasMonitoredAccounts(userId)) {
                 throw new ApiException(ResponseCode.VALIDATION_ERROR,
-                        mode.name() + " modu için izlenen rakip hesap bulunmamaktadır. Önce rakip hesap ekleyin.");
+                        "COMPETITOR_ONLY modu için izlenen rakip hesap bulunmamaktadır. Önce rakip hesap ekleyin.");
             }
         }
 
-        // 4) Sektör zorunluluğu: NONE ve OWN_ONLY modlarında hashtag araştırması için gerekli
+        // 5) Sektör zorunluluğu: NONE ve OWN_ONLY modlarında hashtag araştırması için gerekli
         if (mode == AnalysisMode.NONE || mode == AnalysisMode.OWN_ONLY) {
             if (!hasSectorSelected(userId)) {
                 throw new ApiException(ResponseCode.VALIDATION_ERROR,
@@ -97,7 +103,7 @@ public class ReportRequestService {
             }
         }
 
-        // 5) report_request kaydını oluştur (queue_pushed=0, aktif)
+        // 6) report_request kaydını oluştur (queue_pushed=0, aktif)
         ReportRequest request = new ReportRequest();
         request.setRequestId(UUID.randomUUID());
         request.setUserId(userId);
@@ -111,7 +117,7 @@ public class ReportRequestService {
         // JPA save ile insert
         ReportRequest saved = reportRequestRepository.save(request);
 
-        // 6) Kuyruğa bas; hata olursa queue_error alanına yaz (istek yine kaydedildi)
+        // 7) Kuyruğa bas; hata olursa queue_error alanına yaz (istek yine kaydedildi)
         try {
             jobQueueProducer.publishRequest(saved.getRequestId());
             // Başarılı: queue_pushed=1 ve push zamanını güncelle
@@ -160,17 +166,16 @@ public class ReportRequestService {
 
     /**
      * Kullanıcının hangi analiz türlerini seçebileceğini döndürür (frontend için).
-     * OWN_SELECTABLE    : aktif kendi hesabı varsa true
-     * COMPETITOR_SELECTABLE : izlenen hesap varsa true
-     * BOTH_SELECTABLE   : her ikisi birden varsa true
-     * NONE_SELECTABLE   : her zaman true
+     * NONE_SELECTABLE           : her zaman true (hesap gerekmez)
+     * OWN_SELECTABLE            : aktif kendi hesabı varsa true
+     * COMPETITOR_SELECTABLE     : en az 1 izlenen rakip hesabı varsa true
      * Endpoint: POST /report-request/available-types
      */
     @Transactional(readOnly = true)
     public AnalysisSelectabilityDto getAnalysisSelectability(UUID userId) {
         boolean hasOwn = findOwnAccountId(userId) != null;
         boolean hasMonitored = hasMonitoredAccounts(userId);
-        return new AnalysisSelectabilityDto(hasOwn, hasMonitored, hasOwn && hasMonitored);
+        return new AnalysisSelectabilityDto(hasOwn, hasMonitored);
     }
 
     // ============================================================
@@ -232,7 +237,7 @@ public class ReportRequestService {
             return AnalysisMode.valueOf(value.toUpperCase());
         } catch (IllegalArgumentException e) {
             throw new ApiException(ResponseCode.VALIDATION_ERROR,
-                    "Geçersiz reportType değeri: " + value + ". Geçerli değerler: OWN_ONLY, COMPETITOR_ONLY, BOTH, NONE");
+                    "Geçersiz reportType değeri: " + value + ". Geçerli değerler: NONE, OWN_ONLY, COMPETITOR_ONLY");
         }
     }
 

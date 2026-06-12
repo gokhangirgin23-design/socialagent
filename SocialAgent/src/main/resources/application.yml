@@ -5,6 +5,12 @@ spring:
   profiles:
     # Aksi belirtilmezse local profil
     default: local
+  # Static dosyalar (HTML/JS/CSS) tarayıcı tarafından önbelleğe alınmasın (geliştirme kolaylığı)
+  web:
+    resources:
+      cache:
+        period: 0
+        use-last-modified: false
 
 server:
   port: 8080

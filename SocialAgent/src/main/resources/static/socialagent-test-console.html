@@ -79,12 +79,14 @@
   td .mono{font-size:12px}
   .empty{color:var(--muted-2);font-style:italic;padding:16px 0;font-size:13px}
 
-  .pill{display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border-radius:20px;border:2px solid var(--border);font-size:13px;cursor:pointer;background:var(--panel-2);transition:all .15s}
-  .pill.available{border-color:#3fb950;color:#3fb950;background:rgba(63,185,80,.08);font-weight:600}
-  .pill.available:hover{background:rgba(63,185,80,.22);transform:scale(1.04)}
-  .pill.sel{border-color:var(--accent);color:#fff;background:rgba(68,147,248,.35);font-weight:700}
-  .pill.disabled{opacity:.2;cursor:not-allowed;pointer-events:none;text-decoration:line-through}
-  .pillbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+  .pill{display:inline-flex;align-items:center;font-family:inherit;gap:6px;padding:7px 18px;border-radius:20px;border:2px solid var(--border);font-size:13px;background:var(--panel-2);transition:all .15s;cursor:default}
+  button.pill{cursor:pointer}
+  button.pill:focus{outline:2px solid #3fb950;outline-offset:2px}
+  button.pill.sel{border-color:var(--accent)!important;color:#fff!important;background:rgba(68,147,248,.4)!important;font-weight:700}
+  button.pill:not(.sel){border-color:#3fb950;color:#3fb950;background:rgba(63,185,80,.1);font-weight:600}
+  button.pill:not(.sel):hover{background:rgba(63,185,80,.28);transform:scale(1.05)}
+  span.pill.disabled{opacity:.18;text-decoration:line-through}
+  .pillbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px}
 
   /* API log */
   .log-col{background:#0b0e13;border-left:1px solid var(--border);display:flex;flex-direction:column}
@@ -554,10 +556,9 @@ async function removeMon(id){
    4 · RAPOR İSTEĞİ
    ============================================================ */
 const REPORT_TYPES = [
-  {v:'OWN_ONLY',        l:'Kendi Hesap',      key:'ownSelectable'},
-  {v:'COMPETITOR_ONLY', l:'Rakipler',          key:'competitorSelectable'},
-  {v:'BOTH',            l:'Kendi + Rakipler',  key:'bothSelectable'},
-  {v:'NONE',            l:'Sektör Analizi',    key:'noneSelectable'}
+  {v:'NONE',            l:'Sektör Analizi',            key:'noneSelectable'},
+  {v:'OWN_ONLY',        l:'Kendi Hesabımı Kıyasla',    key:'ownSelectable'},
+  {v:'COMPETITOR_ONLY', l:'Rakip Hesap Analizi',        key:'competitorSelectable'}
 ];
 async function prepareJobs(){
   // Sektör uyarısı bilgilendirme amaçlı; formu gizlemez (sunucu doğrular)
@@ -587,18 +588,19 @@ async function loadAvailableTypes(){
   const sel = r.data;
   const enabledTypes = REPORT_TYPES.filter(t => sel[t.key] !== false);
 
-  // Pilleri oluştur: aktif olanlar 'available', pasifler 'disabled'
+  // Aktif tipler <button>, pasif tipler <span> olarak render edilir
   bar.innerHTML = REPORT_TYPES.map(t=>{
     const enabled = sel[t.key] !== false;
-    return '<span class=”pill'+(enabled?' available':' disabled')+'” data-v=”'+t.v+'” '+
-      (enabled ? 'onclick=”pickType(\''+t.v+'\')”' : 'title=”Hesap durumuna göre devre dışı”')+
-      '>'+t.l+'</span>';
+    if(enabled){
+      return '<button type=”button” class=”pill” data-v=”'+t.v+'” onclick=”pickType(\''+t.v+'\')”>'+t.l+'</button>';
+    }
+    return '<span class=”pill disabled” data-v=”'+t.v+'” title=”Hesap durumuna göre devre dışı”>'+t.l+'</span>';
   }).join('');
 
   // Hesap eksikliği ipuçları
   const hintLines = [];
-  if(!sel.ownSelectable)        hintLines.push('”Kendi Hesabım” ekle → <b>Kendi Hesap</b> ve <b>Kendi + Rakipler</b> aktif olur');
-  if(!sel.competitorSelectable) hintLines.push('Rakip hesap ekle → <b>Rakipler</b> ve <b>Kendi + Rakipler</b> aktif olur');
+  if(!sel.ownSelectable)        hintLines.push('Kendi hesabını ekle → <b>Kendi Hesabımı Kıyasla</b> aktif olur');
+  if(!sel.competitorSelectable) hintLines.push('Rakip hesap ekle → <b>Rakip Hesap Analizi</b> aktif olur');
   if(hints) hints.innerHTML = hintLines.length
     ? '<span style=”color:var(--muted);font-size:12px”>'+hintLines.join(' &nbsp;|&nbsp; ')+'</span>'
     : '<span style=”color:var(--ok);font-size:12px”>✓ Tüm analiz tipleri kullanılabilir</span>';
