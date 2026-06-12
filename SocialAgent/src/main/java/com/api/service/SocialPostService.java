@@ -17,12 +17,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * social_post yazma + tekrar-analiz koruması iş mantığı (CLAUDE.md Bölüm 10 — WorkerPrompt revizyonu).
+ * social_post yazma + tekrar-analiz koruması iş mantığı (CLAUDE.md Bölüm 10).
  * Service interface yok (CLAUDE.md Madde 1); concrete @Service.
  *
- * Tekrar-analiz koruması: post_analysis JOIN ile hesap son 30 günde analiz edildiyse Apify + AI atlanır.
- * SECTOR kaynağında sector_account_name, Apify yanıtındaki ownerUsername'den alınır.
- * Insert: UNIQUE(platform, platform_post_id) servis katmanında elle kontrol edilir (CLAUDE.md Madde 5).
+ * Save-or-update: UNIQUE(platform, platform_post_id) var ise etkileşim metrikleri güncellenir.
+ * Tekrar-analiz koruması: post_analysis JOIN ile hesap son DEFAULT_ANALYSIS_PERIOD_DAYS gün içinde
+ * analiz edildiyse Apify + AI atlanır.
  * Join'ler eski stil "=" + JdbcTemplate native (CLAUDE.md Madde 6); insert JPA save.
  */
 @Slf4j
@@ -30,150 +30,168 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class SocialPostService {
 
-	// Native sorgular için JdbcTemplate
-	private final JdbcTemplate jdbcTemplate;
+    // Native sorgular için JdbcTemplate
+    private final JdbcTemplate jdbcTemplate;
 
-	// social_post insert için JPA repository
-	private final SocialPostRepository socialPostRepository;
+    // social_post insert için JPA repository
+    private final SocialPostRepository socialPostRepository;
 
-	/**
-	 * Hedef hesap son {analysisPeriodDays} gün içinde analiz edildi mi? (tekrar-analiz koruması).
-	 * Pencere job'ın analysis_period_days değerinden gelir (sabit değil).
-	 * Kimlik hedef tipine göre seçilir:
-	 *  - MONITORED: monitored_account_id
-	 *  - OWN:       selected_user_social_account_id (job zinciri üzerinden)
-	 *  - SECTOR:    Hashtag explore URL'leri dinamik olduğundan kontrol yapılmaz (her zaman çek).
-	 *
-	 * @param target             değerlendirilecek hedef
-	 * @param analysisPeriodDays tekrar-analiz penceresi (gün); job'tan gelir
-	 * @return pencere içinde analizi varsa true (Apify + AI atlanır)
-	 */
-	@Transactional(readOnly = true)
-	public boolean isRecentlyAnalyzed(ScrapeTarget target, int analysisPeriodDays) {
-		// SECTOR hedefleri her zaman taze çekilir (hashtag içeriği değişkendir)
-		if (target.type() == ScrapeTarget.TargetType.SECTOR) {
-			return false;
-		}
+    // Tekrar-analiz penceresi (gün); sabit varsayılan — per-request yapılandırma yok
+    private static final int DEFAULT_ANALYSIS_PERIOD_DAYS = 3;
 
-		Timestamp cutoff = Timestamp.valueOf(LocalDateTime.now().minusDays(analysisPeriodDays));
+    /**
+     * Hedef hesap son DEFAULT_ANALYSIS_PERIOD_DAYS gün içinde analiz edildi mi? (tekrar-analiz koruması).
+     * Kimlik hedef tipine göre seçilir:
+     *  - MONITORED: monitored_account_id ile post_analysis tarihi kontrol edilir
+     *  - OWN:       report_request.selected_user_social_account_id üzerinden kontrol
+     *  - SECTOR:    Hashtag explore URL'leri dinamik olduğundan kontrol yapılmaz (her zaman çek)
+     *
+     * @param target değerlendirilecek hedef
+     * @return pencere içinde analizi varsa true (Apify + AI atlanır)
+     */
+    @Transactional(readOnly = true)
+    public boolean isRecentlyAnalyzed(ScrapeTarget target) {
+        // SECTOR hedefleri her zaman taze çekilir (hashtag içeriği değişkendir)
+        if (target.type() == ScrapeTarget.TargetType.SECTOR) {
+            return false;
+        }
 
-		List<UUID> rows;
-		switch (target.type()) {
-			case MONITORED -> {
-				// Rakip hesap: monitored_account_id eşleşmesi
-				String sql = """
-						SELECT sp.social_post_id
-						FROM social_post sp, post_analysis pa
-						WHERE sp.social_post_id = pa.social_post_id
-						  AND sp.monitored_account_id = ?
-						  AND pa.created_date >= ?
-						""";
-				rows = jdbcTemplate.query(sql,
-						(rs, rowNum) -> rs.getObject("social_post_id", UUID.class),
-						target.monitoredAccountId(), cutoff);
-			}
-			case OWN -> {
-				// Kendi hesabı: job zinciri üzerinden selected_user_social_account_id eşleşmesi
-				String sql = """
-						SELECT sp.social_post_id
-						FROM social_post sp, post_analysis pa, user_job uj
-						WHERE sp.social_post_id = pa.social_post_id
-						  AND sp.user_job_id = uj.user_job_id
-						  AND uj.selected_user_social_account_id = ?
-						  AND pa.created_date >= ?
-						""";
-				rows = jdbcTemplate.query(sql,
-						(rs, rowNum) -> rs.getObject("social_post_id", UUID.class),
-						target.selectedUserSocialAccountId(), cutoff);
-			}
-			default -> rows = List.of();
-		}
+        Timestamp cutoff = Timestamp.valueOf(LocalDateTime.now().minusDays(DEFAULT_ANALYSIS_PERIOD_DAYS));
 
-		boolean recent = !rows.isEmpty();
-		if (recent) {
-			log.info("Tekrar-analiz koruması: hesap son {} günde analiz edilmiş, atlanıyor (tip={}, hesap={}).",
-					analysisPeriodDays, target.type(), target.accountName());
-		}
-		return recent;
-	}
+        List<UUID> rows;
+        switch (target.type()) {
+            case MONITORED -> {
+                // Rakip hesap: monitored_account_id eşleşmesi
+                String sql = """
+                        SELECT sp.social_post_id
+                        FROM social_post sp, post_analysis pa
+                        WHERE sp.social_post_id = pa.social_post_id
+                          AND sp.monitored_account_id = ?
+                          AND pa.created_date >= ?
+                        """;
+                rows = jdbcTemplate.query(sql,
+                        (rs, rowNum) -> rs.getObject("social_post_id", UUID.class),
+                        target.monitoredAccountId(), cutoff);
+            }
+            case OWN -> {
+                // Kendi hesabı: report_request.selected_user_social_account_id üzerinden
+                String sql = """
+                        SELECT sp.social_post_id
+                        FROM social_post sp, post_analysis pa, report_request rr
+                        WHERE sp.social_post_id = pa.social_post_id
+                          AND sp.request_id = rr.request_id
+                          AND rr.selected_user_social_account_id = ?
+                          AND pa.created_date >= ?
+                        """;
+                rows = jdbcTemplate.query(sql,
+                        (rs, rowNum) -> rs.getObject("social_post_id", UUID.class),
+                        target.selectedUserSocialAccountId(), cutoff);
+            }
+            default -> rows = List.of();
+        }
 
-	/**
-	 * Bir hedefin Apify'dan çekilen gönderilerini social_post'a yazar.
-	 * SECTOR kaynağında sector_account_name = post.ownerUsername() (Apify yanıtından gelir).
-	 * Her gönderi için UNIQUE(platform, platform_post_id) elle kontrol edilir;
-	 * zaten varsa atlanır (CLAUDE.md Madde 5).
-	 *
-	 * @return eklenen (yeni) gönderi sayısı
-	 */
-	@Transactional
-	public int saveRecentPosts(UUID userJobId, ScrapeTarget target, List<ApifyPost> posts) {
-		if (posts == null || posts.isEmpty()) {
-			return 0;
-		}
-		LocalDateTime now = LocalDateTime.now();
-		int inserted = 0;
+        boolean recent = !rows.isEmpty();
+        if (recent) {
+            log.info("Tekrar-analiz koruması: hesap son {} günde analiz edilmiş, atlanıyor (tip={}, hesap={}).",
+                    DEFAULT_ANALYSIS_PERIOD_DAYS, target.type(), target.accountName());
+        }
+        return recent;
+    }
 
-		for (ApifyPost post : posts) {
-			// 1) Dedup: bu platform + platform_post_id zaten var mı?
-			String dupSql = """
-					SELECT social_post_id
-					FROM social_post
-					WHERE platform = ? AND platform_post_id = ?
-					""";
-			List<UUID> existing = jdbcTemplate.query(dupSql,
-					(rs, rowNum) -> rs.getObject("social_post_id", UUID.class),
-					target.platform(), post.platformPostId());
+    /**
+     * Bir hedefin Apify'dan çekilen gönderilerini social_post'a yazar (save-or-update).
+     * Mevcut gönderi varsa etkileşim metrikleri + result_json güncellenir, request_id yenilenir.
+     * Yeni gönderi ise JPA save ile insert edilir.
+     *
+     * @return eklenen (yeni) gönderi sayısı
+     */
+    @Transactional
+    public int saveRecentPosts(UUID requestId, ScrapeTarget target, List<ApifyPost> posts) {
+        if (posts == null || posts.isEmpty()) {
+            return 0;
+        }
+        LocalDateTime now = LocalDateTime.now();
+        int inserted = 0;
 
-			if (!existing.isEmpty()) {
-				log.debug("Gönderi zaten kayıtlı, atlanıyor: platform={}, postId={}",
-						target.platform(), post.platformPostId());
-				continue;
-			}
+        for (ApifyPost post : posts) {
+            // Mevcut gönderi var mı? (platform + platform_post_id unique key)
+            String dupSql = """
+                    SELECT social_post_id
+                    FROM social_post
+                    WHERE platform = ? AND platform_post_id = ?
+                    """;
+            List<UUID> existing = jdbcTemplate.query(dupSql,
+                    (rs, rowNum) -> rs.getObject("social_post_id", UUID.class),
+                    target.platform(), post.platformPostId());
 
-			// 2) Yeni social_post oluştur
-			SocialPost sp = new SocialPost();
-			sp.setSocialPostId(UUID.randomUUID());
-			sp.setUserJobId(userJobId);
+            if (!existing.isEmpty()) {
+                // Güncelle: etkileşim metrikleri + ham JSON + bağlı request_id yenilenir
+                String updateSql = """
+                        UPDATE social_post
+                        SET request_id     = ?,
+                            likes_count    = ?,
+                            comments_count = ?,
+                            views_count    = ?,
+                            shares_count   = ?,
+                            result_json    = ?,
+                            updated_date   = ?
+                        WHERE platform = ? AND platform_post_id = ?
+                        """;
+                jdbcTemplate.update(updateSql,
+                        requestId,
+                        post.likesCount(), post.commentsCount(),
+                        post.viewsCount(), post.sharesCount(),
+                        post.rawJson(),
+                        Timestamp.valueOf(now),
+                        target.platform(), post.platformPostId());
+                log.debug("Gönderi güncellendi: platform={}, postId={}", target.platform(), post.platformPostId());
+                continue;
+            }
 
-			// Kaynak kimlik kolonları (hedef tipine göre)
-			sp.setMonitoredAccountId(target.type() == ScrapeTarget.TargetType.MONITORED
-					? target.monitoredAccountId() : null);
+            // Yeni gönderi: JPA save ile insert
+            SocialPost sp = new SocialPost();
+            sp.setSocialPostId(UUID.randomUUID());
+            sp.setRequestId(requestId);
 
-			// source_type kaynak ayrımını taşır (TargetType ile birebir: OWN | MONITORED | SECTOR)
-			sp.setSourceType(target.type().name());
+            // Kaynak kimlik kolonları (hedef tipine göre)
+            sp.setMonitoredAccountId(target.type() == ScrapeTarget.TargetType.MONITORED
+                    ? target.monitoredAccountId() : null);
 
-			// SECTOR: sector_account_name, hesap adı Apify yanıtından (ownerUsername); diğerlerinde null
-			if (target.type() == ScrapeTarget.TargetType.SECTOR) {
-				sp.setSectorAccountName(post.ownerUsername());
-			} else {
-				sp.setSectorAccountName(null);
-			}
+            // source_type kaynak ayrımını taşır (TargetType ile birebir: OWN | MONITORED | SECTOR)
+            sp.setSourceType(target.type().name());
 
-			// Gönderi alanları
-			sp.setPlatform(target.platform());
-			sp.setPlatformPostId(post.platformPostId());
-			sp.setPostUrl(post.postUrl());
-			sp.setCaption(post.caption());
-			sp.setHashtags(post.hashtags());
-			sp.setMediaUrl(post.mediaUrl());
-			sp.setMediaType(post.mediaType());
-			sp.setLikesCount(post.likesCount());
-			sp.setCommentsCount(post.commentsCount());
-			sp.setViewsCount(post.viewsCount());
-			sp.setSharesCount(post.sharesCount());
-			sp.setPostDate(post.postDate());
-			// Ham Apify JSON'u (result_json — OpenAI analiz promptuna gidecek)
-			sp.setResultJson(post.rawJson());
-			sp.setCreatedDate(now);
-			sp.setUpdatedDate(now);
+            // SECTOR: sector_account_name, hesap adı Apify yanıtından (ownerUsername); diğerlerinde null
+            if (target.type() == ScrapeTarget.TargetType.SECTOR) {
+                sp.setSectorAccountName(post.ownerUsername());
+            } else {
+                sp.setSectorAccountName(null);
+            }
 
-			// 3) JPA save ile insert
-			socialPostRepository.save(sp);
-			inserted++;
-		}
+            // Gönderi alanları
+            sp.setPlatform(target.platform());
+            sp.setPlatformPostId(post.platformPostId());
+            sp.setPostUrl(post.postUrl());
+            sp.setCaption(post.caption());
+            sp.setHashtags(post.hashtags());
+            sp.setMediaUrl(post.mediaUrl());
+            sp.setMediaType(post.mediaType());
+            sp.setLikesCount(post.likesCount());
+            sp.setCommentsCount(post.commentsCount());
+            sp.setViewsCount(post.viewsCount());
+            sp.setSharesCount(post.sharesCount());
+            sp.setPostDate(post.postDate());
+            // Ham Apify JSON'u (result_json — OpenAI analiz promptuna gidecek)
+            sp.setResultJson(post.rawJson());
+            sp.setCreatedDate(now);
+            sp.setUpdatedDate(now);
 
-		log.info("social_post yazıldı: jobId={}, tip={}, hesap={}, gelen={}, eklenen={}",
-				userJobId, target.type(), target.accountName(), posts.size(), inserted);
-		return inserted;
-	}
+            // JPA save ile insert
+            socialPostRepository.save(sp);
+            inserted++;
+        }
+
+        log.info("social_post işlendi: requestId={}, tip={}, hesap={}, gelen={}, yeni={}",
+                requestId, target.type(), target.accountName(), posts.size(), inserted);
+        return inserted;
+    }
 }

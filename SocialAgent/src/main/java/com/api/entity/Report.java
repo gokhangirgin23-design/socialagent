@@ -29,9 +29,9 @@ public class Report {
 	@Column(name = "report_id")
 	private UUID reportId;
 
-	// Raporun ait olduğu job (nesne referansı yok - CLAUDE.md Madde 6)
-	@Column(name = "user_job_id")
-	private UUID userJobId;
+	// Raporun ait olduğu rapor isteği (nesne referansı yok - CLAUDE.md Madde 6)
+	@Column(name = "request_id")
+	private UUID requestId;
 
 	// Rapor durumu: PENDING | GENERATING | COMPLETED | FAILED (ReportStatus enum)
 	@Column(name = "status")

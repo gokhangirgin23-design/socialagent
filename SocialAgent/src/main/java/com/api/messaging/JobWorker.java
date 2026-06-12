@@ -10,21 +10,14 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * Job kuyruğu tüketicisi / worker (FAZ 5 — CLAUDE.md Bölüm 9).
+ * Rapor isteği kuyruk tüketicisi / worker (CLAUDE.md Bölüm 9 — yeni: scheduler yok, FIFO kuyruk).
  * Service interface yok (CLAUDE.md Madde 1); concrete @Component.
  *
- * Scheduler (FAZ 4) tarafından kuyruğa basılan JobMessage'ları dinler ve
- * scraping pipeline'ını (Apify + social_post) çalıştırır.
+ * ReportRequestService tarafından kuyruğa basılan JobMessage'ları dinler ve
+ * scraping pipeline'ını (Apify + social_post + AI + rapor) çalıştırır.
  *
- * Mesaj gövdesi JSON'dur; Boot, RabbitConfig'teki MessageConverter (Jackson2Json) bean'ini
- * listener container factory'sine otomatik uygular; ayrıca dönüştürücü yapılandırması gerekmez.
- *
- * Hata yönetimi: pipeline patlarsa hata loglanır ve mesaj ack edilir (return). Böylece
- * "poison message" sonsuz yeniden teslim döngüsüne girmez.
- * TODO(uyum): İleride retry + DLQ (dead-letter) politikası eklenebilir.
- *
- * Kuyruk adı app.messaging.job-queue'dan gelir. app.worker.enabled=false ise (local profil)
- * bu bean oluşturulmaz; böylece local'de broker zorunlu olmaz (scheduler ile aynı yaklaşım).
+ * Hata yönetimi: pipeline patlarsa hata loglanır ve mesaj ack edilir (return).
+ * app.worker.enabled=false ise (local profil) bu bean oluşturulmaz.
  */
 @Slf4j
 @Component
@@ -32,29 +25,28 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class JobWorker {
 
-	// Scraping pipeline'ı (Apify + social_post)
-	private final ScrapePipelineService scrapePipelineService;
+    // Scraping + analiz + rapor pipeline'ı
+    private final ScrapePipelineService scrapePipelineService;
 
-	/**
-	 * Kuyruktan gelen job mesajını işler.
-	 * @RabbitListener queue adını property placeholder ile okur.
-	 *
-	 * @param message JSON'dan deserialize edilen job mesajı (userJobId taşır)
-	 */
-	@RabbitListener(queues = "${app.messaging.job-queue:socialagent.job.queue}")
-	public void onJobMessage(JobMessage message) {
-		// Mesaj veya id boşsa atla
-		if (message == null || message.userJobId() == null) {
-			log.warn("Geçersiz job mesajı alındı (null), atlanıyor.");
-			return;
-		}
-		log.info("Job mesajı alındı, işleniyor: userJobId={}", message.userJobId());
-		try {
-			// Pipeline'ı çalıştır (scraping + social_post yazımı)
-			scrapePipelineService.processJob(message.userJobId());
-		} catch (Exception ex) {
-			// Hata -> logla ve ack et (sonsuz redelivery'i önle)
-			log.error("Job işlenirken hata: userJobId={}, hata={}", message.userJobId(), ex.getMessage(), ex);
-		}
-	}
+    /**
+     * Kuyruktan gelen rapor isteği mesajını işler.
+     *
+     * @param message JSON'dan deserialize edilen mesaj (requestId taşır)
+     */
+    @RabbitListener(queues = "${app.messaging.job-queue:socialagent.job.queue}")
+    public void onJobMessage(JobMessage message) {
+        // Mesaj veya id boşsa atla
+        if (message == null || message.requestId() == null) {
+            log.warn("Geçersiz rapor isteği mesajı alındı (null), atlanıyor.");
+            return;
+        }
+        log.info("Rapor isteği mesajı alındı, işleniyor: requestId={}", message.requestId());
+        try {
+            // Pipeline'ı çalıştır (scraping + analiz + rapor)
+            scrapePipelineService.processRequest(message.requestId());
+        } catch (Exception ex) {
+            // Hata -> logla ve ack et (sonsuz redelivery'i önle)
+            log.error("Rapor isteği işlenirken hata: requestId={}, hata={}", message.requestId(), ex.getMessage(), ex);
+        }
+    }
 }

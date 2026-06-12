@@ -79,9 +79,11 @@
   td .mono{font-size:12px}
   .empty{color:var(--muted-2);font-style:italic;padding:16px 0;font-size:13px}
 
-  .pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:20px;border:1px solid var(--border);font-size:12px;cursor:pointer;background:var(--panel-2)}
-  .pill.sel{border-color:var(--accent);color:#79c0ff;background:rgba(68,147,248,.12)}
-  .pill.disabled{opacity:.4;cursor:not-allowed}
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border-radius:20px;border:2px solid var(--border);font-size:13px;cursor:pointer;background:var(--panel-2);transition:all .15s}
+  .pill.available{border-color:#3fb950;color:#3fb950;background:rgba(63,185,80,.08);font-weight:600}
+  .pill.available:hover{background:rgba(63,185,80,.22);transform:scale(1.04)}
+  .pill.sel{border-color:var(--accent);color:#fff;background:rgba(68,147,248,.35);font-weight:700}
+  .pill.disabled{opacity:.2;cursor:not-allowed;pointer-events:none;text-decoration:line-through}
   .pillbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px}
 
   /* API log */
@@ -133,7 +135,7 @@
       <span class="num" id="n-accounts">3</span><span class="lbl">Hesaplar</span>
     </div>
     <div class="step locked" data-step="jobs" onclick="go('jobs')">
-      <span class="num" id="n-jobs">4</span><span class="lbl">Zamanlanmış Görev</span>
+      <span class="num" id="n-jobs">4</span><span class="lbl">Rapor İsteği</span>
     </div>
     <div class="step locked" data-step="dashboard" onclick="go('dashboard')">
       <span class="num" id="n-dashboard">5</span><span class="lbl">Dashboard</span>
@@ -207,22 +209,24 @@
       </div>
     </section>
 
-    <!-- 4 · JOBS -->
+    <!-- 4 · JOBS → RAPOR İSTEĞİ -->
     <section class="panel-view" id="view-jobs">
-      <h2>Zamanlanmış Görev Oluştur</h2>
-      <p class="sub"><code>analysisMode</code> backend tarafında hesap durumuna göre otomatik belirlenir (OWN_ONLY / COMPETITOR_ONLY / BOTH / NONE). Sen sadece periyot seçersin.</p>
+      <h2>Rapor İsteği Oluştur</h2>
+      <p class="sub">Hangi hesaplar analiz edilsin? İstek kuyruğa anında eklenir (FIFO). Rapor hazır olunca bildirim alırsın.</p>
       <div id="jobGate"></div>
       <div class="card" id="jobForm">
-        <h3>Periyot <code>/job/create</code></h3>
-        <div class="pillbar" id="periodPills"></div>
-        <div id="onDemandWarn" class="banner warn" style="display:none">
-          Şu an alacağınız rapor hemen değil, ortalama yarım saat içerisinde size bildirim ve/veya mail olarak iletilecektir.
+        <h3>Analiz tipi seç <code>/report-request/available-types</code> · <code>/report-request/create</code></h3>
+        <div class="banner info" style="margin-bottom:12px">
+          Gri seçenekler mevcut hesap durumuna göre devre dışıdır. "Tipler" butonuyla güncel durumu yenile.
+          <button class="ghost" style="margin-left:8px;padding:3px 9px" onclick="loadAvailableTypes()">Tipleri Yenile</button>
         </div>
-        <div class="grid2" id="repeatFields">
-          <div class="field"><label>repeatCount (ON_DEMAND dışı zorunlu)</label><input id="repeatCount" type="number" min="1" value="4"></div>
+        <div class="pillbar" id="typePills">
+          <span style="color:var(--muted);font-size:13px">Yükleniyor…</span>
         </div>
-        <button onclick="createJob()" id="btnCreateJob" disabled>Görev Kaydet</button>
-        <div class="hint" id="jobHint"></div>
+        <div id="typeHints" style="margin-top:8px;font-size:12px;color:var(--muted)"></div>
+        <div class="hint" id="jobHint" style="margin-top:6px"></div>
+        <br>
+        <button onclick="createRequest()" id="btnCreateJob" disabled>İstek Oluştur</button>
       </div>
     </section>
 
@@ -231,12 +235,12 @@
       <h2>Dashboard</h2>
       <p class="sub">Job, rapor ve bildirim uçlarını gözlemle.</p>
       <div class="card">
-        <h3>Görevlerim <code>/job/list</code> <button class="ghost" style="margin-left:auto" onclick="loadJobs()">Yenile</button></h3>
-        <table><thead><tr><th>Periyot</th><th>Mode</th><th>tamam</th><th>tekrar</th><th>Oluşturma</th></tr></thead><tbody id="jobTable"></tbody></table>
+        <h3>Rapor İsteklerim <code>/report-request/list</code> <button class="ghost" style="margin-left:auto" onclick="loadRequests()">Yenile</button></h3>
+        <table><thead><tr><th>Analiz Tipi</th><th>Kuyruğa Gönderildi</th><th>Hata</th><th>Oluşturma</th></tr></thead><tbody id="requestTable"></tbody></table>
       </div>
       <div class="card">
         <h3>Raporlarım <code>/report/list</code> · <code>/report/detail</code> <button class="ghost" style="margin-left:auto" onclick="loadReports()">Yenile</button></h3>
-        <table><thead><tr><th>Durum</th><th>Mode</th><th>Periyot</th><th>Oluşturma</th><th></th></tr></thead><tbody id="reportTable"></tbody></table>
+        <table><thead><tr><th>Durum</th><th>Analiz Tipi</th><th>Oluşturma</th><th></th></tr></thead><tbody id="reportTable"></tbody></table>
         <div id="reportDetail"></div>
       </div>
       <div class="card">
@@ -262,7 +266,7 @@
 /* ============================================================
    Durum
    ============================================================ */
-const S = { accessToken:null, refreshToken:null, user:null, period:null, ownAccount:null, monitored:[], jobs:[] };
+const S = { accessToken:null, refreshToken:null, user:null, reportType:null, ownAccount:null, monitored:[] };
 
 function persist(){ try{ localStorage.setItem('sa_console', JSON.stringify({a:S.accessToken,r:S.refreshToken,u:S.user,b:el('baseUrl').value})); }catch(e){} }
 function restore(){
@@ -345,7 +349,7 @@ function go(step){
   if(step==='settings') loadSectors();
   if(step==='accounts'){ loadOwn(); loadMonitored(); }
   if(step==='jobs') prepareJobs();
-  if(step==='dashboard'){ loadJobs(); loadReports(); loadNotifications(); }
+  if(step==='dashboard'){ loadRequests(); loadReports(); loadNotifications(); }
 }
 function unlock(step, on=true){
   document.querySelector('.step[data-step="'+step+'"]').classList.toggle('locked', !on);
@@ -423,7 +427,7 @@ async function refreshAccessToken(){
   else toast('Yenileme başarısız','err');
 }
 function logout(){
-  Object.assign(S,{accessToken:null,refreshToken:null,user:null,period:null,ownAccount:null,monitored:[],jobs:[]});
+  Object.assign(S,{accessToken:null,refreshToken:null,user:null,reportType:null,ownAccount:null,monitored:[]});
   try{ localStorage.removeItem('sa_console'); }catch(e){}
   el('btnLogout').disabled=true; el('btnRefresh').disabled=true; el('sessionCard').style.display='none';
   ['settings','accounts','jobs','dashboard'].forEach(s=>{unlock(s,false);markDone(s,false);});
@@ -547,83 +551,116 @@ async function removeMon(id){
 }
 
 /* ============================================================
-   4 · JOBS
+   4 · RAPOR İSTEĞİ
    ============================================================ */
-const PERIODS = [
-  {v:'DAILY',   l:'Günlük'},
-  {v:'WEEKLY',  l:'Haftalık'},
-  {v:'MONTHLY', l:'Aylık'},
-  {v:'ON_DEMAND', l:'Şu an'}
+const REPORT_TYPES = [
+  {v:'OWN_ONLY',        l:'Kendi Hesap',      key:'ownSelectable'},
+  {v:'COMPETITOR_ONLY', l:'Rakipler',          key:'competitorSelectable'},
+  {v:'BOTH',            l:'Kendi + Rakipler',  key:'bothSelectable'},
+  {v:'NONE',            l:'Sektör Analizi',    key:'noneSelectable'}
 ];
 async function prepareJobs(){
-  const ready = S.user && S.user.sectorId;
-  el('jobGate').innerHTML = ready ? '' :
-    '<div class="banner warn">Önce <b>Ayarlar</b> adımında sektör seç. Aksi halde görev oluşturulamaz. (Alt sektör opsiyonel.)</div>';
-  el('jobForm').style.display = ready ? 'block':'none';
-  if(!ready) return;
-  // Tamamlanmamış zamanlı görev var mı? → "Şu an" disable
-  const r = await api('/job/list', {page:0,size:50});
-  S.jobs = ok(r)? r.data : [];
-  const hasPendingScheduled = S.jobs.some(j => j.completed===0 && ['DAILY','WEEKLY','MONTHLY'].includes(j.jobPeriod));
-  S.period = null;
-  renderPeriodPills(hasPendingScheduled);
-}
-function renderPeriodPills(blockOnDemand){
-  const bar = el('periodPills');
-  bar.innerHTML = PERIODS.map(p=>{
-    const dis = (p.v==='ON_DEMAND' && blockOnDemand);
-    return '<span class="pill'+(dis?' disabled':'')+'" data-v="'+p.v+'" '+
-      (dis?'title="Tamamlanmamış zamanlı görev var"':'onclick="pickPeriod(\''+p.v+'\')"')+'>'+p.l+'</span>';
-  }).join('');
-  el('jobHint').innerHTML = blockOnDemand
-    ? '“Şu an” devre dışı: tamamlanmamış günlük/haftalık/aylık bir görevin var.'
-    : 'Bir periyot seç, sonra “Görev Kaydet”.';
-  el('btnCreateJob').disabled = true;
-  el('onDemandWarn').style.display='none';
-  el('repeatFields').style.display='grid';
-}
-function pickPeriod(v){
-  S.period = v;
-  document.querySelectorAll('#periodPills .pill').forEach(p=>p.classList.toggle('sel', p.dataset.v===v));
-  const onDemand = v==='ON_DEMAND';
-  el('onDemandWarn').style.display = onDemand ? 'block':'none';
-  el('repeatFields').style.display = onDemand ? 'none':'grid';
-  el('btnCreateJob').disabled = false;
-}
-async function createJob(){
-  if(!S.period){ toast('Periyot seç','err'); return; }
-  const body = {jobPeriod:S.period};
-  if(S.period!=='ON_DEMAND'){
-    const rc = parseInt(el('repeatCount').value,10);
-    if(!rc || rc<1){ toast('repeatCount gerekli','err'); return; }
-    body.repeatCount = rc;
+  // Sektör uyarısı bilgilendirme amaçlı; formu gizlemez (sunucu doğrular)
+  if(S.user && !S.user.sectorId){
+    el('jobGate').innerHTML = '<div class=”banner warn”>Sektör seçilmemiş — NONE ve OWN_ONLY istekleri sektör gerektirdiğinden sunucu reddedebilir. (<a href=”#” onclick=”go(\'settings\');return false;”>Ayarlar</a>)</div>';
+  } else {
+    el('jobGate').innerHTML = '';
   }
-  const r = await api('/job/create', body);
-  if(ok(r)){ toast('Görev oluşturuldu · mode='+r.data.analysisMode,'ok'); prepareJobs(); }
+  el('jobForm').style.display = 'block';
+  S.reportType = null;
+  el('btnCreateJob').disabled = true;
+  // Pilleri “yükleniyor” durumuna al
+  el('typePills').innerHTML = '<span style=”color:var(--muted);font-size:13px”>Tipler yükleniyor…</span>';
+  el('jobHint').textContent = '';
+  await loadAvailableTypes();
+}
+async function loadAvailableTypes(){
+  const r = await api('/report-request/available-types', {});
+  const bar = el('typePills');
+  const hints = el('typeHints');
+  if(!ok(r)){
+    bar.innerHTML = '<span style=”color:var(--err);font-size:13px”>Tipler yüklenemedi ('+(r.responseCode||'ağ hatası')+') — yukarıdaki “Tipleri Yenile” butonunu kullan.</span>';
+    el('jobHint').textContent = '';
+    if(hints) hints.innerHTML = '';
+    return;
+  }
+  const sel = r.data;
+  const enabledTypes = REPORT_TYPES.filter(t => sel[t.key] !== false);
+
+  // Pilleri oluştur: aktif olanlar 'available', pasifler 'disabled'
+  bar.innerHTML = REPORT_TYPES.map(t=>{
+    const enabled = sel[t.key] !== false;
+    return '<span class=”pill'+(enabled?' available':' disabled')+'” data-v=”'+t.v+'” '+
+      (enabled ? 'onclick=”pickType(\''+t.v+'\')”' : 'title=”Hesap durumuna göre devre dışı”')+
+      '>'+t.l+'</span>';
+  }).join('');
+
+  // Hesap eksikliği ipuçları
+  const hintLines = [];
+  if(!sel.ownSelectable)        hintLines.push('”Kendi Hesabım” ekle → <b>Kendi Hesap</b> ve <b>Kendi + Rakipler</b> aktif olur');
+  if(!sel.competitorSelectable) hintLines.push('Rakip hesap ekle → <b>Rakipler</b> ve <b>Kendi + Rakipler</b> aktif olur');
+  if(hints) hints.innerHTML = hintLines.length
+    ? '<span style=”color:var(--muted);font-size:12px”>'+hintLines.join(' &nbsp;|&nbsp; ')+'</span>'
+    : '<span style=”color:var(--ok);font-size:12px”>✓ Tüm analiz tipleri kullanılabilir</span>';
+
+  // Daha önce seçili tip hâlâ geçerliyse koru, değilse sıfırla
+  if(S.reportType){
+    const stillEnabled = enabledTypes.find(t=>t.v===S.reportType);
+    if(stillEnabled){
+      document.querySelectorAll('#typePills .pill').forEach(p=>p.classList.toggle('sel',p.dataset.v===S.reportType));
+      el('btnCreateJob').disabled = false;
+    } else {
+      S.reportType = null;
+      el('btnCreateJob').disabled = true;
+    }
+  }
+  if(!S.reportType){
+    el('jobHint').textContent = enabledTypes.length+' seçenek aktif (yeşil) — birini tıkla, sonra "İstek Oluştur".';
+  }
+}
+function pickType(v){
+  S.reportType = v;
+  document.querySelectorAll('#typePills .pill').forEach(p=>p.classList.toggle('sel', p.dataset.v===v));
+  el('btnCreateJob').disabled = false;
+  const label = (REPORT_TYPES.find(t=>t.v===v)||{l:v}).l;
+  el('jobHint').textContent = '✓ '+label+' seçildi — “İstek Oluştur” butonuna basabilirsin.';
+}
+async function createRequest(){
+  if(!S.reportType){ toast('Analiz tipi seç','err'); return; }
+  const r = await api('/report-request/create', {reportType: S.reportType});
+  if(ok(r)){
+    toast('Rapor isteği oluşturuldu · '+r.data.reportType+' · kuyruğa gönderildi: '+(r.data.queuePushed?'✓':'✗'),'ok');
+    S.reportType = null;
+    el('btnCreateJob').disabled = true;
+    document.querySelectorAll('#typePills .pill').forEach(p=>p.classList.remove('sel'));
+    el('jobHint').textContent = 'İstek gönderildi. Dashboard\'dan rapor durumunu takip edebilirsin.';
+  }
   else if(r.responseCode===2) toast('Validasyon: '+r.responseDescription,'err');
-  else toast('Oluşturulamadı','err');
+  else if(r.responseCode===5) toast('Hesap/sektör eksik: '+r.responseDescription,'err');
+  else toast('Oluşturulamadı · '+(r.responseDescription||r.responseCode),'err');
 }
 
 /* ============================================================
    5 · DASHBOARD
    ============================================================ */
-async function loadJobs(){
-  const r = await api('/job/list', {page:0,size:20});
-  const t = el('jobTable'); const rows = ok(r)? r.data:[];
-  t.innerHTML = rows.length ? rows.map(j=>
-    '<tr><td>'+esc(j.jobPeriod)+'</td><td>'+esc(j.analysisMode)+'</td>'+
-    '<td>'+(j.completed?'✓':'…')+'</td><td>'+(j.currentCount??0)+'/'+(j.repeatCount??'–')+'</td>'+
-    '<td class="mono" style="font-size:11px">'+fmt(j.createdDate)+'</td></tr>'
-  ).join('') : '<tr><td colspan="5" class="empty">Görev yok</td></tr>';
+async function loadRequests(){
+  const r = await api('/report-request/list', {page:0,size:20});
+  const t = el('requestTable'); const rows = ok(r)? r.data:[];
+  t.innerHTML = rows.length ? rows.map(req=>
+    '<tr><td><b>'+esc(req.reportType||'–')+'</b></td>'+
+    '<td>'+(req.queuePushed ? '<span class=”badge ok”>✓ '+fmt(req.queuePushDate)+'</span>' : '<span class=”badge no”>hayır</span>')+'</td>'+
+    '<td class=”mono” style=”font-size:11px;color:var(--err)”>'+esc(req.queueError||'')+'</td>'+
+    '<td class=”mono” style=”font-size:11px”>'+fmt(req.createdDate)+'</td></tr>'
+  ).join('') : '<tr><td colspan=”4” class=”empty”>Rapor isteği yok</td></tr>';
 }
 async function loadReports(){
   const r = await api('/report/list', {page:0,size:20});
   const t = el('reportTable'); const rows = ok(r)? r.data:[];
   t.innerHTML = rows.length ? rows.map(rp=>
-    '<tr><td>'+esc(rp.status)+'</td><td>'+esc(rp.analysisMode||'–')+'</td><td>'+esc(rp.jobPeriod||'–')+'</td>'+
-    '<td class="mono" style="font-size:11px">'+fmt(rp.createdDate)+'</td>'+
-    '<td><button class="ghost" style="padding:3px 9px" onclick="reportDetail(\''+rp.reportId+'\')">Detay</button></td></tr>'
-  ).join('') : '<tr><td colspan="5" class="empty">Rapor yok</td></tr>';
+    '<tr><td>'+esc(rp.status)+'</td><td>'+esc(rp.reportType||'–')+'</td>'+
+    '<td class=”mono” style=”font-size:11px”>'+fmt(rp.createdDate)+'</td>'+
+    '<td><button class=”ghost” style=”padding:3px 9px” onclick=”reportDetail(\''+rp.reportId+'\')”>Detay</button></td></tr>'
+  ).join('') : '<tr><td colspan=”4” class=”empty”>Rapor yok</td></tr>';
   el('reportDetail').innerHTML='';
 }
 async function reportDetail(id){
