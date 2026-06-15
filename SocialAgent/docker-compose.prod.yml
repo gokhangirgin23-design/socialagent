@@ -1,20 +1,57 @@
 version: '3.3'
 
 services:
-  socialagent-prod-api:
+
+  socialagent-prod-api-1:
     build: .
-    container_name: socialagent-prod-api
+    container_name: socialagent-prod-api-1
 
     env_file:
       - /opt/socialagent/prod/.env
 
     environment:
       SPRING_PROFILES_ACTIVE: prod
+      WORKER_ENABLED: "false"
 
     restart: unless-stopped
 
     ports:
       - "9281:8080"
+
+    networks:
+      - socialagent_default
+
+  socialagent-prod-api-2:
+    build: .
+    container_name: socialagent-prod-api-2
+
+    env_file:
+      - /opt/socialagent/prod/.env
+
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      WORKER_ENABLED: "false"
+
+    restart: unless-stopped
+
+    ports:
+      - "9282:8080"
+
+    networks:
+      - socialagent_default
+
+  socialagent-prod-worker:
+    build: .
+    container_name: socialagent-prod-worker
+
+    env_file:
+      - /opt/socialagent/prod/.env
+
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      WORKER_ENABLED: "true"
+
+    restart: unless-stopped
 
     networks:
       - socialagent_default
