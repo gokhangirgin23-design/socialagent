@@ -21,8 +21,6 @@ services:
     networks:
       - socialagent_default
 	 
-    mem_limit: 1024m
-
   socialagent-prod-api-2:
     build: .
     container_name: socialagent-prod-api-2
@@ -42,8 +40,6 @@ services:
     networks:
       - socialagent_default
 	  
-    mem_limit: 1024m
-
   socialagent-prod-worker:
     build: .
     container_name: socialagent-prod-worker
@@ -60,8 +56,6 @@ services:
     networks:
       - socialagent_default
 	  
-    mem_limit: 768m
-
 networks:
   socialagent_default:
     external: true

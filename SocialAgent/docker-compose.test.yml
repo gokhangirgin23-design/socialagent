@@ -5,8 +5,6 @@ services:
     build: .
     container_name: socialagent-test-api
 
-    mem_limit: 768m
-
     env_file:
       - /opt/socialagent/test/.env
 
