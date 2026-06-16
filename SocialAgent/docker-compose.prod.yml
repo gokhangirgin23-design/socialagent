@@ -20,7 +20,7 @@ services:
 
     networks:
       - socialagent_default
-	 
+ 
   socialagent-prod-api-2:
     build: .
     container_name: socialagent-prod-api-2
