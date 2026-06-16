@@ -1,5 +1,8 @@
 package com.api.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 import java.util.List;
 import java.util.UUID;
 
@@ -24,6 +27,7 @@ import lombok.RequiredArgsConstructor;
  * Hepsi POST (CLAUDE.md Madde 2); güvenli uçlar — JWT zorunlu.
  * userId daima JWT'den SecurityUtil ile alınır; istekten okunmaz (CLAUDE.md Madde 4).
  */
+@Tag(name = "Bildirim", description = "Kullanıcı bildirimleri")
 @RestController
 @RequestMapping("/notification")
 @RequiredArgsConstructor
@@ -36,6 +40,7 @@ public class NotificationController {
 	 * Kullanıcının bildirimlerini sayfalı listeler (en yeni önce). onlyUnread ile filtrelenebilir.
 	 * Endpoint: POST /notification/list
 	 */
+	@Operation(summary = "Bildirimleri listele", description = "Kullanıcının bildirimlerini sayfalı döndürür (en yeni önce).")
 	@PostMapping("/list")
 	public DataResponse<List<NotificationDto>> listNotifications(
 			@RequestBody(required = false) NotificationListRequest request) {
@@ -55,6 +60,7 @@ public class NotificationController {
 	 * Bildirim bulunamazsa/erişim yoksa NOT_FOUND (data null, HTTP 200 — CLAUDE.md Madde 3).
 	 * Endpoint: POST /notification/read
 	 */
+	@Operation(summary = "Bildirimi okundu işaretle", description = "Belirtilen bildirimi okundu olarak işaretler.")
 	@PostMapping("/read")
 	public DataResponse<Void> markRead(@Valid @RequestBody MarkNotificationReadRequest request) {
 		// userId JWT'den al
@@ -72,6 +78,7 @@ public class NotificationController {
 	 * Kullanıcının okunmamış bildirim sayısını döner (dashboard rozeti).
 	 * Endpoint: POST /notification/unread-count
 	 */
+	@Operation(summary = "Okunmamış bildirim sayısı", description = "Kullanıcının okunmamış bildirim sayısını döndürür.")
 	@PostMapping("/unread-count")
 	public DataResponse<Long> unreadCount() {
 		// userId JWT'den al

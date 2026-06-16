@@ -32,6 +32,8 @@ public class AppProperties {
 	private Ai ai = new Ai();
 	// Bildirim (mail + push) ayarları (FAZ 8)
 	private Notification notification = new Notification();
+	// Admin işlemleri için gizli anahtar (X-Admin-Key header)
+	private Admin admin = new Admin();
 
 	/**
 	 * JWT ayarları.
@@ -186,5 +188,16 @@ public class AppProperties {
 		private boolean pushEnabled = false;
 		// Giden e-posta "from" adresi (boşsa SMTP varsayılanı kullanılır)
 		private String fromAddress;
+	}
+
+	/**
+	 * Admin endpoint güvenlik anahtarı.
+	 * X-Admin-Key header'ı bu değerle eşleşmezse UNAUTHORIZED döner.
+	 */
+	@Getter
+	@Setter
+	public static class Admin {
+		// Admin endpoint'leri için gizli anahtar (env: ADMIN_KEY; boşsa admin endpoint'leri devre dışı)
+		private String key = "";
 	}
 }

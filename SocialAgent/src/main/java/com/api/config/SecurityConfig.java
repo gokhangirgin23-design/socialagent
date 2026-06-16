@@ -50,7 +50,10 @@ public class SecurityConfig {
 					"/api/ping",    // Uygulama canlılık kontrolü — kimlik doğrulaması gerekmez
 					"/sector/list",  // Sektör listesi kimlik doğrulaması gerektirmez (onboarding adım 3)
 					"/socialagent-test-console.html",
-					"/local/**"      // LOCAL iç-test uçları (controller yalnızca local profilde oluşur)
+					"/local-paytr-pay.html", // LOCAL sahte ödeme sayfası (statik; yalnız local'de kullanılır)
+					"/payment/callback", // PayTR bildirim (callback) ucu — JWT göndermez, "OK" döner
+					"/local/**",     // LOCAL iç-test uçları (controller yalnızca local profilde oluşur)
+					"/admin/**"      // Admin uçları — JWT yerine X-Admin-Key header ile korumalı (controller doğrular)
 						).permitAll()
 				// Geri kalan tüm uçlar kimlik doğrulaması ister
 				.anyRequest().authenticated()

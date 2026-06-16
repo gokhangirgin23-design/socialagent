@@ -1,5 +1,8 @@
 package com.api.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 import java.util.List;
 import java.util.UUID;
 
@@ -25,6 +28,7 @@ import lombok.RequiredArgsConstructor;
  * userId daima JWT'den SecurityUtil ile alınır; istekten okunmaz (CLAUDE.md Madde 4).
  * /sector/list public; diğerleri güvenli (SecurityConfig'te yapılandırılmış).
  */
+@Tag(name = "Sektör", description = "Sektör / alt sektör listeleme ve onboarding seçimi")
 @RestController
 @RequestMapping("/sector")
 @RequiredArgsConstructor
@@ -36,6 +40,7 @@ public class SectorController {
 	/**
 	 * Aktif tüm sektörleri listeler. Onboarding adım 3 — kimlik doğrulaması gerekmez.
 	 */
+	@Operation(summary = "Sektörleri listele", description = "Tüm sektörleri döndürür (onboarding; kimlik gerektirmez).")
 	@PostMapping("/list")
 	public DataResponse<List<SectorDto>> listSectors() {
 		// Sektör listesini servis katmanından al
@@ -46,6 +51,7 @@ public class SectorController {
 	/**
 	 * Verilen sektöre ait aktif alt sektörleri listeler. Onboarding adım 4 — JWT zorunlu.
 	 */
+	@Operation(summary = "Alt sektörleri listele", description = "Verilen sektörün alt sektörlerini döndürür.")
 	@PostMapping("/listSubsectors")
 	public DataResponse<List<SubsectorDto>> listSubsectors(@Valid @RequestBody SubsectorListRequest request) {
 		// sectorId request'ten alınır; filtreleme parametresidir, userId değildir
@@ -56,6 +62,7 @@ public class SectorController {
 	/**
 	 * Kullanıcının sektörünü kaydeder (alt sektör opsiyonel). Güvenli uç — JWT zorunlu.
 	 */
+	@Operation(summary = "Sektör seç", description = "Kullanıcının sektör seçimini kaydeder.")
 	@PostMapping("/saveSector")
 	public DataResponse<Void> saveSector(@Valid @RequestBody SaveSectorRequest request) {
 		// userId JWT'den al (CLAUDE.md Madde 4)
@@ -67,6 +74,7 @@ public class SectorController {
 	/**
 	 * Kullanıcının alt sektörünü kaydeder. Güvenli uç — JWT zorunlu.
 	 */
+	@Operation(summary = "Alt sektör seç", description = "Kullanıcının alt sektör seçimini kaydeder.")
 	@PostMapping("/saveSubsector")
 	public DataResponse<Void> saveSubsector(@Valid @RequestBody SaveSubsectorRequest request) {
 		// userId JWT'den al (CLAUDE.md Madde 4)

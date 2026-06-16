@@ -34,4 +34,14 @@ public class ReportRequestDto {
 
     // İsteğin oluşturulma tarihi
     private LocalDateTime createdDate;
+
+    // ===== FAZ PAYMENT: ödeme kapısı alanları =====
+    // Bakiye yetersizse true; bu durumda requestId null'dır ve paytr alanı doldurulur
+    private Boolean paymentRequired;
+
+    // Tahsil edilecek eksik tutar (deficit), ör. "123.50"
+    private String amountToPay;
+
+    // PayTR (ya da local sahte) ödeme formu verisi; frontend bu formu postUrl'e gönderir
+    private PaytrFormPayload paytr;
 }

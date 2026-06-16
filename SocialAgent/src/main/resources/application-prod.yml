@@ -1,9 +1,14 @@
 # ===== PROD profil: PostgreSQL (prod_schema) =====
 spring:
   datasource:
-    url: jdbc:postgresql://${DB_HOST}:5432/${DB_NAME}
+    url: jdbc:postgresql://${DB_HOST}:5432/${DB_NAME}?currentSchema=prod_schema
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 2
+      idle-timeout: 300000
+      max-lifetime: 1800000
 
   rabbitmq:
     host: ${RABBIT_HOST}
@@ -22,3 +27,4 @@ spring:
     locations: classpath:db/migration
     schemas: prod_schema
     default-schema: prod_schema
+

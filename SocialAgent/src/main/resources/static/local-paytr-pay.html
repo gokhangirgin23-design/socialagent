@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trendora — Local PayTR Simülasyonu</title>
+  <style>
+    body{font-family:system-ui,Arial;background:#0f172a;color:#e2e8f0;display:flex;
+         min-height:100vh;align-items:center;justify-content:center;margin:0}
+    .card{background:#1e293b;padding:28px;border-radius:14px;max-width:380px;width:90%;
+          box-shadow:0 10px 40px rgba(0,0,0,.4)}
+    h2{margin:0 0 4px} .muted{color:#94a3b8;font-size:13px;margin:0 0 18px}
+    .row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #334155;font-size:14px}
+    .row span:last-child{color:#cbd5e1;word-break:break-all;max-width:60%;text-align:right}
+    .amt{font-size:26px;font-weight:700;margin:14px 0}
+    button{width:100%;padding:12px;border:0;border-radius:10px;font-size:15px;font-weight:600;
+           cursor:pointer;margin-top:10px}
+    .ok{background:#22c55e;color:#06210f} .fail{background:#334155;color:#e2e8f0}
+    #st{margin-top:14px;font-size:13px;color:#cbd5e1;min-height:18px}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Local PayTR Simülasyonu</h2>
+    <p class="muted">Gerçek PayTR yok — bu sayfa <code>/payment/callback</code>'i tetikler. (Sadece local profil)</p>
+    <div class="row"><span>merchant_oid</span><span id="oidLbl">–</span></div>
+    <div class="row"><span>total_amount (kuruş)</span><span id="totalLbl">–</span></div>
+    <div class="amt"><span id="amtLbl">0.00</span> TL</div>
+    <button class="ok"   onclick="send('success')">Başarılı Öde</button>
+    <button class="fail" onclick="send('failed')">Başarısız</button>
+    <div id="st"></div>
+  </div>
+
+  <script>
+    // Query param'ları oku (LocalPaytrGateway bu sayfaya GET ile yönlendirir)
+    const q = new URLSearchParams(location.search);
+    const OID   = q.get('merchant_oid') || '';
+    const AMT   = q.get('payment_amount') || '0.00';        // TL (ör. "300.00")
+    const OK    = q.get('merchant_ok_url') || '/';
+    const FAIL  = q.get('merchant_fail_url') || '/';
+    // total_amount PayTR'da ×100 (kuruş)
+    const TOTAL = String(Math.round(parseFloat(AMT || '0') * 100));
+    // Varsayılan: otomatik success. ?auto=0 ile kapatılır → manuel düğmelerle test.
+    const AUTO  = q.get('auto') !== '0';
+
+    document.getElementById('oidLbl').textContent   = OID || '–';
+    document.getElementById('totalLbl').textContent = TOTAL;
+    document.getElementById('amtLbl').textContent   = AMT;
+
+    async function send(status){
+      document.getElementById('st').textContent = 'Callback gönderiliyor (' + status + ')...';
+      const body = new URLSearchParams();
+      body.set('merchant_oid', OID);
+      body.set('status', status);
+      body.set('total_amount', TOTAL);
+      body.set('hash', 'LOCAL');          // local'de hash bypass
+      body.set('payment_type', 'card');
+      body.set('test_mode', '1');
+      if (status === 'failed') {
+        body.set('failed_reason_code', '0');
+        body.set('failed_reason_msg', 'Local test basarisiz odeme');
+      }
+      try {
+        const res = await fetch('/payment/callback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body
+        });
+        const txt = await res.text();
+        document.getElementById('st').textContent = 'Yanıt: ' + txt + ' — yönlendiriliyor...';
+        setTimeout(() => { location.href = (status === 'success' ? OK : FAIL); }, 800);
+      } catch (e) {
+        document.getElementById('st').textContent = 'Hata: ' + e.message;
+      }
+    }
+
+    if (AUTO) { setTimeout(() => send('success'), 600); }
+  </script>
+</body>
+</html>

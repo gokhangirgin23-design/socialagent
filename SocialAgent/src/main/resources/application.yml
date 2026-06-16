@@ -90,6 +90,11 @@ app:
   # ===== FAZ 8: Bildirim (mail + push) =====
   # Rapor tamamlanınca notification kaydı her zaman yazılır; mail/push kanalları aşağıdaki
   # bayraklarla açılır. SMTP verilmezse (spring.mail.host yok) mail otomatik atlanır.
+  # ===== Admin endpoint güvenlik anahtarı =====
+  # POST /admin/requeue-stuck gibi admin uçları için X-Admin-Key header'ında gönderilmeli.
+  # Boş bırakılırsa admin uçları UNAUTHORIZED döner (güvenlik için prod'da mutlaka set et).
+  admin:
+    key: ${ADMIN_KEY:}
   notification:
     # E-posta kanalı (prod'da SMTP env'leri verilince MAIL_ENABLED=true yap)
     mail-enabled: ${MAIL_ENABLED:false}
@@ -97,6 +102,27 @@ app:
     push-enabled: ${PUSH_ENABLED:false}
     # Giden e-posta "from" adresi (boşsa SMTP varsayılanı)
     from-address: ${MAIL_FROM:}
+  # ===== FAZ PAYMENT: Rapor fiyatları (TL) =====
+  report:
+    price:
+      none: 200
+      own-only: 300
+      competitor-only: 300
+  # ===== FAZ PAYMENT: PayTR Direkt API =====
+  # GİZLİ değerler (merchant-key/salt) env'den gelir; repo'ya/loga ASLA yazılmaz.
+  paytr:
+    merchant-id: ${PAYTR_MERCHANT_ID:}
+    merchant-key: ${PAYTR_MERCHANT_KEY:}
+    merchant-salt: ${PAYTR_MERCHANT_SALT:}
+    post-url: https://www.paytr.com/odeme
+    ok-url: ${PAYTR_OK_URL:https://trendora.app/payment/ok}
+    fail-url: ${PAYTR_FAIL_URL:https://trendora.app/payment/fail}
+    # PayTR Mağaza Paneli'ndeki Bildirim URL ile AYNI olmalı
+    callback-url: ${PAYTR_CALLBACK_URL:https://api.trendora.app/payment/callback}
+    test-mode: ${PAYTR_TEST_MODE:0}
+    debug-on: ${PAYTR_DEBUG_ON:0}
+    currency: TL
+    client-lang: tr
 
 # ===== FAZ 8: SMTP ayarları (opsiyonel) =====
 # spring.mail.host verildiğinde Spring Boot JavaMailSender bean'ini oluşturur.

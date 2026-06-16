@@ -45,3 +45,17 @@ app:
   # Apify'ı local denemek için broker + APIFY_TOKEN verip true yap.
   worker:
     enabled: false
+  # ===== FAZ PAYMENT: PayTR (LOCAL — gerçek PayTR'a GİDİLMEZ) =====
+  # LocalPaytrGateway @Primary @Profile(local): form /local-paytr-pay.html statik sayfasına GET ile yönlendirir, hash bypass.
+  paytr:
+    merchant-id: LOCAL
+    merchant-key: LOCAL
+    merchant-salt: LOCAL
+    # Ödeme sonrası kullanıcının döneceği yer (local test konsolu)
+    ok-url: "/socialagent-test-console.html"
+    fail-url: "/socialagent-test-console.html"
+    test-mode: "1"
+    local:
+      enabled: true
+      # Sahte ödeme sayfası açılınca otomatik success callback at (?auto=0 ile kapatılır)
+      auto-success: true
