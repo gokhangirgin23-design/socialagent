@@ -5,20 +5,18 @@ services:
     build: .
     container_name: socialagent-test-api
 
+    mem_limit: 768m
+
     env_file:
       - /opt/socialagent/test/.env
 
     environment:
       SPRING_PROFILES_ACTIVE: test
 
-    restart: unless-stopped
-
     ports:
       - "9181:8080"
 
+    restart: unless-stopped
+
     networks:
       - socialagent_default
-
-networks:
-  socialagent_default:
-    external: true
