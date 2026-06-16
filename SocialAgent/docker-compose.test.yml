@@ -16,5 +16,6 @@ services:
 
     restart: unless-stopped
 
-    networks:
-      - socialagent_default
+networks:
+  socialagent_default:
+    external: true
