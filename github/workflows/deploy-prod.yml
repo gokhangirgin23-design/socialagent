@@ -21,11 +21,11 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
 
           script: |
-            cd /opt/myapp/prod/SocialAgent
+            cd /opt/socialagent/prod/api/socialagent/SocialAgent
 
             git fetch origin
 
-            git reset --hard origin/main
+            git reset --hard origin/master
 
             chmod +x mvnw
 
