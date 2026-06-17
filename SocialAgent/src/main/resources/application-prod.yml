@@ -18,9 +18,9 @@ spring:
     virtual-host: /prod
     listener:
       simple:
-      concurrency: 2
-      max-concurrency: 4
-      prefetch: 1
+        concurrency: 2
+        max-concurrency: 4
+        prefetch: 1
 
   jpa:
     hibernate:
