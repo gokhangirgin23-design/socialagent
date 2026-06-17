@@ -21,7 +21,7 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
 
           script: |
-            cd /opt/myapp/test/SocialAgent
+            cd /opt/socialagent/test/api/SocialAgent
 
             git fetch origin
 
