@@ -37,10 +37,6 @@ spring:
 app:
   google:
     verification-enabled: false
-  # Local'de RabbitMQ broker zorunlu olmasın: scheduler kapalı.
-  # Kuyruğu local'de denemek için broker (ör. docker rabbitmq) çalıştırıp true yap.
-  scheduler:
-    enabled: false
   # Local'de worker (consumer) da kapalı; broker zorunlu olmasın (FAZ 5).
   # Apify'ı local denemek için broker + APIFY_TOKEN verip true yap.
   worker:

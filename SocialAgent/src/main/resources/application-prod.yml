@@ -16,11 +16,16 @@ spring:
     username: ${RABBIT_USERNAME}
     password: ${RABBIT_PASSWORD}
     virtual-host: /prod
+    listener:
+      simple:
+      concurrency: 2
+      max-concurrency: 4
+      prefetch: 1
 
   jpa:
     hibernate:
       ddl-auto: none
-    show-sql: true
+    show-sql: false
 
   flyway:
     enabled: true

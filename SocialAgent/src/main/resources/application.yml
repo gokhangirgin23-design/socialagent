@@ -16,6 +16,16 @@ server:
   port: 8080
   # Reverse proxy arkasında doğru host/scheme için (airepo)
   forward-headers-strategy: framework
+  shutdown: graceful
+  tomcat:
+      threads:
+        max: 50
+        min-spare: 5
+      accept-count: 100
+      connection-timeout: 5000
+  compression:
+      enabled: true
+      mime-types: application/json,text/markdown,text/plain
 
 # Swagger UI yolu (kök URL buraya yönlenir)
 springdoc:
@@ -51,10 +61,6 @@ app:
     job-queue: ${JOB_QUEUE:socialagent.job.queue}
     job-exchange: ${JOB_EXCHANGE:socialagent.job.exchange}
     job-routing-key: ${JOB_ROUTING_KEY:socialagent.job}
-  # ===== FAZ 4: Scheduler tarama aralığı (ms) =====
-  scheduler:
-    enabled: ${SCHEDULER_ENABLED:true}
-    poll-interval-ms: ${SCHEDULER_POLL_INTERVAL_MS:30000}
   # ===== FAZ 5: Apify scraping ayarları (D1) =====
   apify:
     # Apify API token (prod/test'te env ile verilir; boşsa scraping atlanır)

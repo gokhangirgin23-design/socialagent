@@ -13,8 +13,19 @@ services:
 
     ports:
       - "9181:8080"
+  
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"   
 
     restart: unless-stopped
+    mem_limit: 448m
 
 networks:
   socialagent_default:

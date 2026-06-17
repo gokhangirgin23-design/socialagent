@@ -4,6 +4,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,12 +16,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * post_analysis yazma + "zaten analiz edilmiş mi" kontrolü (FAZ 6 — CLAUDE.md Bölüm 11).
- * Service interface yok (CLAUDE.md Madde 1); concrete @Service.
+ * post_analysis yazma + "zaten analiz edilmiş mi" kontrolü (FAZ 6 — CLAUDE.md Bölüm 11). Service interface yok (CLAUDE.md Madde 1); concrete @Service.
  *
- * Her social_post için en fazla bir analiz tutulur; insert öncesi varlık servis katmanında
- * elle kontrol edilir (CLAUDE.md Madde 5 mantığı — unique gibi davranır). Lookup JdbcTemplate
- * native; insert JPA save.
+ * Her social_post için en fazla bir analiz tutulur; insert öncesi varlık servis katmanında elle kontrol edilir (CLAUDE.md Madde 5 mantığı — unique gibi davranır). Lookup JdbcTemplate native; insert
+ * JPA save.
  */
 @Slf4j
 @Service
@@ -34,8 +33,7 @@ public class PostAnalysisService {
 	private final PostAnalysisRepository postAnalysisRepository;
 
 	/**
-	 * Bu social_post için zaten bir analiz kaydı var mı? (idempotency).
-	 * Pipeline tekrar çalışırsa aynı postu yeniden analiz etmemek için kullanılır.
+	 * Bu social_post için zaten bir analiz kaydı var mı? (idempotency). Pipeline tekrar çalışırsa aynı postu yeniden analiz etmemek için kullanılır.
 	 *
 	 * @return analiz kaydı varsa true
 	 */
@@ -54,9 +52,8 @@ public class PostAnalysisService {
 	}
 
 	/**
-	 * Bir gönderinin analiz JSON'ını post_analysis'e yazar.
-	 * Yazmadan önce dedup kontrolü yapar; zaten analiz varsa yeniden yazmaz.
-	 * analysisJson null/blank ise (AI atlandı/başarısız) kayıt oluşturulmaz.
+	 * Bir gönderinin analiz JSON'ını post_analysis'e yazar. Yazmadan önce dedup kontrolü yapar; zaten analiz varsa yeniden yazmaz. analysisJson null/blank ise (AI atlandı/başarısız) kayıt
+	 * oluşturulmaz.
 	 *
 	 * @return yeni kayıt oluşturulduysa true
 	 */
@@ -82,8 +79,16 @@ public class PostAnalysisService {
 		pa.setCreatedDate(now);
 		pa.setUpdatedDate(now);
 
-		// JPA save ile insert
-		postAnalysisRepository.save(pa);
+		// JPA saveAndFlush ile insert: INSERT'i hemen tetikler ki UNIQUE ihlali
+		// burada yakalanabilsin (deferred flush'ta hata commit anına kaçardı).
+		try {
+			postAnalysisRepository.saveAndFlush(pa);
+		} catch (DataIntegrityViolationException e) {
+			// Eşzamanlı başka bir worker aynı postu yazmış (race); UNIQUE devreye
+			// girdi → sessizce atla, pipeline patlamasın.
+			log.debug("post_analysis UNIQUE ihlali (eşzamanlı yazım), atlanıyor (postId={}).", socialPostId);
+			return false;
+		}
 		log.info("post_analysis yazıldı: postId={}", socialPostId);
 		return true;
 	}

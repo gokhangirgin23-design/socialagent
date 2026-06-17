@@ -7,8 +7,7 @@ import lombok.Getter;
 import lombok.Setter;
 
 /**
- * Uygulama bazlı yapılandırma (application.yml -> "app" kökü).
- * JWT ve Google SSO ayarları buradan okunur (FAZ 1).
+ * Uygulama bazlı yapılandırma (application.yml -> "app" kökü). JWT ve Google SSO ayarları buradan okunur (FAZ 1).
  */
 @Configuration
 @ConfigurationProperties(prefix = "app")
@@ -22,8 +21,6 @@ public class AppProperties {
 	private Google google = new Google();
 	// RabbitMQ kuyruk/exchange ayarları (FAZ 4)
 	private Messaging messaging = new Messaging();
-	// Scheduler ayarları (FAZ 4)
-	private Scheduler scheduler = new Scheduler();
 	// Apify scraping ayarları (FAZ 5)
 	private Apify apify = new Apify();
 	// Worker (RabbitMQ consumer) ayarları (FAZ 5)
@@ -62,8 +59,7 @@ public class AppProperties {
 	}
 
 	/**
-	 * RabbitMQ kuyruk yapılandırması (FAZ 4).
-	 * Adlar profil bazlı override edilebilir; vhost spring.rabbitmq.virtual-host ile gelir.
+	 * RabbitMQ kuyruk yapılandırması (FAZ 4). Adlar profil bazlı override edilebilir; vhost spring.rabbitmq.virtual-host ile gelir.
 	 */
 	@Getter
 	@Setter
@@ -77,20 +73,7 @@ public class AppProperties {
 	}
 
 	/**
-	 * Scheduler yapılandırması (FAZ 4).
-	 */
-	@Getter
-	@Setter
-	public static class Scheduler {
-		// Scheduler aktif mi? (local'de broker zorunlu olmasın diye kapatılabilir)
-		private boolean enabled = true;
-		// Tarama aralığı (ms); bir tur bitince beklenen süre
-		private long pollIntervalMs = 30000;
-	}
-
-	/**
-	 * Apify scraping yapılandırması (FAZ 5 — CLAUDE.md Bölüm 10, D1).
-	 * Aktör id'leri API yolunda "~" ile yazılır (ör. apify~instagram-search-scraper).
+	 * Apify scraping yapılandırması (FAZ 5 — CLAUDE.md Bölüm 10, D1). Aktör id'leri API yolunda "~" ile yazılır (ör. apify~instagram-search-scraper).
 	 */
 	@Getter
 	@Setter
@@ -122,10 +105,8 @@ public class AppProperties {
 	}
 
 	/**
-	 * AI analiz yapılandırması (FAZ 6 — CLAUDE.md Bölüm 11, D3).
-	 * caption/TEXT -> OpenAI; IMAGE/VIDEO/CAROUSEL -> Gemini Vision.
-	 * API key'leri boşsa (local/dev) ilgili model devre dışı kalır; analiz atlanır,
-	 * uygulama patlamaz (Apify token yaklaşımıyla aynı felsefe).
+	 * AI analiz yapılandırması (FAZ 6 — CLAUDE.md Bölüm 11, D3). caption/TEXT -> OpenAI; IMAGE/VIDEO/CAROUSEL -> Gemini Vision. API key'leri boşsa (local/dev) ilgili model devre dışı kalır; analiz
+	 * atlanır, uygulama patlamaz (Apify token yaklaşımıyla aynı felsefe).
 	 */
 	@Getter
 	@Setter
@@ -171,13 +152,10 @@ public class AppProperties {
 	}
 
 	/**
-	 * Bildirim yapılandırması (FAZ 8 — CLAUDE.md Bölüm 12).
-	 * Rapor tamamlanınca notification kaydı her zaman yazılır; mail/push KANALLARI
-	 * bu bayraklarla açılır/kapanır. Yapılandırma yoksa ilgili kanal sessizce atlanır
-	 * (Apify token / AI key felsefesiyle aynı — uygulama çökmez).
+	 * Bildirim yapılandırması (FAZ 8 — CLAUDE.md Bölüm 12). Rapor tamamlanınca notification kaydı her zaman yazılır; mail/push KANALLARI bu bayraklarla açılır/kapanır. Yapılandırma yoksa ilgili kanal
+	 * sessizce atlanır (Apify token / AI key felsefesiyle aynı — uygulama çökmez).
 	 *
-	 * SMTP ayarları standart Spring "spring.mail.*" altında verilir (env: SPRING_MAIL_HOST vb.);
-	 * spring.mail.host verilmezse JavaMailSender bean'i oluşmaz ve mail otomatik atlanır.
+	 * SMTP ayarları standart Spring "spring.mail.*" altında verilir (env: SPRING_MAIL_HOST vb.); spring.mail.host verilmezse JavaMailSender bean'i oluşmaz ve mail otomatik atlanır.
 	 */
 	@Getter
 	@Setter
@@ -191,8 +169,7 @@ public class AppProperties {
 	}
 
 	/**
-	 * Admin endpoint güvenlik anahtarı.
-	 * X-Admin-Key header'ı bu değerle eşleşmezse UNAUTHORIZED döner.
+	 * Admin endpoint güvenlik anahtarı. X-Admin-Key header'ı bu değerle eşleşmezse UNAUTHORIZED döner.
 	 */
 	@Getter
 	@Setter
