@@ -1,5 +1,8 @@
 package com.api.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 import java.util.List;
 import java.util.UUID;
 
@@ -25,6 +28,7 @@ import lombok.RequiredArgsConstructor;
  * Tüm uçlar JWT gerektiren güvenli uçlardır.
  * userId daima JWT'den SecurityUtil ile alınır; istekten okunmaz (CLAUDE.md Madde 4).
  */
+@Tag(name = "Hesap", description = "Kullanıcının kendi ve rakip (izlenen) sosyal hesap yönetimi")
 @RestController
 @RequestMapping("/account")
 @RequiredArgsConstructor
@@ -37,6 +41,7 @@ public class AccountController {
 	 * Kullanıcının kendi sosyal medya hesabını ekler.
 	 * Onboarding adım 5 (opsiyonel).
 	 */
+	@Operation(summary = "Kendi hesabı ekle", description = "Kullanıcının kendi Instagram hesabını ekler (OWN_ONLY/BOTH analizleri için).")
 	@PostMapping("/own/add")
 	public DataResponse<UserSocialAccountDto> addOwnAccount(@Valid @RequestBody AddOwnAccountRequest request) {
 		// userId JWT'den al
@@ -49,6 +54,7 @@ public class AccountController {
 	/**
 	 * Kullanıcının aktif kendi hesabını getirir.
 	 */
+	@Operation(summary = "Kendi hesabı getir", description = "Kullanıcının ekli kendi hesabını döndürür.")
 	@PostMapping("/own/get")
 	public DataResponse<UserSocialAccountDto> getOwnAccount() {
 		// userId JWT'den al; request body gerekmez
@@ -61,6 +67,7 @@ public class AccountController {
 	 * Rakip (izlenen) hesap ekler.
 	 * Onboarding adım 6 (opsiyonel).
 	 */
+	@Operation(summary = "Rakip hesap ekle", description = "İzlenecek rakip Instagram hesabı ekler (COMPETITOR_ONLY için).")
 	@PostMapping("/monitored/add")
 	public DataResponse<MonitoredAccountDto> addMonitoredAccount(
 			@Valid @RequestBody AddMonitoredAccountRequest request) {
@@ -74,6 +81,7 @@ public class AccountController {
 	/**
 	 * Kullanıcının izlediği rakip hesapları listeler.
 	 */
+	@Operation(summary = "Rakip hesapları listele", description = "Kullanıcının izlediği rakip hesapları döndürür.")
 	@PostMapping("/monitored/list")
 	public DataResponse<List<MonitoredAccountDto>> listMonitoredAccounts() {
 		// userId JWT'den al; request body gerekmez
@@ -85,6 +93,7 @@ public class AccountController {
 	/**
 	 * Kullanıcının izlediği bir rakip hesabı kaldırır (soft delete).
 	 */
+	@Operation(summary = "Rakip hesabı kaldır", description = "Belirtilen izlenen rakip hesabı pasifleştirir.")
 	@PostMapping("/monitored/remove")
 	public DataResponse<Void> removeMonitoredAccount(@Valid @RequestBody RemoveMonitoredAccountRequest request) {
 		// userId JWT'den al

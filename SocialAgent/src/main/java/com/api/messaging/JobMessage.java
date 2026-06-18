@@ -3,11 +3,10 @@ package com.api.messaging;
 import java.util.UUID;
 
 /**
- * Job kuyruğuna basılan mesaj gövdesi (FAZ 4 — CLAUDE.md Bölüm 9).
- * Spec'e göre mesaj = user_job_id; tip güvenliği için record içinde taşınır.
- * FAZ 5 worker bu id ile job'ı yükleyip Apify + AI pipeline'ını çalıştırır.
+ * Kuyruğa basılan mesaj gövdesi (CLAUDE.md Bölüm 9 — yeni: scheduler yok, direkt push).
+ * Mesaj = request_id; worker bu id ile report_request'i yükleyip pipeline'ı çalıştırır.
  *
- * @param userJobId işlenecek job'ın PK'si
+ * @param requestId işlenecek rapor isteğinin PK'si
  */
-public record JobMessage(UUID userJobId) {
+public record JobMessage(UUID requestId) {
 }

@@ -1,5 +1,8 @@
 package com.api.local;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 import java.util.List;
 import java.util.UUID;
 
@@ -19,67 +22,71 @@ import lombok.RequiredArgsConstructor;
  * Tüm uçlar POST (CLAUDE.md Madde 2) ve HTTP 200 + responseCode (Madde 3) konvansiyonuna uyar.
  *
  * Bu controller RabbitMQ'yu devre dışı bırakır: kuyruğu dinlemek yerine LocalJobRunner ile
- * user_job tablosundan FIFO job seçip gerçek pipeline'ı çalıştırır. Apify/OpenAI/Gemini
- * çağrıları local'de @Primary dummy bean'lerle taklit edildiğinden hiçbir dış servise gidilmez.
+ * report_request tablosundan FIFO istek seçip gerçek pipeline'ı çalıştırır.
  *
  * Güvenlik: SecurityConfig'te /local/** permitAll yapıldı (controller zaten yalnızca local'de var).
- * userId istekten alınmaz; pipeline job kaydındaki user_id'yi kullanır.
+ * userId istekten alınmaz; pipeline istek kaydındaki user_id'yi kullanır.
  */
+@Tag(name = "Local — İş Çalıştırıcı", description = "LOCAL profil RabbitMQ'suz iş çalıştırma uçları")
 @RestController
 @RequestMapping("/local")
 @Profile("local")
 @RequiredArgsConstructor
 public class LocalWorkerController {
 
-	// RabbitMQ'suz iş çalıştırıcı
-	private final LocalJobRunner localJobRunner;
+    // RabbitMQ'suz istek çalıştırıcı
+    private final LocalJobRunner localJobRunner;
 
-	/**
-	 * Sıradaki (en eski) bekleyen job'ı işler.
-	 * Bekleyen job yoksa responseCode = NOT_FOUND (data null).
-	 */
-	@PostMapping("/run-next-job")
-	public DataResponse<UUID> runNextJob() {
-		UUID jobId = localJobRunner.runNextJob();
-		if (jobId == null) {
-			return DataResponse.of(ResponseCode.NOT_FOUND);
-		}
-		return DataResponse.success(jobId);
-	}
+    /**
+     * Sıradaki (en eski) bekleyen rapor isteğini işler.
+     * Bekleyen istek yoksa responseCode = NOT_FOUND.
+     */
+    @Operation(summary = "Sıradaki isteği işle (local)", description = "FIFO sırasıyla bekleyen ilk rapor isteğini işler (pipeline'ı çalıştırır).")
+    @PostMapping("/run-next-job")
+    public DataResponse<UUID> runNextJob() {
+        UUID requestId = localJobRunner.runNextRequest();
+        if (requestId == null) {
+            return DataResponse.of(ResponseCode.NOT_FOUND);
+        }
+        return DataResponse.success(requestId);
+    }
 
-	/**
-	 * Body ile verilen belirli bir job'ı işler (FIFO sırasına bakmaz).
-	 */
-	@PostMapping("/run-job")
-	public DataResponse<UUID> runJob(@RequestBody RunJobRequest request) {
-		if (request == null || request.userJobId() == null) {
-			return DataResponse.of(ResponseCode.VALIDATION_ERROR);
-		}
-		localJobRunner.runJob(request.userJobId());
-		return DataResponse.success(request.userJobId());
-	}
+    /**
+     * Body ile verilen belirli bir rapor isteğini işler (FIFO sırasına bakmaz).
+     */
+    @Operation(summary = "Belirli isteği işle (local)", description = "Body ile verilen request_id'yi sıraya bakmaksızın işler.")
+    @PostMapping("/run-job")
+    public DataResponse<UUID> runJob(@RequestBody RunJobRequest request) {
+        if (request == null || request.requestId() == null) {
+            return DataResponse.of(ResponseCode.VALIDATION_ERROR);
+        }
+        localJobRunner.runRequest(request.requestId());
+        return DataResponse.success(request.requestId());
+    }
 
-	/**
-	 * Bekleyen tüm job'ları FIFO sırayla işler (güvenlik tavanı LocalJobRunner.MAX_BATCH).
-	 */
-	@PostMapping("/run-all-pending")
-	public DataResponse<List<UUID>> runAllPending() {
-		return DataResponse.success(localJobRunner.runAllPending());
-	}
+    /**
+     * Bekleyen tüm rapor isteklerini FIFO sırayla işler (güvenlik tavanı LocalJobRunner.MAX_BATCH).
+     */
+    @Operation(summary = "Bekleyen tüm istekleri işle (local)", description = "Bekleyen tüm istekleri FIFO sırayla işler (tavan: MAX_BATCH).")
+    @PostMapping("/run-all-pending")
+    public DataResponse<List<UUID>> runAllPending() {
+        return DataResponse.success(localJobRunner.runAllPending());
+    }
 
-	/**
-	 * Bekleyen (active=1, completed=0) job'ları FIFO sırasıyla listeler (işlemeden).
-	 */
-	@PostMapping("/pending")
-	public DataResponse<List<LocalJobRunner.PendingJob>> pending() {
-		return DataResponse.success(localJobRunner.listPending());
-	}
+    /**
+     * Bekleyen rapor isteklerini FIFO sırasıyla listeler (işlemeden).
+     */
+    @Operation(summary = "Bekleyen istekler (local)", description = "Bekleyen (raporu üretilmemiş) istekleri FIFO sırasıyla listeler.")
+    @PostMapping("/pending")
+    public DataResponse<List<LocalJobRunner.PendingRequest>> pending() {
+        return DataResponse.success(localJobRunner.listPending());
+    }
 
-	/**
-	 * /local/run-job için basit istek gövdesi.
-	 *
-	 * @param userJobId işlenecek job id'si
-	 */
-	public record RunJobRequest(UUID userJobId) {
-	}
+    /**
+     * /local/run-job için basit istek gövdesi.
+     *
+     * @param requestId işlenecek rapor isteği id'si
+     */
+    public record RunJobRequest(UUID requestId) {
+    }
 }

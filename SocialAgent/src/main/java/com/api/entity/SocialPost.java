@@ -20,7 +20,7 @@ import lombok.Setter;
  *  - MONITORED (rakip): source_type=MONITORED; monitoredAccountId dolu.
  *  - SECTOR (sektör araştırması): source_type=SECTOR; sectorAccountName dolu (Apify ownerUsername).
  *
- * UNIQUE(platform, platformPostId) hem şemada hem servis katmanında kontrol edilir (CLAUDE.md Madde 5).
+ * UNIQUE(platform, platformPostId) — mevcut gönderi varsa save-or-update yapılır (servis katmanı).
  */
 @Entity
 @Table(name = "social_post")
@@ -33,9 +33,9 @@ public class SocialPost {
 	@Column(name = "social_post_id")
 	private UUID socialPostId;
 
-	// Gönderiyi çeken job'ın id'si
-	@Column(name = "user_job_id")
-	private UUID userJobId;
+	// İsteği oluşturan rapor isteğinin id'si
+	@Column(name = "request_id")
+	private UUID requestId;
 
 	// Rakip hesap id'si (yalnızca MONITORED kaynağında dolu; diğerlerinde null)
 	@Column(name = "monitored_account_id")

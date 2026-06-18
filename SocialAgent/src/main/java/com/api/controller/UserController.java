@@ -1,5 +1,8 @@
 package com.api.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 import java.util.UUID;
 
 import org.springframework.web.bind.annotation.PostMapping;
@@ -17,6 +20,7 @@ import lombok.RequiredArgsConstructor;
  * Kullanıcı uçları (korumalı - token gerekir).
  * /user/me: o anki kullanıcının bilgisini döner. userId DAİMA JWT'den (Madde 4).
  */
+@Tag(name = "Kullanıcı", description = "Kullanıcı profili")
 @RestController
 @RequestMapping("/user")
 @RequiredArgsConstructor
@@ -28,6 +32,7 @@ public class UserController {
 	/**
 	 * Token'daki kullanıcının profilini döner (istekte userId yok).
 	 */
+	@Operation(summary = "Profilim", description = "Oturum açan kullanıcının profil bilgisini döndürür.")
 	@PostMapping("/me")
 	public DataResponse<UserDto> me() {
 		// userId güvenlik bağlamından (JWT) okunur

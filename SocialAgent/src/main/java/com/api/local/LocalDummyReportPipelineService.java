@@ -62,18 +62,18 @@ public class LocalDummyReportPipelineService extends ReportPipelineService {
 	 */
 	@Override
 	@Transactional
-	public boolean generateReport(UUID userJobId) {
+	public boolean generateReport(UUID requestId) {
 		// 1) Normal akış: özet doluysa gerçek (dummy AI'lı) rapor üretilir
-		if (super.generateReport(userJobId)) {
+		if (super.generateReport(requestId)) {
 			return true;
 		}
 
 		// 2) Özet boştu -> local iç test için garantili dummy rapor yaz
-		UUID reportId = reportService.ensureReport(userJobId);
+		UUID reportId = reportService.ensureReport(requestId);
 		reportService.markGenerating(reportId);
 		reportService.markCompleted(reportId, dummy.randomReportMarkdown());
-		log.info("[LOCAL-DUMMY] Özet boş -> dummy rapor yazıldı: userJobId={}, reportId={}",
-				userJobId, reportId);
+		log.info("[LOCAL-DUMMY] Özet boş -> dummy rapor yazıldı: requestId={}, reportId={}",
+				requestId, reportId);
 		return true;
 	}
 }

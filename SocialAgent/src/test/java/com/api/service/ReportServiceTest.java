@@ -25,93 +25,91 @@ import com.api.entity.Report;
 /**
  * ReportService için Spring'siz birim testi (DB gerektirmez).
  * JdbcTemplate ve ReportRepository mock'lanır.
- * Doğrulanan davranışlar (FAZ 7):
- *  - findReportIdByJob: kayıt varsa id, yoksa null döner.
- *  - createPending: JPA save çağrılır, PENDING id döner.
- *  - ensureReport: mevcut rapor varsa onu döndürür (save YOK), yoksa oluşturur (save VAR).
+ * Doğrulanan davranışlar:
+ *  - findReportIdByRequest: kayıt varsa id, yoksa null döner.
+ *  - createPending: JPA saveAndFlush çağrılır, PENDING id döner.
+ *  - ensureReport: mevcut rapor varsa onu döndürür (saveAndFlush YOK), yoksa oluşturur (saveAndFlush VAR).
  *  - markCompleted: native UPDATE çağrılır (içerik dahil).
  */
 class ReportServiceTest {
 
-	private JdbcTemplate jdbcTemplate;
-	private ReportRepository reportRepository;
-	private ReportService service;
+    private JdbcTemplate jdbcTemplate;
+    private ReportRepository reportRepository;
+    private ReportService service;
 
-	private final UUID jobId = UUID.randomUUID();
+    private final UUID requestId = UUID.randomUUID();
 
-	@BeforeEach
-	void setUp() {
-		jdbcTemplate = org.mockito.Mockito.mock(JdbcTemplate.class);
-		reportRepository = org.mockito.Mockito.mock(ReportRepository.class);
-		// @RequiredArgsConstructor sırası: jdbcTemplate, reportRepository
-		service = new ReportService(jdbcTemplate, reportRepository);
-	}
+    @BeforeEach
+    void setUp() {
+        jdbcTemplate = org.mockito.Mockito.mock(JdbcTemplate.class);
+        reportRepository = org.mockito.Mockito.mock(ReportRepository.class);
+        service = new ReportService(jdbcTemplate, reportRepository);
+    }
 
-	@SuppressWarnings("unchecked")
-	@Test
-	void findReportIdJobYoksaNull() {
-		// Lookup boş -> rapor yok
-		when(jdbcTemplate.query(anyString(), any(RowMapper.class), (Object[]) any()))
-				.thenReturn(List.of());
+    @SuppressWarnings("unchecked")
+    @Test
+    void findReportIdRequestYoksaNull() {
+        // Lookup boş -> rapor yok; tek UUID vararg için any(UUID.class) kullanılır
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(UUID.class)))
+                .thenReturn(List.of());
 
-		assertNull(service.findReportIdByJob(jobId));
-	}
+        assertNull(service.findReportIdByRequest(requestId));
+    }
 
-	@SuppressWarnings("unchecked")
-	@Test
-	void createPendingSaveCagrilir() {
-		UUID id = service.createPending(jobId);
+    @Test
+    void createPendingSaveAndFlushCagrilir() {
+        // createPending saveAndFlush kullanır (JPA flush garantisi)
+        UUID id = service.createPending(requestId);
 
-		// Yeni rapor -> save çağrılır ve geçerli id döner
-		verify(reportRepository, times(1)).save(any(Report.class));
-		assertNotNull(id);
-	}
+        verify(reportRepository, times(1)).saveAndFlush(any(Report.class));
+        assertNotNull(id);
+    }
 
-	@SuppressWarnings("unchecked")
-	@Test
-	void ensureReportMevcutsaYenisiOlusturulmaz() {
-		// Lookup mevcut bir rapor id'si döndürsün
-		UUID existing = UUID.randomUUID();
-		when(jdbcTemplate.query(anyString(), any(RowMapper.class), (Object[]) any()))
-				.thenReturn(List.of(existing));
+    @SuppressWarnings("unchecked")
+    @Test
+    void ensureReportMevcutsaYenisiOlusturulmaz() {
+        // Lookup mevcut bir rapor id'si döndürsün
+        UUID existing = UUID.randomUUID();
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(UUID.class)))
+                .thenReturn(List.of(existing));
 
-		UUID result = service.ensureReport(jobId);
+        UUID result = service.ensureReport(requestId);
 
-		// Mevcut id döner; insert yapılmaz
-		assertEquals(existing, result);
-		verify(reportRepository, never()).save(any(Report.class));
-	}
+        // Mevcut id döner; insert yapılmaz
+        assertEquals(existing, result);
+        verify(reportRepository, never()).saveAndFlush(any(Report.class));
+    }
 
-	@SuppressWarnings("unchecked")
-	@Test
-	void ensureReportYoksaOlusturulur() {
-		// Lookup boş -> yeni oluşturulmalı
-		when(jdbcTemplate.query(anyString(), any(RowMapper.class), (Object[]) any()))
-				.thenReturn(List.of());
+    @SuppressWarnings("unchecked")
+    @Test
+    void ensureReportYoksaOlusturulur() {
+        // Lookup boş -> yeni oluşturulmalı
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(UUID.class)))
+                .thenReturn(List.of());
 
-		UUID result = service.ensureReport(jobId);
+        UUID result = service.ensureReport(requestId);
 
-		// Yeni id döner; insert yapılır
-		assertNotNull(result);
-		verify(reportRepository, times(1)).save(any(Report.class));
-	}
+        // Yeni id döner; saveAndFlush çağrılır
+        assertNotNull(result);
+        verify(reportRepository, times(1)).saveAndFlush(any(Report.class));
+    }
 
-	@Test
-	void markCompletedNativeUpdateCagrilir() {
-		UUID reportId = UUID.randomUUID();
+    @Test
+    void markCompletedNativeUpdateCagrilir() {
+        UUID reportId = UUID.randomUUID();
 
-		service.markCompleted(reportId, "# Rapor\nMarkdown içerik");
+        service.markCompleted(reportId, "# Rapor\nMarkdown içerik");
 
-		// İçerikli durum güncellemesi -> native UPDATE en az 1 kez
-		verify(jdbcTemplate, times(1)).update(anyString(), (Object[]) any());
-	}
+        // update(sql, status, content, timestamp, reportId): 4 vararg elementi
+        verify(jdbcTemplate, times(1)).update(anyString(), eq("COMPLETED"), anyString(), any(), any(UUID.class));
+    }
 
-	@Test
-	void markFailedNativeUpdateCagrilir() {
-		UUID reportId = UUID.randomUUID();
+    @Test
+    void markFailedNativeUpdateCagrilir() {
+        UUID reportId = UUID.randomUUID();
 
-		service.markFailed(reportId);
+        service.markFailed(reportId);
 
-		verify(jdbcTemplate, times(1)).update(anyString(), eq("FAILED"), any(), eq(reportId));
-	}
+        verify(jdbcTemplate, times(1)).update(anyString(), eq("FAILED"), any(), eq(reportId));
+    }
 }

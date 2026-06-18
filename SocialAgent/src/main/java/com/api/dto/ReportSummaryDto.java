@@ -7,32 +7,29 @@ import lombok.Getter;
 import lombok.Setter;
 
 /**
- * Dashboard rapor listesi satırı (FAZ 8 — POST /report/list).
+ * Dashboard rapor listesi satırı (POST /report/list).
  * Markdown içerik TAŞIMAZ (liste hafif kalsın); içerik /report/detail ile gelir.
- * report ⋈ user_job native join (eski stil "=") ile doldurulur (CLAUDE.md Madde 6).
+ * report ⋈ report_request native join (eski stil "=") ile doldurulur (CLAUDE.md Madde 6).
  */
 @Getter
 @Setter
 public class ReportSummaryDto {
 
-	// Raporun id'si
-	private UUID reportId;
+    // Raporun id'si
+    private UUID reportId;
 
-	// Raporun ait olduğu job id'si
-	private UUID userJobId;
+    // Raporun ait olduğu rapor isteği id'si
+    private UUID requestId;
 
-	// Rapor durumu: PENDING | GENERATING | COMPLETED | FAILED
-	private String status;
+    // Rapor durumu: PENDING | GENERATING | COMPLETED | FAILED
+    private String status;
 
-	// Job analiz modu (OWN_ONLY | COMPETITOR_ONLY | BOTH | NONE) — join'den gelir
-	private String analysisMode;
+    // Rapor türü (OWN_ONLY | COMPETITOR_ONLY | BOTH | NONE) — join'den gelir
+    private String reportType;
 
-	// Job periyodu (DAILY | WEEKLY | MONTHLY | ON_DEMAND) — join'den gelir
-	private String jobPeriod;
+    // Raporun oluşturulma tarihi
+    private LocalDateTime createdDate;
 
-	// Raporun oluşturulma tarihi
-	private LocalDateTime createdDate;
-
-	// Raporun son güncellenme tarihi (durum geçişlerinde değişir)
-	private LocalDateTime updatedDate;
+    // Raporun son güncellenme tarihi (durum geçişlerinde değişir)
+    private LocalDateTime updatedDate;
 }

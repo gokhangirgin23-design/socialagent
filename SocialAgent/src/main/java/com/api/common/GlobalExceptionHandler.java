@@ -4,6 +4,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -33,6 +34,14 @@ public class GlobalExceptionHandler {
 		if (ex.getBindingResult().getFieldError() != null) {
 			response.setResponseDescription(ex.getBindingResult().getFieldError().getDefaultMessage());
 		}
+		return ResponseEntity.ok(response);
+	}
+
+	// Bilinmeyen URL (controller eşleşmedi) -> 005 NOT_FOUND, HTTP 200 (CLAUDE.md Madde 3)
+	@ExceptionHandler(NoResourceFoundException.class)
+	public ResponseEntity<BaseResponse> handleNoResource(NoResourceFoundException ex) {
+		BaseResponse response = new BaseResponse(ResponseCode.NOT_FOUND);
+		response.setResponseDescription("İstenen kaynak bulunamadı: " + ex.getResourcePath());
 		return ResponseEntity.ok(response);
 	}
 

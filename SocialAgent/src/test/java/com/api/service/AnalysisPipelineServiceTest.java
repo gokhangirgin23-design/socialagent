@@ -56,7 +56,7 @@ class AnalysisPipelineServiceTest {
 				.thenReturn("{\"metrics\":{},\"visual\":{}}");
 		when(postAnalysisService.saveAnalysis(any(UUID.class), anyString())).thenReturn(true);
 
-		int analyzed = service.analyzeJob(jobId);
+		int analyzed = service.analyzeRequest(jobId);
 
 		verify(aiAnalysisService, times(2)).analyzeFull(any(SocialPost.class));
 		verify(postAnalysisService, times(1)).saveAnalysis(eq(p1.getSocialPostId()), anyString());
@@ -70,7 +70,7 @@ class AnalysisPipelineServiceTest {
 		when(jdbcTemplate.query(anyString(), any(RowMapper.class), (Object[]) any()))
 				.thenReturn(List.of());
 
-		int analyzed = service.analyzeJob(jobId);
+		int analyzed = service.analyzeRequest(jobId);
 
 		verify(aiAnalysisService, never()).analyzeFull(any(SocialPost.class));
 		verify(postAnalysisService, never()).saveAnalysis(any(UUID.class), anyString());
@@ -88,7 +88,7 @@ class AnalysisPipelineServiceTest {
 		// Yazma başarısız (zaten analizli) -> false
 		when(postAnalysisService.saveAnalysis(any(UUID.class), anyString())).thenReturn(false);
 
-		int analyzed = service.analyzeJob(jobId);
+		int analyzed = service.analyzeRequest(jobId);
 
 		verify(aiAnalysisService, times(1)).analyzeFull(any(SocialPost.class));
 		assertEquals(0, analyzed);

@@ -1,5 +1,8 @@
 package com.api.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 import java.util.List;
 import java.util.UUID;
 
@@ -25,6 +28,7 @@ import lombok.RequiredArgsConstructor;
  * Hepsi POST (CLAUDE.md Madde 2); güvenli uçlar — JWT zorunlu.
  * userId daima JWT'den SecurityUtil ile alınır; istekten okunmaz (CLAUDE.md Madde 4).
  */
+@Tag(name = "Rapor", description = "Üretilmiş raporların görüntülenmesi")
 @RestController
 @RequestMapping("/report")
 @RequiredArgsConstructor
@@ -37,6 +41,7 @@ public class ReportController {
 	 * Kullanıcının raporlarını sayfalı listeler (en yeni önce; içeriksiz özet).
 	 * Endpoint: POST /report/list
 	 */
+	@Operation(summary = "Raporları listele", description = "Kullanıcının raporlarını sayfalı özet olarak döndürür.")
 	@PostMapping("/list")
 	public DataResponse<List<ReportSummaryDto>> listReports(
 			@RequestBody(required = false) ReportListRequest request) {
@@ -55,6 +60,7 @@ public class ReportController {
 	 * Rapor yoksa/erişim yoksa NOT_FOUND (data null, HTTP yine 200 — CLAUDE.md Madde 3).
 	 * Endpoint: POST /report/detail
 	 */
+	@Operation(summary = "Rapor detayı", description = "Belirtilen raporun Markdown içeriğini döndürür.")
 	@PostMapping("/detail")
 	public DataResponse<ReportDto> getReportDetail(@Valid @RequestBody ReportDetailRequest request) {
 		// userId JWT'den al
