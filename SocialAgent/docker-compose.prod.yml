@@ -1,23 +1,94 @@
-version: '3.3'
+version: '2.4'
 
 services:
 
-  app1:
+  socialagent-prod-api-1:
     build: .
-    env_file:
-      - /opt/myapp/prod/.env
-    restart: always
-    ports:
-      - "8081:8080"
-    environment:
-      SPRING_PROFILES_ACTIVE: prod
+    container_name: socialagent-prod-api-1
 
-  app2:
-    build: .
     env_file:
-      - /opt/myapp/prod/.env
-    restart: always
-    ports:
-      - "8082:8080"
+      - /opt/socialagent/prod/.env
+
     environment:
       SPRING_PROFILES_ACTIVE: prod
+      WORKER_ENABLED: "false"
+
+    restart: unless-stopped
+    mem_limit: 768m
+
+    ports:
+      - "9281:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    networks:
+      - socialagent_default
+ 
+  socialagent-prod-api-2:
+    build: .
+    container_name: socialagent-prod-api-2
+
+    env_file:
+      - /opt/socialagent/prod/.env
+
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      WORKER_ENABLED: "false"
+
+    restart: unless-stopped
+    mem_limit: 768m
+
+    ports:
+      - "9282:8080"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"   
+
+    networks:
+      - socialagent_default
+ 
+  socialagent-prod-worker:
+    build: .
+    container_name: socialagent-prod-worker
+
+    env_file:
+      - /opt/socialagent/prod/.env
+
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      WORKER_ENABLED: "true"
+
+    restart: unless-stopped
+    mem_limit: 896m
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"   
+
+
+    networks:
+      - socialagent_default
+
+networks:
+  socialagent_default:
+    external: true
