@@ -41,7 +41,7 @@ public class AccountController {
 	 * Kullanıcının kendi sosyal medya hesabını ekler.
 	 * Onboarding adım 5 (opsiyonel).
 	 */
-	@Operation(summary = "Kendi hesabı ekleeee BURASII", description = "Kullanıcının kendi Instagram hesabını ekler (OWN_ONLY/BOTH analizleri için).")
+	@Operation(summary = "Kendi hesabı ekleeee DEGISIKLIKKKK", description = "Kullanıcının kendi Instagram hesabını ekler (OWN_ONLY/BOTH analizleri için).")
 	@PostMapping("/own/add")
 	public DataResponse<UserSocialAccountDto> addOwnAccount(@Valid @RequestBody AddOwnAccountRequest request) {
 		// userId JWT'den al
