@@ -1,48 +1,42 @@
 name: Deploy TEST
 
 on:
-  push:
-    branches:
-      - develop
+push:
+branches:
+- develop
 
 jobs:
+deploy:
+runs-on: ubuntu-latest
 
-  deploy:
-    runs-on: ubuntu-latest
+```
+steps:
+  - name: Deploy Test Server
+    uses: appleboy/ssh-action@v1.0.3
+    with:
+      host: ${{ secrets.VPS_HOST }}
+      username: ${{ secrets.VPS_USER }}
+      key: ${{ secrets.VPS_SSH_KEY }}
+      port: 22
+      timeout: 30s
+      command_timeout: 20m
 
-    steps:
+      script: |
+      
+        cd /opt/socialagent/test/api/SocialAgent
 
-      - name: Deploy to VPS
-        uses: appleboy/ssh-action@v1.0.3
+        git fetch origin
+        git reset --hard origin/develop
 
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
+        ./mvnw clean package -DskipTests
 
-          script: |
+        docker-compose -p test -f docker-compose.test.yml down || true
 
-            echo "SERVER:"
-            hostname
+        docker-compose -p test -f docker-compose.test.yml up -d --build --force-recreate
 
-            echo "USER:"
-            whoami
+        docker ps | grep socialagent-test-api
 
-            echo "DOCKER:"
-            docker ps -a
+        sleep 15
 
-            cd /opt/socialagent/test/api/SocialAgent
-
-            git fetch origin
-
-            git reset --hard origin/develop
-
-            mvn clean package -DskipTests
-
-            docker-compose -f docker-compose.test.yml down || true
-
-            docker rm -f socialagent-test-api || true
-
-            docker-compose -f docker-compose.test.yml build
-
-            docker-compose -f docker-compose.test.yml up -d --force-recreate
+        curl -f http://localhost:9181/actuator/health
+```
