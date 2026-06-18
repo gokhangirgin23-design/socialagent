@@ -1,23 +1,32 @@
-version: '3.3'
+version: '2.4'
 
 services:
-
-  app1:
+  socialagent-test-api:
     build: .
+    container_name: socialagent-test-api
+
     env_file:
-      - /opt/myapp/test/.env
-    restart: always
-    ports:
-      - "9081:8080"
+      - /opt/socialagent/test/.env
+
     environment:
       SPRING_PROFILES_ACTIVE: test
 
-  app2:
-    build: .
-    env_file:
-      - /opt/myapp/test/.env
-    restart: always
     ports:
-      - "9082:8080"
-    environment:
-      SPRING_PROFILES_ACTIVE: test
+      - "9181:8080"
+  
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"   
+
+    restart: unless-stopped
+    mem_limit: 448m
+
+networks:
+  socialagent_default:
+    external: true
