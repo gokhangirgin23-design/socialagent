@@ -14,9 +14,9 @@ jobs:
         uses: appleboy/ssh-action@v1.0.3
 
         with:
-          host: ${{ secrets.PROD_HOST }}
-          username: ${{ secrets.PROD_USER }}
-          key: ${{ secrets.PROD_SSH_KEY }}
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
 
           script: |
             cd /opt/socialagent/prod/api/socialagent/SocialAgent
