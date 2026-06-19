@@ -22,6 +22,10 @@ import lombok.extern.slf4j.Slf4j;
  * enjeksiyonlarda gerçek ApifyClient yerine bu bean seçilir. Diğer ortamlarda bu sınıf
  * hiç oluşturulmaz -> gerçek ApifyClient aynen çalışır.
  *
+ * Failure enjeksiyonu (LocalFailMode):
+ *   - APIFY_EMPTY: boş liste döner (gerçek Apify timeout simülasyonu -> 0 post)
+ *   - APIFY_THROW: exception fırlatır (beklenmedik scrape hatası -> processRequest FAILED)
+ *
  * Not: Service interface yok (CLAUDE.md Madde 1) olduğundan değiştirme için kalıtım kullanıldı.
  */
 @Slf4j
@@ -33,18 +37,33 @@ public class LocalDummyApifyClient extends ApifyClient {
 	// Dummy yanıt havuzu
 	private final DummyResponseProvider dummy;
 
+	// Failure enjeksiyon anahtarı
+	private final LocalFailMode failMode;
+
 	// Üst sınıfın zorunlu bağımlılığı (AppProperties) super'a iletilir.
-	public LocalDummyApifyClient(AppProperties appProperties, DummyResponseProvider dummy) {
+	public LocalDummyApifyClient(AppProperties appProperties, DummyResponseProvider dummy, LocalFailMode failMode) {
 		super(appProperties);
 		this.dummy = dummy;
+		this.failMode = failMode;
 	}
 
 	/**
 	 * Gerçek Apify post çekme yerine dummy post döner. URL içeriği önemsizdir;
 	 * yalnızca kaç post üretileceği (resultsLimit) kullanılır.
+	 * Failure modu aktifse boş döner ya da exception fırlatır.
 	 */
 	@Override
 	public List<ApifyPost> fetchPostsByUrls(List<String> directUrls, int resultsLimit) {
+		// Failure enjeksiyonu
+		if (failMode.fire(LocalFailMode.Mode.APIFY_THROW)) {
+			log.info("[LOCAL-DUMMY] APIFY_THROW enjekte edildi");
+			throw new RuntimeException("dummy Apify failure (APIFY_THROW)");
+		}
+		if (failMode.fire(LocalFailMode.Mode.APIFY_EMPTY)) {
+			log.info("[LOCAL-DUMMY] APIFY_EMPTY enjekte edildi (boş döndü)");
+			return List.of();
+		}
+
 		List<ApifyPost> posts = dummy.randomPosts(resultsLimit);
 		log.info("[LOCAL-DUMMY] Apify post çekme taklit edildi: urlSayısı={}, üretilen={}",
 				(directUrls != null ? directUrls.size() : 0), posts.size());
