@@ -18,14 +18,12 @@ import lombok.extern.slf4j.Slf4j;
  * LOCAL profil için ReportPipelineService yerine geçen dummy sarmalayıcı (sadece iç test).
  * Gerçek ReportPipelineService'ten TÜRER; generateReport'u override eder.
  *
- * SORUN: Gerçek generateReport, hesap özetleri (social_post ⋈ post_analysis) boş gelirse
- *        ensureReport'a hiç ulaşmadan "return false" eder; bu durumda report kaydı oluşmaz
- *        ya da mevcut kayda report_content YAZILMAZ (boş kalır). Local dummy akışta bu join
- *        bazı durumlarda boş kaldığı için raporun içeriği boş görünüyordu.
+ * Normal local davranışı: önce gerçek akış (super.generateReport) denenir; özet boşsa
+ * local'de garantili bir dummy Markdown rapor yazılır (iç test kolaylığı).
  *
- * ÇÖZÜM (yalnızca local): Önce gerçek akış denenir (super.generateReport). Özet doluysa
- *        rapor normal şekilde üretilir ve bu sınıf hiçbir şey yapmaz. Özet boşsa (super false
- *        döndüyse), local'de yine de garantili bir dummy Markdown rapor yazılır.
+ * Failure enjeksiyonu (LocalFailMode):
+ *   - REPORT_NULL: false döner -> kullanılabilir rapor yok -> processRequest FAILED
+ *   - REPORT_THROW: exception fırlatır -> processRequest FAILED
  *
  * @Primary + @Profile("local"): yalnızca local'de devreye girer; diğer ortamlarda gerçek
  * ReportPipelineService aynen çalışır (bu sınıf hiç oluşturulmaz).
@@ -44,6 +42,9 @@ public class LocalDummyReportPipelineService extends ReportPipelineService {
 	// Dummy yanıt havuzu (rastgele Markdown rapor)
 	private final DummyResponseProvider dummy;
 
+	// Failure enjeksiyon anahtarı
+	private final LocalFailMode failMode;
+
 	/**
 	 * Üst sınıfın zorunlu bağımlılıkları super'a iletilir (field sırası: jdbcTemplate,
 	 * aiAnalysisService, reportService). Local'de aiAnalysisService = LocalDummyAiAnalysisService.
@@ -51,18 +52,31 @@ public class LocalDummyReportPipelineService extends ReportPipelineService {
 	public LocalDummyReportPipelineService(JdbcTemplate jdbcTemplate,
 			AiAnalysisService aiAnalysisService,
 			ReportService reportService,
-			DummyResponseProvider dummy) {
+			DummyResponseProvider dummy,
+			LocalFailMode failMode) {
 		super(jdbcTemplate, aiAnalysisService, reportService);
 		this.reportService = reportService;
 		this.dummy = dummy;
+		this.failMode = failMode;
 	}
 
 	/**
 	 * Önce gerçek akışı dener; özet boş olduğu için rapor yazılmadıysa local'de dummy rapor yazar.
+	 * Failure modu aktifse false döner ya da exception fırlatır.
 	 */
 	@Override
 	@Transactional
 	public boolean generateReport(UUID requestId) {
+		// Failure enjeksiyonu
+		if (failMode.fire(LocalFailMode.Mode.REPORT_THROW)) {
+			log.info("[LOCAL-DUMMY] REPORT_THROW enjekte edildi: requestId={}", requestId);
+			throw new RuntimeException("dummy report failure (REPORT_THROW)");
+		}
+		if (failMode.fire(LocalFailMode.Mode.REPORT_NULL)) {
+			log.info("[LOCAL-DUMMY] REPORT_NULL enjekte edildi (rapor üretilmedi): requestId={}", requestId);
+			return false;
+		}
+
 		// 1) Normal akış: özet doluysa gerçek (dummy AI'lı) rapor üretilir
 		if (super.generateReport(requestId)) {
 			return true;
