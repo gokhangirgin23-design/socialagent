@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 import com.api.common.ApiException;
 import com.api.common.ResponseCode;
 import com.api.dto.AnalysisSelectabilityDto;
+import com.api.dto.BalanceCheckResponse;
 import com.api.dto.CreateReportRequestDto;
 import com.api.dto.PaytrFormPayload;
 import com.api.dto.ReportRequestDto;
@@ -119,22 +120,29 @@ public class ReportRequestService {
         if (balance.compareTo(price) >= 0 && paymentService.tryDebit(userId, price, null)) {
             // Bakiye yeterli → ücret düşüldü → rapor isteğini oluştur ve kuyruğa bas
             ReportRequestDto dto = persistAndQueue(userId, mode, ownAccountId);
+            // Doğrudan ödeme: DEBIT log request oluşturulmadan yazıldı; geriye dönük bağla
+            paymentService.linkLatestDebitToRequest(userId, dto.getRequestId());
             dto.setPaymentRequired(false);
             return dto;
         }
 
-        // 3) Bakiye yetersiz → deficit kadar PayTR ödemesi başlat (rapor isteği henüz OLUŞTURULMAZ)
+        // 3) Bakiye yetersiz → PayTR ödemesi başlat (rapor isteği henüz OLUŞTURULMAZ)
         BigDecimal deficit = price.subtract(balance);
         if (deficit.compareTo(BigDecimal.ZERO) <= 0) {
             deficit = price; // güvenlik
         }
+        // Kullanıcı daha fazla yüklemek isteyebilir (topupAmount > deficit); fazlası bakiyede kalır
+        BigDecimal payAmount = (req.getTopupAmount() != null
+                && req.getTopupAmount().compareTo(deficit) > 0)
+                        ? req.getTopupAmount()
+                        : deficit;
         String merchantOid = generateMerchantOid();
         LocalDateTime exp = LocalDateTime.now().plusMinutes(30); // PayTR varsayılanı 30 dk
         // Niyet (reportType + seçilen hesap) ödeme kaydına yazılır; callback'te rapor isteği oluşturulur
-        paymentService.createInitiatedPayment(userId, deficit, merchantOid, exp, mode.name(), ownAccountId);
+        paymentService.createInitiatedPayment(userId, payAmount, merchantOid, exp, mode.name(), ownAccountId);
 
         String email = lookupEmail(userId);
-        PaytrFormPayload payload = paytrGateway.buildPaymentForm(merchantOid, clientIp, email, deficit);
+        PaytrFormPayload payload = paytrGateway.buildPaymentForm(merchantOid, clientIp, email, payAmount);
 
         // PAYMENT_REQUIRED yanıtı (rapor isteği henüz yok → requestId null)
         ReportRequestDto dto = new ReportRequestDto();
@@ -142,7 +150,7 @@ public class ReportRequestService {
         dto.setReportType(mode.name());
         dto.setQueuePushed(0);
         dto.setPaymentRequired(true);
-        dto.setAmountToPay(deficit.setScale(2, RoundingMode.HALF_UP).toPlainString());
+        dto.setAmountToPay(payAmount.setScale(2, RoundingMode.HALF_UP).toPlainString());
         dto.setPaytr(payload);
         return dto;
     }
@@ -163,9 +171,10 @@ public class ReportRequestService {
                     userId, merchantOid);
             return;
         }
-        // Rapor isteğini oluştur + kuyruğa bas, ardından ödeme kaydına bağla
+        // Rapor isteğini oluştur + kuyruğa bas, ardından ödeme kayıtlarına bağla
         ReportRequestDto dto = persistAndQueue(userId, mode, selectedAccountId);
-        paymentService.linkReportRequest(merchantOid, dto.getRequestId());
+        paymentService.linkReportRequest(merchantOid, dto.getRequestId()); // TOPUP log bağlantısı
+        paymentService.linkLatestDebitToRequest(userId, dto.getRequestId()); // DEBIT log bağlantısı
         log.info("Ödeme tamamlandı, rapor isteği oluşturuldu: requestId={}, merchant_oid={}",
                 dto.getRequestId(), merchantOid);
     }
@@ -226,6 +235,29 @@ public class ReportRequestService {
     private String generateMerchantOid() {
         String rnd = UUID.randomUUID().toString().replace("-", "");
         return "TR" + System.currentTimeMillis() + rnd.substring(0, 8);
+    }
+
+    /**
+     * Seçilen rapor tipine göre bakiye yeterlilik kontrolü döner.
+     * Frontend bu bilgiyle "bakiyeniz yetersiz" uyarısını ve minimum yükleme tutarını gösterir.
+     * Endpoint: POST /payment/balance-check
+     */
+    @Transactional(readOnly = true)
+    public BalanceCheckResponse checkBalance(UUID userId, String reportType) {
+        AnalysisMode mode = parseAnalysisMode(reportType);
+        BigDecimal price = reportPriceResolver.priceFor(mode);
+        BigDecimal balance = paymentService.getBalance(userId);
+        boolean sufficient = balance.compareTo(price) >= 0;
+        BigDecimal deficit = sufficient
+                ? BigDecimal.ZERO
+                : price.subtract(balance).setScale(2, RoundingMode.HALF_UP);
+        BalanceCheckResponse resp = new BalanceCheckResponse();
+        resp.setBalance(balance.setScale(2, RoundingMode.HALF_UP));
+        resp.setPrice(price);
+        resp.setSufficient(sufficient);
+        resp.setDeficit(deficit);
+        resp.setCurrency("TL");
+        return resp;
     }
 
     /**

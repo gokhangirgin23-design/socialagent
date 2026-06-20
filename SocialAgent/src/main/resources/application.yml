@@ -46,14 +46,14 @@ management:
 app:
   jwt:
     # PROD/TEST'te JWT_SECRET env'i zorunlu; local için güvenli olmayan varsayılan
-    secret: ${JWT_SECRET:local-dev-secret-degistir-min-32-karakter-0123456789}
+    secret: ${JWT_SECRET}
     # Access token ömrü (dakika)
     access-token-expiration-minutes: ${JWT_ACCESS_MINUTES:30}
     # Refresh token ömrü (gün)
     refresh-token-expiration-days: ${JWT_REFRESH_DAYS:30}
   google:
     # Beklenen audience = OAuth client id (prod/test'te env ile verilir)
-    client-id: ${GOOGLE_CLIENT_ID:}
+    client-id: ${GOOGLE_CLIENT_ID}
     # Gerçek imza doğrulaması (local'de application-local.yml ile false yapılır)
     verification-enabled: ${GOOGLE_VERIFICATION_ENABLED:true}
   # ===== FAZ 4: RabbitMQ kuyruk adları (vhost profil bazlı yml'den) =====
@@ -64,7 +64,7 @@ app:
   # ===== FAZ 5: Apify scraping ayarları (D1) =====
   apify:
     # Apify API token (prod/test'te env ile verilir; boşsa scraping atlanır)
-    token: ${APIFY_TOKEN:}
+    token: ${APIFY_TOKEN}
     base-url: ${APIFY_BASE_URL:https://api.apify.com/v2}
     # Aktör id'leri yolda "~" ile yazılır (apify~actor-name)
     profile-actor-id: ${APIFY_PROFILE_ACTOR:apify~instagram-search-scraper}
@@ -83,13 +83,13 @@ app:
     enabled: ${AI_ENABLED:true}
     openai:
       # OpenAI API anahtarı (prod/test env ile; boşsa TEXT analizi atlanır)
-      api-key: ${OPENAI_API_KEY:}
-      model: ${OPENAI_MODEL:gpt-4o-mini}
+      api-key: ${OPENAI_API_KEY}
+      model: ${OPENAI_MODEL:gpt-5-mini}
       temperature: ${OPENAI_TEMPERATURE:0.2}
       timeout-seconds: ${OPENAI_TIMEOUT_SECONDS:60}
     gemini:
       # Gemini API anahtarı (prod/test env ile; boşsa medya analizi atlanır)
-      api-key: ${GEMINI_API_KEY:}
+      api-key: ${GEMINI_API_KEY}
       model: ${GEMINI_MODEL:gemini-2.0-flash}
       temperature: ${GEMINI_TEMPERATURE:0.2}
       timeout-seconds: ${GEMINI_TIMEOUT_SECONDS:60}

@@ -41,6 +41,10 @@ public class UserPaymentLog {
     @Column(name = "report_request_id")
     private UUID reportRequestId;
 
+    // Rapor üretilince ScrapePipelineService tarafından doldurulur (audit bütünlüğü)
+    @Column(name = "report_id")
+    private UUID reportId;
+
     // TOPUP / DEBIT / REFUND (TransactionType.name())
     @Column(name = "transaction_type")
     private String transactionType;

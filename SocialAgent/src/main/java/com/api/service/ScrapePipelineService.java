@@ -63,6 +63,12 @@ public class ScrapePipelineService {
     // Çekilecek son gönderi sayısı gibi ayarlar
     private final AppProperties appProperties;
 
+    // Rapor id'sini okumak için (report_id → ödeme log bağlantısı)
+    private final ReportService reportService;
+
+    // Rapor tamamlanınca ödeme log'una report_id bağlamak için
+    private final PaymentService paymentService;
+
     /**
      * Tek bir rapor isteğini baştan sona işler (worker bunu çağırır).
      * @Transactional YOK: Apify (~120s) ve AI (~60s) HTTP çağrıları burada tetikleniyor.
@@ -130,7 +136,18 @@ public class ScrapePipelineService {
                     markFinished(requestId, "COMPLETED", null);
                 }
 
-                // 6b) Bildirim (bağımsız tx; hatası pipeline'ı/durumu bozmaz)
+                // 6b) Ödeme log'una report_id'yi bağla (bağımsız; hatası pipeline'ı bozmaz)
+                try {
+                    UUID completedReportId = reportService.findReportIdByRequest(requestId);
+                    if (completedReportId != null) {
+                        paymentService.linkReportIdByRequestId(requestId, completedReportId);
+                    }
+                } catch (Exception ex) {
+                    log.warn("Ödeme log'una report_id bağlanamadı (pipeline etkilenmedi): requestId={}, hata={}",
+                            requestId, ex.getMessage());
+                }
+
+                // 6c) Bildirim (bağımsız tx; hatası pipeline'ı/durumu bozmaz)
                 try {
                     notificationService.notifyReportCompleted(requestId);
                 } catch (Exception ex) {
