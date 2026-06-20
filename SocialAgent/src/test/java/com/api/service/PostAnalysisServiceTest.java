@@ -53,8 +53,8 @@ class PostAnalysisServiceTest {
 
 		boolean saved = service.saveAnalysis(postId, "{\"tone\":\"samimi\"}");
 
-		// Yeni kayıt -> save çağrılır, sonuç true
-		verify(postAnalysisRepository, times(1)).save(any(PostAnalysis.class));
+		// Yeni kayıt -> saveAndFlush çağrılır (immediate flush), sonuç true
+		verify(postAnalysisRepository, times(1)).saveAndFlush(any(PostAnalysis.class));
 		assertTrue(saved);
 	}
 
@@ -67,8 +67,8 @@ class PostAnalysisServiceTest {
 
 		boolean saved = service.saveAnalysis(postId, "{\"tone\":\"samimi\"}");
 
-		// Zaten var -> save çağrılmaz, sonuç false
-		verify(postAnalysisRepository, never()).save(any(PostAnalysis.class));
+		// Zaten var -> saveAndFlush çağrılmaz, sonuç false
+		verify(postAnalysisRepository, never()).saveAndFlush(any(PostAnalysis.class));
 		assertFalse(saved);
 	}
 
@@ -78,7 +78,7 @@ class PostAnalysisServiceTest {
 		boolean savedNull = service.saveAnalysis(postId, null);
 		boolean savedBlank = service.saveAnalysis(postId, "   ");
 
-		verify(postAnalysisRepository, never()).save(any(PostAnalysis.class));
+		verify(postAnalysisRepository, never()).saveAndFlush(any(PostAnalysis.class));
 		assertFalse(savedNull);
 		assertFalse(savedBlank);
 	}

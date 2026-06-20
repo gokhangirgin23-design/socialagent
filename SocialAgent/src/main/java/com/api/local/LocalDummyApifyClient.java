@@ -71,12 +71,21 @@ public class LocalDummyApifyClient extends ApifyClient {
 	}
 
 	/**
-	 * Profil araması bu pipeline'da kullanılmıyor; gerçek çağrıyı kesin olarak engellemek için
-	 * (APIFY_TOKEN local'de set edilse bile) override edilip boş liste döndürülür.
+	 * NONE/OWN_ONLY modunda TargetResolver sektör profillerini bu metotla çözer (D1 değişikliği).
+	 * Local'de gerçek Apify araması yerine keyword bazlı dummy profil havuzu döndürülür.
+	 * Böylece SECTOR hedefleri oluşur ve pipeline uçtan uca test edilebilir.
 	 */
 	@Override
 	public List<ApifyProfile> searchTopProfiles(String keyword, int limit) {
-		log.info("[LOCAL-DUMMY] Apify profil araması taklit edildi (boş döndü): keyword={}", keyword);
-		return List.of();
+		// Dummy profil havuzu: gerçek Instagram hesapları gibi görünen test verileri
+		List<ApifyProfile> pool = List.of(
+				new ApifyProfile("nationalgeographic", "https://www.instagram.com/nationalgeographic/", 280000000L, 0.12),
+				new ApifyProfile("instagram", "https://www.instagram.com/instagram/", 670000000L, 0.08),
+				new ApifyProfile("nasa", "https://www.instagram.com/nasa/", 97000000L, 0.15),
+				new ApifyProfile("9gag", "https://www.instagram.com/9gag/", 72000000L, 0.10),
+				new ApifyProfile("therock", "https://www.instagram.com/therock/", 395000000L, 0.06));
+		int take = Math.min(limit, pool.size());
+		log.info("[LOCAL-DUMMY] Apify profil araması taklit edildi: keyword={}, dönen={}", keyword, take);
+		return pool.subList(0, take);
 	}
 }
