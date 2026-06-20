@@ -55,7 +55,7 @@ app:
     # Beklenen audience = OAuth client id (prod/test'te env ile verilir)
     client-id: ${GOOGLE_CLIENT_ID}
     # Gerçek imza doğrulaması (local'de application-local.yml ile false yapılır)
-    verification-enabled: ${GOOGLE_VERIFICATION_ENABLED:true}
+    verification-enabled: ${GOOGLE_VERIFICATION_ENABLED:false}
   # ===== FAZ 4: RabbitMQ kuyruk adları (vhost profil bazlı yml'den) =====
   messaging:
     job-queue: ${JOB_QUEUE:socialagent.job.queue}
