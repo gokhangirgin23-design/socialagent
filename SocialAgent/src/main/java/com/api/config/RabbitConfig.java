@@ -4,6 +4,7 @@ import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
@@ -74,5 +75,21 @@ public class RabbitConfig {
 		// Giden mesajları JSON'a çevir
 		template.setMessageConverter(jsonMessageConverter);
 		return template;
+	}
+
+	/**
+	 * @RabbitListener container factory'sine JSON converter açıkça bağlanır.
+	 * Spring Boot 4.x'te MessageConverter otomatik enjekte edilmiyor;
+	 * açık bean tanımı olmadan SimpleMessageConverter kullanılır ve
+	 * JobMessage deserialize edilemeyip mesajlar drop edilir.
+	 */
+	@Bean
+	SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(
+			ConnectionFactory connectionFactory, MessageConverter jsonMessageConverter) {
+		SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
+		factory.setConnectionFactory(connectionFactory);
+		// Gelen JSON mesajlarını JobMessage record'una çevir
+		factory.setMessageConverter(jsonMessageConverter);
+		return factory;
 	}
 }
