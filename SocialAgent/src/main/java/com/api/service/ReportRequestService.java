@@ -253,7 +253,7 @@ public class ReportRequestService {
                 : price.subtract(balance).setScale(2, RoundingMode.HALF_UP);
         BalanceCheckResponse resp = new BalanceCheckResponse();
         resp.setBalance(balance.setScale(2, RoundingMode.HALF_UP));
-        resp.setPrice(price);
+        resp.setPrice(price.setScale(2, RoundingMode.HALF_UP));
         resp.setSufficient(sufficient);
         resp.setDeficit(deficit);
         resp.setCurrency("TL");

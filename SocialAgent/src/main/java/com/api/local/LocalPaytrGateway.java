@@ -11,10 +11,16 @@ import com.api.dto.PaytrFormPayload;
 import com.api.service.PaytrGateway;
 
 /**
- * LOCAL profilde gerçek PayTR yerine geçen gateway (FAZ PAYMENT — LOCAL).
+ * LOCAL ve TEST profilde gerçek PayTR yerine geçen gateway (FAZ PAYMENT).
  *
  * Davranış KALITIMLA değiştirilir (CLAUDE.md Madde 1; LocalDummy* deseniyle aynı):
- *   @Primary @Profile("local") extends PaytrGateway.
+ *   @Primary @Profile({"local","test"}) extends PaytrGateway.
+ *
+ * TEST profili neden dahil edildi: test ortamında gerçek PayTR kimlik bilgileri
+ * (.env'de PAYTR_MERCHANT_KEY vb.) bulunmayabilir; olmadığında HMAC hesabı
+ * IllegalArgumentException ile patlar → 999 SYSTEM_ERROR. Bu gateway sayesinde
+ * test ortamında ödeme formu simüle edilir; callback POST /payment/callback
+ * elle göndererek uçtan uca akış test edilebilir.
  *
  * - buildPaymentForm: form'u www.paytr.com yerine uygulamanın kendi sahte sayfasına
  *   (/local-paytr-pay.html) statik sayfasına GET ile yönlendirir.
@@ -22,7 +28,7 @@ import com.api.service.PaytrGateway;
  */
 @Service
 @Primary
-@Profile("local")
+@Profile({"local", "test"})
 public class LocalPaytrGateway extends PaytrGateway {
 
     public LocalPaytrGateway(PaytrProperties paytr) {
