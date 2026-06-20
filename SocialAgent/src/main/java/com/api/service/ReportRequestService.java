@@ -251,7 +251,7 @@ public class ReportRequestService {
         BigDecimal balance = paymentService.getBalance(userId);
         boolean sufficient = balance.compareTo(price) >= 0;
         BigDecimal deficit = sufficient
-                ? BigDecimal.ZERO
+                ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
                 : price.subtract(balance).setScale(2, RoundingMode.HALF_UP);
         BalanceCheckResponse resp = new BalanceCheckResponse();
         resp.setBalance(balance.setScale(2, RoundingMode.HALF_UP));
