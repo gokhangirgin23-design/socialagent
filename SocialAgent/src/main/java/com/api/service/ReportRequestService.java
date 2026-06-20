@@ -191,6 +191,8 @@ public class ReportRequestService {
         request.setReportType(mode.name());
         request.setSelectedUserSocialAccountId(ownAccountId);
         request.setQueuePushed(0);
+        request.setStatus("PENDING");    // V2: NOT NULL, DEFAULT 'PENDING'
+        request.setAttemptCount(0);      // V2: NOT NULL, DEFAULT 0
         request.setActive(1);
         request.setCreatedDate(now);
         request.setUpdatedDate(now);
