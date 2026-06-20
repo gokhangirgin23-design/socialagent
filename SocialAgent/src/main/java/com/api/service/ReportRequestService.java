@@ -274,7 +274,9 @@ public class ReportRequestService {
 
         String sql = """
                 SELECT request_id, user_id, report_type, selected_user_social_account_id,
-                       queue_pushed, queue_push_date, queue_error, active, created_date, updated_date
+                       queue_pushed, queue_push_date, queue_error,
+                       status, process_error, process_started_date, process_finished_date,
+                       active, created_date, updated_date
                 FROM report_request
                 WHERE user_id = ? AND active = 1
                 ORDER BY created_date DESC
@@ -426,6 +428,15 @@ public class ReportRequestService {
             r.setQueuePushDate(rs.getTimestamp("queue_push_date").toLocalDateTime());
         }
         r.setQueueError(rs.getString("queue_error"));
+        // V2: işleme durumu ve hata bilgisi
+        r.setStatus(rs.getString("status"));
+        r.setProcessError(rs.getString("process_error"));
+        if (rs.getTimestamp("process_started_date") != null) {
+            r.setProcessStartedDate(rs.getTimestamp("process_started_date").toLocalDateTime());
+        }
+        if (rs.getTimestamp("process_finished_date") != null) {
+            r.setProcessFinishedDate(rs.getTimestamp("process_finished_date").toLocalDateTime());
+        }
         r.setActive(rs.getObject("active", Integer.class));
         if (rs.getTimestamp("created_date") != null) {
             r.setCreatedDate(rs.getTimestamp("created_date").toLocalDateTime());

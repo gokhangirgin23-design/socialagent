@@ -84,7 +84,7 @@ app:
     openai:
       # OpenAI API anahtarı (prod/test env ile; boşsa TEXT analizi atlanır)
       api-key: ${OPENAI_API_KEY}
-      model: ${OPENAI_MODEL:gpt-5-mini}
+      model: ${OPENAI_MODEL:gpt-4o-mini}
       temperature: ${OPENAI_TEMPERATURE:0.2}
       timeout-seconds: ${OPENAI_TIMEOUT_SECONDS:60}
     gemini:

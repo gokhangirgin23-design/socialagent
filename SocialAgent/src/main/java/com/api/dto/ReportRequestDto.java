@@ -32,6 +32,16 @@ public class ReportRequestDto {
     // Kuyruğa basma hatası (başarılıysa null)
     private String queueError;
 
+    // İşleme durumu: PENDING | PROCESSING | COMPLETED | PARTIAL | FAILED
+    private String status;
+
+    // İşleme hata açıklaması (FAILED/PARTIAL'da dolar); başarılıysa null
+    private String processError;
+
+    // İşleme başlangıç ve bitiş zamanları
+    private LocalDateTime processStartedDate;
+    private LocalDateTime processFinishedDate;
+
     // İsteğin oluşturulma tarihi
     private LocalDateTime createdDate;
 
