@@ -154,11 +154,16 @@ public class ApifyClient {
 			return List.of();
 		}
 		AppProperties.Apify cfg = appProperties.getApify();
-		// directUrls + resultsType:posts + resultsLimit ile aktör girdisi
-		Map<String, Object> input = Map.of(
-				"directUrls", directUrls,
-				"resultsType", "posts",
-				"resultsLimit", resultsLimit);
+		// apify~instagram-post-scraper "username" alanını zorunlu tutar; URL'den çıkar
+		List<String> usernames = directUrls.stream()
+				.map(ApifyClient::extractUsernameFromUrl)
+				.filter(u -> u != null && !u.isBlank())
+				.collect(java.util.stream.Collectors.toList());
+		Map<String, Object> input = new java.util.LinkedHashMap<>();
+		input.put("directUrls", directUrls);
+		input.put("username", usernames);
+		input.put("resultsType", "posts");
+		input.put("resultsLimit", resultsLimit);
 		// Aktörü çağır
 		JsonNode items = runActor(cfg.getPostActorId(), input);
 		if (items == null || !items.isArray()) {
@@ -377,6 +382,21 @@ public class ApifyClient {
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * Instagram profil URL'sinden kullanıcı adını çıkarır.
+	 * "https://www.instagram.com/hesap_adi/" → "hesap_adi"
+	 * apify~instagram-post-scraper "username" alanını zorunlu tuttuğundan gerekli.
+	 */
+	private static String extractUsernameFromUrl(String url) {
+		if (url == null || url.isBlank()) {
+			return null;
+		}
+		// Sondaki slash ve boşlukları temizle
+		String u = url.trim().replaceAll("/+$", "");
+		int idx = u.lastIndexOf('/');
+		return idx >= 0 ? u.substring(idx + 1) : null;
 	}
 
 	/**
