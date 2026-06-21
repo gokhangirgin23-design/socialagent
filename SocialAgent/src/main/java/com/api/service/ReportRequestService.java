@@ -12,6 +12,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import com.api.common.ApiException;
 import com.api.common.ResponseCode;
@@ -197,28 +199,34 @@ public class ReportRequestService {
         request.setCreatedDate(now);
         request.setUpdatedDate(now);
 
-        ReportRequest saved = reportRequestRepository.save(request);
+        // saveAndFlush: TX commit öncesi INSERT'i veritabanına gönderir (henüz commit değil)
+        ReportRequest saved = reportRequestRepository.saveAndFlush(request);
+        UUID finalRequestId = saved.getRequestId();
 
-        // Kuyruğa bas; hata olursa queue_error'a yaz (istek yine kaydedildi)
-        try {
-            jobQueueProducer.publishRequest(saved.getRequestId());
-            jdbcTemplate.update(
-                    "UPDATE report_request SET queue_pushed = 1, queue_push_date = ?, updated_date = ? WHERE request_id = ?",
-                    Timestamp.valueOf(now), Timestamp.valueOf(now), saved.getRequestId());
-            saved.setQueuePushed(1);
-            saved.setQueuePushDate(now);
-            log.info("Rapor isteği oluşturuldu ve kuyruğa basıldı: requestId={}, userId={}, tip={}",
-                    saved.getRequestId(), userId, mode);
-        } catch (Exception ex) {
-            String errorMsg = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
-            jdbcTemplate.update(
-                    "UPDATE report_request SET queue_error = ?, updated_date = ? WHERE request_id = ?",
-                    errorMsg, Timestamp.valueOf(now), saved.getRequestId());
-            saved.setQueueError(errorMsg);
-            log.warn("Rapor isteği kaydedildi ancak kuyruğa basılamadı: requestId={}, hata={}",
-                    saved.getRequestId(), errorMsg);
-        }
+        // Race condition önlemi: RabbitMQ mesajını TX commit'ten SONRA gönder.
+        // Aksi hâlde worker DB'de kaydı henüz göremeden işlemeye çalışır.
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                try {
+                    jobQueueProducer.publishRequest(finalRequestId);
+                    jdbcTemplate.update(
+                            "UPDATE report_request SET queue_pushed = 1, queue_push_date = ?, updated_date = ? WHERE request_id = ?",
+                            Timestamp.valueOf(LocalDateTime.now()), Timestamp.valueOf(LocalDateTime.now()), finalRequestId);
+                    log.info("Rapor isteği TX commit sonrası kuyruğa basıldı: requestId={}, userId={}, tip={}",
+                            finalRequestId, userId, mode);
+                } catch (Exception ex) {
+                    String errorMsg = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
+                    jdbcTemplate.update(
+                            "UPDATE report_request SET queue_error = ?, updated_date = ? WHERE request_id = ?",
+                            errorMsg, Timestamp.valueOf(LocalDateTime.now()), finalRequestId);
+                    log.warn("TX commit sonrası kuyruğa basılamadı: requestId={}, hata={}", finalRequestId, errorMsg);
+                }
+            }
+        });
 
+        log.info("Rapor isteği oluşturuldu (TX commit bekleniyor): requestId={}, userId={}, tip={}",
+                finalRequestId, userId, mode);
         return reportRequestMapper.toDto(saved);
     }
 
