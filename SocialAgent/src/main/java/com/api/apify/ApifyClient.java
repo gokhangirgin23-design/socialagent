@@ -159,12 +159,11 @@ public class ApifyClient {
 				.map(ApifyClient::extractUsernameFromUrl)
 				.filter(u -> u != null && !u.isBlank())
 				.collect(java.util.stream.Collectors.toList());
-		// resultsType kaldırıldı — aktör bu parametreyi desteklemiyor (0 post dönüyordu)
 		Map<String, Object> input = new java.util.LinkedHashMap<>();
 		input.put("directUrls", directUrls);
 		input.put("username", usernames);
+		input.put("resultsType", "posts");
 		input.put("resultsLimit", resultsLimit);
-		log.info("Apify post çekme input: directUrls={}, usernames={}, limit={}", directUrls, usernames, resultsLimit);
 		// Aktörü çağır
 		JsonNode items = runActor(cfg.getPostActorId(), input);
 		if (items == null || !items.isArray()) {
