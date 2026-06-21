@@ -90,7 +90,7 @@ app:
     gemini:
       # Gemini API anahtarı (prod/test env ile; boşsa medya analizi atlanır)
       api-key: ${GEMINI_API_KEY}
-      model: ${GEMINI_MODEL:gemini-2.0-flash}
+      model: ${GEMINI_MODEL:gemini-2.5-flash}
       temperature: ${GEMINI_TEMPERATURE:0.2}
       timeout-seconds: ${GEMINI_TIMEOUT_SECONDS:60}
   # ===== FAZ 8: Bildirim (mail + push) =====
