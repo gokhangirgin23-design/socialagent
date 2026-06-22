@@ -101,6 +101,11 @@ app:
   # Boş bırakılırsa admin uçları UNAUTHORIZED döner (güvenlik için prod'da mutlaka set et).
   admin:
     key: ${ADMIN_KEY:}
+  # ===== CORS: frontend origin'leri =====
+  # React local geliştirme (her port) + spectiqs domainleri. Pattern destekli (http://localhost:*).
+  # Prod/test'te CORS_ALLOWED_ORIGINS env'i ile override edilebilir (virgülle ayrılmış liste).
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:*,http://127.0.0.1:*,https://www.spectiqs.com,https://spectiqs.com,https://test.spectiqs.com}
   notification:
     # E-posta kanalı (prod'da SMTP env'leri verilince MAIL_ENABLED=true yap)
     mail-enabled: ${MAIL_ENABLED:false}
@@ -121,10 +126,10 @@ app:
     merchant-key: ${PAYTR_MERCHANT_KEY:}
     merchant-salt: ${PAYTR_MERCHANT_SALT:}
     post-url: https://www.paytr.com/odeme
-    ok-url: ${PAYTR_OK_URL:https://trendora.app/payment/ok}
-    fail-url: ${PAYTR_FAIL_URL:https://trendora.app/payment/fail}
+    ok-url: ${PAYTR_OK_URL}
+    fail-url: ${PAYTR_FAIL_URL}
     # PayTR Mağaza Paneli'ndeki Bildirim URL ile AYNI olmalı
-    callback-url: ${PAYTR_CALLBACK_URL:https://api.trendora.app/payment/callback}
+    callback-url: ${PAYTR_CALLBACK_URL}
     test-mode: ${PAYTR_TEST_MODE:0}
     debug-on: ${PAYTR_DEBUG_ON:0}
     currency: TL

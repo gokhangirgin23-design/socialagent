@@ -1,5 +1,8 @@
 package com.api.config;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
@@ -31,6 +34,19 @@ public class AppProperties {
 	private Notification notification = new Notification();
 	// Admin işlemleri için gizli anahtar (X-Admin-Key header)
 	private Admin admin = new Admin();
+	// CORS (frontend origin) ayarları — React/localhost ve spectiqs domainleri
+	private Cors cors = new Cors();
+
+	/**
+	 * CORS yapılandırması. İzinli origin'ler application.yml -> app.cors.allowed-origins
+	 * (veya CORS_ALLOWED_ORIGINS env) üzerinden gelir. Pattern desteklenir (ör. http://localhost:*).
+	 */
+	@Getter
+	@Setter
+	public static class Cors {
+		// İzin verilen origin listesi/pattern'leri (boşsa CORS pratikte kapalı kalır)
+		private List<String> allowedOrigins = new ArrayList<>();
+	}
 
 	/**
 	 * JWT ayarları.

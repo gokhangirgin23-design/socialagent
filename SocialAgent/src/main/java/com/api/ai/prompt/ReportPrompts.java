@@ -124,6 +124,33 @@ public final class ReportPrompts {
 				""".formatted(systemRule, safe(analysisMode), summaries.size(), sb.toString());
 	}
 
+	/**
+	 * Hesap bazlı özetlerden dashboard structured insight JSON prompt'u üretir.
+	 * Çıktı: {"topInsight":"...","competitorFinding":"...","recommendation":"...","actionPlan":["..."]}
+	 */
+	public static String forInsight(List<AccountReportRow> summaries, String analysisMode) {
+		StringBuilder sb = new StringBuilder();
+		for (AccountReportRow r : summaries) {
+			sb.append(r.source()).append(" @").append(r.accountName())
+					.append(": ort.beğeni=").append(r.avgLikes())
+					.append(" ort.yorum=").append(r.avgComments())
+					.append(" gönderi=").append(r.postCount())
+					.append(" reel=").append(r.reelCount())
+					.append('\n');
+		}
+		return """
+				Sen kıdemli bir sosyal medya strateji danışmanısın.
+				Aşağıdaki Instagram analiz istatistiklerine dayanarak kullanıcıya kısa ve yapısal bir içgörü özeti üret.
+
+				SADECE aşağıdaki JSON formatında yanıt ver (Markdown, açıklama veya kod bloğu EKLEME):
+				{"topInsight":"En önemli tek bulgu (1-2 cümle)","competitorFinding":"Rakip/sektör karşılaştırmasından kritik bulgu (1-2 cümle)","recommendation":"En öncelikli uygulama önerisi (1-2 cümle)","actionPlan":["Aksiyon 1","Aksiyon 2","Aksiyon 3"]}
+
+				Analiz modu: %s
+				Veriler:
+				%s
+				""".formatted(safe(analysisMode), sb.toString());
+	}
+
 	private static String safe(String v) {
 		return (v == null || v.isBlank()) ? "-" : v;
 	}

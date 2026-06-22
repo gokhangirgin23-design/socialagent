@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.api.common.DataResponse;
-import com.api.dto.AnalysisSelectabilityDto;
+import com.api.dto.AvailableTypesResponseDto;
 import com.api.dto.CreateReportRequestDto;
 import com.api.dto.ReportRequestDto;
 import com.api.dto.ReportRequestListRequest;
@@ -81,11 +81,11 @@ public class ReportRequestController {
      * Kullanıcının hangi analiz türlerini seçebileceğini döndürür (frontend için).
      * Frontend bu bilgiyle seçilemeyen seçenekleri devre dışı bırakır.
      */
-    @Operation(summary = "Seçilebilir analiz tipleri", description = "Kullanıcının hesap durumuna göre seçebileceği analiz tiplerini döndürür.")
+    @Operation(summary = "Seçilebilir analiz tipleri", description = "Kullanıcının hesap durumuna göre seçilebilen analiz tiplerini fiyat ve cüzdan bakiyesiyle döndürür.")
     @PostMapping("/available-types")
-    public DataResponse<AnalysisSelectabilityDto> availableTypes() {
+    public DataResponse<AvailableTypesResponseDto> availableTypes() {
         UUID userId = SecurityUtil.getCurrentUserId();
-        AnalysisSelectabilityDto result = reportRequestService.getAnalysisSelectability(userId);
+        AvailableTypesResponseDto result = reportRequestService.getAnalysisSelectability(userId);
         return DataResponse.success(result);
     }
 }

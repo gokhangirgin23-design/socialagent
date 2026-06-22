@@ -41,6 +41,10 @@ public class Report {
 	@Column(name = "report_content")
 	private String reportContent;
 
+	// Dashboard structured insight JSON (V4 — null ise boş-durum gösterilir)
+	@Column(name = "insight_json")
+	private String insightJson;
+
 	// Kaydın oluşturulma tarihi
 	@Column(name = "created_date")
 	private LocalDateTime createdDate;

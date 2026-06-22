@@ -8,6 +8,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import com.api.entity.UserPayment;
+
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Service;
@@ -17,7 +19,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import com.api.common.ApiException;
 import com.api.common.ResponseCode;
-import com.api.dto.AnalysisSelectabilityDto;
+import com.api.dto.AvailableTypesResponseDto;
+import com.api.dto.TopupResponse;
+import com.api.dto.WalletDto;
 import com.api.dto.BalanceCheckResponse;
 import com.api.dto.CreateReportRequestDto;
 import com.api.dto.PaytrFormPayload;
@@ -238,7 +242,7 @@ public class ReportRequestService {
         if (!rows.isEmpty() && rows.get(0) != null && !rows.get(0).isBlank()) {
             return rows.get(0);
         }
-        return "noreply@trendora.app";
+        return "noreply@spectiqs.com";
     }
 
     /** Tekil, alfanümerik, ≤64 karakter merchant_oid (PayTR kuralı). */
@@ -295,17 +299,74 @@ public class ReportRequestService {
     }
 
     /**
-     * Kullanıcının hangi analiz türlerini seçebileceğini döndürür (frontend için).
-     * NONE_SELECTABLE           : her zaman true (hesap gerekmez)
-     * OWN_SELECTABLE            : aktif kendi hesabı varsa true
-     * COMPETITOR_SELECTABLE     : en az 1 izlenen rakip hesabı varsa true
+     * Kullanıcının seçebileceği analiz türlerini fiyat + cüzdan bakiyesiyle döndürür.
+     * NONE daima listelenir; OWN_ONLY kendi hesabı varsa, COMPETITOR_ONLY rakip hesabı varsa eklenir.
      * Endpoint: POST /report-request/available-types
      */
     @Transactional(readOnly = true)
-    public AnalysisSelectabilityDto getAnalysisSelectability(UUID userId) {
+    public AvailableTypesResponseDto getAnalysisSelectability(UUID userId) {
         boolean hasOwn = findOwnAccountId(userId) != null;
         boolean hasMonitored = hasMonitoredAccounts(userId);
-        return new AnalysisSelectabilityDto(hasOwn, hasMonitored);
+        BigDecimal balance = paymentService.getBalance(userId);
+
+        List<AvailableTypesResponseDto.ReportTypeOption> types = new ArrayList<>();
+        // NONE: sektör analizi — her zaman seçilebilir
+        types.add(new AvailableTypesResponseDto.ReportTypeOption(
+                "NONE", "Sektör analizi", reportPriceResolver.priceFor(AnalysisMode.NONE)));
+        // OWN_ONLY: kendi hesabı varsa seçilebilir
+        if (hasOwn) {
+            types.add(new AvailableTypesResponseDto.ReportTypeOption(
+                    "OWN_ONLY", "Kendi hesabım analizi", reportPriceResolver.priceFor(AnalysisMode.OWN_ONLY)));
+        }
+        // COMPETITOR_ONLY: en az 1 rakip hesabı varsa seçilebilir
+        if (hasMonitored) {
+            types.add(new AvailableTypesResponseDto.ReportTypeOption(
+                    "COMPETITOR_ONLY", "Rakip hesap analizi",
+                    reportPriceResolver.priceFor(AnalysisMode.COMPETITOR_ONLY)));
+        }
+
+        return AvailableTypesResponseDto.builder()
+                .currency("TL")
+                .balance(balance.setScale(2, RoundingMode.HALF_UP))
+                .types(types)
+                .build();
+    }
+
+    /**
+     * Rapordan bağımsız bakiye yükleme (standalone topup).
+     * Mevcut deficit akışının PayTR init mantığını paylaşır; rapor niyeti null'dır.
+     * Endpoint: POST /payment/topup
+     */
+    @Transactional
+    public TopupResponse initiateTopup(UUID userId, BigDecimal amount, String clientIp) {
+        String merchantOid = generateMerchantOid();
+        LocalDateTime exp = LocalDateTime.now().plusMinutes(30);
+        // Standalone topup: pendingReportType + pendingSelectedAccountId null (rapor niyeti yok)
+        paymentService.createInitiatedPayment(userId, amount, merchantOid, exp, null, null);
+        String email = lookupEmail(userId);
+        PaytrFormPayload payload = paytrGateway.buildPaymentForm(merchantOid, clientIp, email, amount);
+        return new TopupResponse(merchantOid, payload);
+    }
+
+    /**
+     * Kullanıcının güncel cüzdan bilgisini döndürür.
+     * Endpoint: POST /payment/wallet
+     */
+    @Transactional(readOnly = true)
+    public WalletDto getWalletDto(UUID userId) {
+        UserPayment w = paymentService.findWallet(userId);
+        if (w == null) {
+            // Cüzdan henüz oluşturulmamış; sıfır bakiye döner
+            return new WalletDto(
+                    BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP), "TL",
+                    BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+                    BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
+        }
+        return new WalletDto(
+                w.getBalance().setScale(2, RoundingMode.HALF_UP),
+                w.getCurrency() != null ? w.getCurrency() : "TL",
+                w.getTotalTopup().setScale(2, RoundingMode.HALF_UP),
+                w.getTotalSpent().setScale(2, RoundingMode.HALF_UP));
     }
 
     // ============================================================

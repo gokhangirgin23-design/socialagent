@@ -169,6 +169,25 @@ public class AiAnalysisService {
 	}
 
 	/**
+	 * Dashboard structured insight JSON üretir (V4).
+	 * generateReport ile aynı OpenAI modelini kullanır; çıktı cleanJson ile temizlenir.
+	 * Model yoksa (key boş / AI kapalı) null döner → çağıran sessizce atlar.
+	 */
+	public String generateInsightJson(String prompt) {
+		if (openAiModel == null) {
+			log.debug("OpenAI modeli yok; insight JSON üretimi atlandı.");
+			return null;
+		}
+		try {
+			String raw = openAiModel.chat(prompt);
+			return cleanJson(raw);
+		} catch (Exception ex) {
+			log.warn("OpenAI insight JSON üretimi başarısız: hata={}", ex.getMessage());
+			return null;
+		}
+	}
+
+	/**
 	 * FAZ 7 — Rapor üretimi: verilen prompt'u OpenAI metin modeline gönderip Markdown rapor döndürür.
 	 * Analiz (analyze) JSON üretirken; bu metod Markdown üretir, bu yüzden cleanJson UYGULANMAZ
 	 * (aksi halde Markdown'daki '{' '}' kaybolurdu) — yalnızca dış kod bloğu sarmalaması temizlenir.

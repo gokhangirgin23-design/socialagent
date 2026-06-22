@@ -150,6 +150,17 @@ public class AccountService {
 		String platformNorm = req.getPlatform().toUpperCase();
 		String accountName = req.getAccountName();
 
+		// 0) Kullanıcının aktif izlenen hesap sayısı ≤ 5 kontrolü (backend guard)
+		String countSql = """
+				SELECT COUNT(*) FROM user_monitored_account
+				WHERE user_id = ? AND active = 1
+				""";
+		int currentCount = jdbcTemplate.queryForObject(countSql, Integer.class, userId);
+		if (currentCount >= 5) {
+			throw new ApiException(ResponseCode.VALIDATION_ERROR,
+					"En fazla 5 rakip hesap izlenebilir. Mevcut: " + currentCount);
+		}
+
 		// 1) monitored_account tablosunda bu platform+accountName var mı? (upsert)
 		String maCheckSql = """
 				SELECT monitored_account_id

@@ -52,7 +52,7 @@ public class PaytrGateway {
         payload.setPostUrl(paytr.getPostUrl());
 
         // Sepet (PayTR formatı): [["ad","fiyat",adet], ...]
-        String userBasket = "[[\"Trendora Rapor\",\"" + paymentAmount + "\",1]]";
+        String userBasket = "[[\"Spectiqs Rapor\",\"" + paymentAmount + "\",1]]";
 
         payload.getFields().put("merchant_id", paytr.getMerchantId());
         payload.getFields().put("user_ip", userIp);
@@ -69,7 +69,7 @@ public class PaytrGateway {
         payload.getFields().put("merchant_ok_url", paytr.getOkUrl());
         payload.getFields().put("merchant_fail_url", paytr.getFailUrl());
         payload.getFields().put("user_name", email);
-        payload.getFields().put("user_address", "Trendora");
+        payload.getFields().put("user_address", "Spectiqs");
         payload.getFields().put("user_phone", "0000000000");
         payload.getFields().put("user_basket", userBasket);
         payload.getFields().put("debug_on", paytr.getDebugOn());

@@ -108,6 +108,18 @@ public class ReportService {
     }
 
     /**
+     * Rapor COMPLETED olduktan sonra dashboard structured insight JSON'unu yazar (V4).
+     * Başarısız olsa bile raporun COMPLETED durumu korunur (opsiyonel alan).
+     */
+    @Transactional
+    public void writeInsightJson(UUID reportId, String insightJson) {
+        jdbcTemplate.update(
+                "UPDATE report SET insight_json = ?, updated_date = ? WHERE report_id = ?",
+                insightJson, Timestamp.valueOf(LocalDateTime.now()), reportId);
+        log.debug("report insight_json yazıldı: reportId={}", reportId);
+    }
+
+    /**
      * Durum + (opsiyonel) içerik güncellemesini native UPDATE ile uygular. content null ise yalnızca durum güncellenir.
      */
     private void updateStatus(UUID reportId, ReportStatus status, String content) {
