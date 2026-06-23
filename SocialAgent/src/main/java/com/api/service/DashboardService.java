@@ -144,7 +144,7 @@ public class DashboardService {
         String placeholders = "?,".repeat(sourceTypes.length);
         placeholders = placeholders.substring(0, placeholders.length() - 1);
         String sql = "SELECT COALESCE(AVG(likes_count + comments_count), 0) FROM social_post "
-                + "WHERE request_id = ? AND source_type IN (" + placeholders + ") AND active = 1";
+                + "WHERE request_id = ? AND source_type IN (" + placeholders + ")";
         Object[] params = new Object[sourceTypes.length + 1];
         params[0] = requestId;
         System.arraycopy(sourceTypes, 0, params, 1, sourceTypes.length);
@@ -291,7 +291,7 @@ public class DashboardService {
         String sql = """
                 SELECT media_type, COUNT(*) AS cnt
                 FROM social_post
-                WHERE request_id = ? AND source_type IN ('SECTOR', 'MONITORED') AND active = 1
+                WHERE request_id = ? AND source_type IN ('SECTOR', 'MONITORED')
                   AND media_type IS NOT NULL
                 GROUP BY media_type
                 ORDER BY cnt DESC LIMIT 1

@@ -83,11 +83,11 @@ public class AiAnalysisService {
 		// Gemini modeli (IMAGE/VIDEO/CAROUSEL yolu)
 		AppProperties.Ai.Gemini ge = ai.getGemini();
 		if (hasText(ge.getApiKey())) {
-			// TODO(uyum): builder imzasını LangChain4j sürümüne göre doğrula
 			this.geminiModel = GoogleAiGeminiChatModel.builder()
 					.apiKey(ge.getApiKey())
 					.modelName(ge.getModel())
 					.temperature(ge.getTemperature())
+					.timeout(Duration.ofSeconds(ge.getTimeoutSeconds()))
 					.build();
 			log.info("Gemini modeli hazır (medya analizi): model={}", ge.getModel());
 		} else {
