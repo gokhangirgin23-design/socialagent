@@ -39,6 +39,8 @@ class ScrapePipelineServiceTest {
     private ReportPipelineService reportPipelineService;
     private NotificationService notificationService;
     private AppProperties appProperties;
+    private ReportService reportService;
+    private PaymentService paymentService;
     private ScrapePipelineService pipeline;
 
     private final UUID requestId = UUID.randomUUID();
@@ -53,8 +55,11 @@ class ScrapePipelineServiceTest {
         reportPipelineService = org.mockito.Mockito.mock(ReportPipelineService.class);
         notificationService = org.mockito.Mockito.mock(NotificationService.class);
         appProperties = new AppProperties();
+        reportService = org.mockito.Mockito.mock(ReportService.class);
+        paymentService = org.mockito.Mockito.mock(PaymentService.class);
         pipeline = new ScrapePipelineService(jdbcTemplate, targetResolver, apifyClient, socialPostService,
-                analysisPipelineService, reportPipelineService, notificationService, appProperties);
+                analysisPipelineService, reportPipelineService, notificationService, appProperties,
+                reportService, paymentService);
     }
 
     @SuppressWarnings("unchecked")

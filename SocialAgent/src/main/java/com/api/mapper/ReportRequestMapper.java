@@ -16,10 +16,11 @@ import com.api.entity.ReportRequest;
 @Mapper(componentModel = "spring")
 public interface ReportRequestMapper {
 
-    // Tekil entity -> DTO dönüşümü (ödeme alanları entity'de olmadığından ignore edilir)
+    // Tekil entity -> DTO dönüşümü (ödeme ve rapor bağlantısı alanları entity'de olmadığından ignore edilir)
     @Mapping(target = "paymentRequired", ignore = true)
     @Mapping(target = "amountToPay", ignore = true)
     @Mapping(target = "paytr", ignore = true)
+    @Mapping(target = "reportId", ignore = true)
     ReportRequestDto toDto(ReportRequest request);
 
     // Liste dönüşümü

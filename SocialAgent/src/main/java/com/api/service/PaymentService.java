@@ -288,6 +288,41 @@ public class PaymentService {
                 reportRequestId, LocalDateTime.now(), merchantOid);
     }
 
+    /**
+     * Doğrudan ödeme akışında (bakiye yeterli), DEBIT log'u request oluşturulmadan önce yazılır;
+     * request oluşturulduktan sonra bu metot en son DEBIT log'unu rapor isteğine bağlar.
+     * Hem doğrudan akış (createRequest) hem de PayTR sonrası akış (fulfillPaidRequest) bunu çağırır.
+     */
+    @Transactional
+    public void linkLatestDebitToRequest(UUID userId, UUID reportRequestId) {
+        // En son report_request_id'si boş DEBIT log'unu bul
+        String findSql = """
+                SELECT id FROM user_payment_log
+                WHERE user_id = ? AND transaction_type = 'DEBIT' AND report_request_id IS NULL
+                ORDER BY created_date DESC LIMIT 1
+                """;
+        List<UUID> ids = jdbcTemplate.query(findSql,
+                (rs, i) -> rs.getObject("id", UUID.class), userId);
+        if (!ids.isEmpty()) {
+            jdbcTemplate.update(
+                    "UPDATE user_payment_log SET report_request_id = ?, updated_date = ? WHERE id = ?",
+                    reportRequestId, LocalDateTime.now(), ids.get(0));
+        }
+    }
+
+    /**
+     * Rapor üretimi tamamlanınca tüm ilgili ödeme log satırlarına report_id'yi yazar (audit).
+     * ScrapePipelineService'ten COMPLETED veya PARTIAL durumunda çağrılır.
+     */
+    @Transactional
+    public void linkReportIdByRequestId(UUID requestId, UUID reportId) {
+        jdbcTemplate.update("""
+                UPDATE user_payment_log
+                SET report_id = ?, updated_date = ?
+                WHERE report_request_id = ?
+                """, reportId, LocalDateTime.now(), requestId);
+    }
+
     /** merchant_oid ile log satırını getirir (yoksa null). */
     public UserPaymentLog findLogByMerchantOid(String merchantOid) {
         String sql = """

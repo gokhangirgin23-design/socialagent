@@ -83,11 +83,11 @@ public class AiAnalysisService {
 		// Gemini modeli (IMAGE/VIDEO/CAROUSEL yolu)
 		AppProperties.Ai.Gemini ge = ai.getGemini();
 		if (hasText(ge.getApiKey())) {
-			// TODO(uyum): builder imzasını LangChain4j sürümüne göre doğrula
 			this.geminiModel = GoogleAiGeminiChatModel.builder()
 					.apiKey(ge.getApiKey())
 					.modelName(ge.getModel())
 					.temperature(ge.getTemperature())
+					.timeout(Duration.ofSeconds(ge.getTimeoutSeconds()))
 					.build();
 			log.info("Gemini modeli hazır (medya analizi): model={}", ge.getModel());
 		} else {
@@ -164,6 +164,25 @@ public class AiAnalysisService {
 			return cleanJson(raw);
 		} catch (Exception ex) {
 			log.error("Gemini görsel analizi başarısız: postId={}, hata={}", post.getSocialPostId(), ex.getMessage());
+			return null;
+		}
+	}
+
+	/**
+	 * Dashboard structured insight JSON üretir (V4).
+	 * generateReport ile aynı OpenAI modelini kullanır; çıktı cleanJson ile temizlenir.
+	 * Model yoksa (key boş / AI kapalı) null döner → çağıran sessizce atlar.
+	 */
+	public String generateInsightJson(String prompt) {
+		if (openAiModel == null) {
+			log.debug("OpenAI modeli yok; insight JSON üretimi atlandı.");
+			return null;
+		}
+		try {
+			String raw = openAiModel.chat(prompt);
+			return cleanJson(raw);
+		} catch (Exception ex) {
+			log.warn("OpenAI insight JSON üretimi başarısız: hata={}", ex.getMessage());
 			return null;
 		}
 	}

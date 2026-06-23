@@ -1,11 +1,17 @@
 package com.api.config;
 
+import java.util.List;
+
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import com.api.security.JwtAuthenticationFilter;
 import com.api.security.RestAuthenticationEntryPoint;
@@ -33,6 +39,10 @@ public class SecurityConfig {
 		http
 			// API olduğu için CSRF kapalı
 			.csrf(csrf -> csrf.disable())
+			// CORS aktif — corsConfigurationSource bean'i kullanılır.
+			// Preflight (OPTIONS) istekleri Spring'in CorsFilter'ı tarafından,
+			// JWT/authorization filtrelerinden ÖNCE karşılanır (kimlik doğrulaması gerekmez).
+			.cors(Customizer.withDefaults())
 			// Stateless oturum (JWT)
 			.sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 			.authorizeHttpRequests(auth -> auth
@@ -66,5 +76,31 @@ public class SecurityConfig {
 			.headers(headers -> headers.frameOptions(frame -> frame.disable()));
 
 		return http.build();
+	}
+
+	/**
+	 * CORS kaynağı — izinli origin'ler app.cors.allowed-origins'ten okunur
+	 * (pattern destekli: http://localhost:* gibi). allowCredentials=true ile
+	 * birlikte "*" kullanılamayacağı için setAllowedOriginPatterns tercih edilir.
+	 */
+	@Bean
+	CorsConfigurationSource corsConfigurationSource(AppProperties appProperties) {
+		CorsConfiguration config = new CorsConfiguration();
+		// İzinli origin pattern'leri (yml/env'den)
+		config.setAllowedOriginPatterns(appProperties.getCors().getAllowedOrigins());
+		// Tüm standart HTTP metodları + preflight için OPTIONS
+		config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+		// İstek başlıkları (Authorization, Content-Type, X-Admin-Key vb. hepsi)
+		config.setAllowedHeaders(List.of("*"));
+		// Tarayıcının okuyabileceği yanıt başlıkları
+		config.setExposedHeaders(List.of("Authorization"));
+		// Cookie/Authorization ile kimlikli istekler
+		config.setAllowCredentials(true);
+		// Preflight sonucunu 1 saat cache'le
+		config.setMaxAge(3600L);
+
+		UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+		source.registerCorsConfiguration("/**", config);
+		return source;
 	}
 }

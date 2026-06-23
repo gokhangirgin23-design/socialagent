@@ -8,14 +8,22 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import com.api.entity.UserPayment;
+
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import com.api.common.ApiException;
 import com.api.common.ResponseCode;
-import com.api.dto.AnalysisSelectabilityDto;
+import com.api.config.AppProperties;
+import com.api.dto.AvailableTypesResponseDto;
+import com.api.dto.TopupResponse;
+import com.api.dto.WalletDto;
+import com.api.dto.BalanceCheckResponse;
 import com.api.dto.CreateReportRequestDto;
 import com.api.dto.PaytrFormPayload;
 import com.api.dto.ReportRequestDto;
@@ -70,6 +78,8 @@ public class ReportRequestService {
     private final PaytrGateway paytrGateway;
     // report_type → fiyat çözümleyici
     private final ReportPriceResolver reportPriceResolver;
+    // Ödeme kapısı bayrak (app.payment.enabled = false → bakiye/PayTR atlanır)
+    private final AppProperties appProperties;
 
     /**
      * Yeni rapor isteği oluşturur (FAZ PAYMENT — bakiye kapısı).
@@ -112,29 +122,44 @@ public class ReportRequestService {
                     "Sektör araştırması için önce sektör seçilmelidir.");
         }
 
-        // 2) Fiyat + bakiye kapısı
+        // 2) Ödeme kapısı kapalıysa bakiye/PayTR atlanır; doğrudan istek oluşturulur (PAYMENT_ENABLED=false)
+        if (!appProperties.getPayment().isEnabled()) {
+            log.info("Ödeme kapısı kapalı; rapor isteği ücretsiz oluşturuldu: userId={}, tip={}", userId, mode);
+            ReportRequestDto freeDto = persistAndQueue(userId, mode, ownAccountId);
+            freeDto.setPaymentRequired(false);
+            return freeDto;
+        }
+
+        // 3) Fiyat + bakiye kapısı
         BigDecimal price = reportPriceResolver.priceFor(mode);
         BigDecimal balance = paymentService.getBalance(userId);
 
         if (balance.compareTo(price) >= 0 && paymentService.tryDebit(userId, price, null)) {
             // Bakiye yeterli → ücret düşüldü → rapor isteğini oluştur ve kuyruğa bas
             ReportRequestDto dto = persistAndQueue(userId, mode, ownAccountId);
+            // Doğrudan ödeme: DEBIT log request oluşturulmadan yazıldı; geriye dönük bağla
+            paymentService.linkLatestDebitToRequest(userId, dto.getRequestId());
             dto.setPaymentRequired(false);
             return dto;
         }
 
-        // 3) Bakiye yetersiz → deficit kadar PayTR ödemesi başlat (rapor isteği henüz OLUŞTURULMAZ)
+        // 4) Bakiye yetersiz → PayTR ödemesi başlat (rapor isteği henüz OLUŞTURULMAZ)
         BigDecimal deficit = price.subtract(balance);
         if (deficit.compareTo(BigDecimal.ZERO) <= 0) {
             deficit = price; // güvenlik
         }
+        // Kullanıcı daha fazla yüklemek isteyebilir (topupAmount > deficit); fazlası bakiyede kalır
+        BigDecimal payAmount = (req.getTopupAmount() != null
+                && req.getTopupAmount().compareTo(deficit) > 0)
+                        ? req.getTopupAmount()
+                        : deficit;
         String merchantOid = generateMerchantOid();
         LocalDateTime exp = LocalDateTime.now().plusMinutes(30); // PayTR varsayılanı 30 dk
         // Niyet (reportType + seçilen hesap) ödeme kaydına yazılır; callback'te rapor isteği oluşturulur
-        paymentService.createInitiatedPayment(userId, deficit, merchantOid, exp, mode.name(), ownAccountId);
+        paymentService.createInitiatedPayment(userId, payAmount, merchantOid, exp, mode.name(), ownAccountId);
 
         String email = lookupEmail(userId);
-        PaytrFormPayload payload = paytrGateway.buildPaymentForm(merchantOid, clientIp, email, deficit);
+        PaytrFormPayload payload = paytrGateway.buildPaymentForm(merchantOid, clientIp, email, payAmount);
 
         // PAYMENT_REQUIRED yanıtı (rapor isteği henüz yok → requestId null)
         ReportRequestDto dto = new ReportRequestDto();
@@ -142,7 +167,7 @@ public class ReportRequestService {
         dto.setReportType(mode.name());
         dto.setQueuePushed(0);
         dto.setPaymentRequired(true);
-        dto.setAmountToPay(deficit.setScale(2, RoundingMode.HALF_UP).toPlainString());
+        dto.setAmountToPay(payAmount.setScale(2, RoundingMode.HALF_UP).toPlainString());
         dto.setPaytr(payload);
         return dto;
     }
@@ -163,9 +188,10 @@ public class ReportRequestService {
                     userId, merchantOid);
             return;
         }
-        // Rapor isteğini oluştur + kuyruğa bas, ardından ödeme kaydına bağla
+        // Rapor isteğini oluştur + kuyruğa bas, ardından ödeme kayıtlarına bağla
         ReportRequestDto dto = persistAndQueue(userId, mode, selectedAccountId);
-        paymentService.linkReportRequest(merchantOid, dto.getRequestId());
+        paymentService.linkReportRequest(merchantOid, dto.getRequestId()); // TOPUP log bağlantısı
+        paymentService.linkLatestDebitToRequest(userId, dto.getRequestId()); // DEBIT log bağlantısı
         log.info("Ödeme tamamlandı, rapor isteği oluşturuldu: requestId={}, merchant_oid={}",
                 dto.getRequestId(), merchantOid);
     }
@@ -182,32 +208,40 @@ public class ReportRequestService {
         request.setReportType(mode.name());
         request.setSelectedUserSocialAccountId(ownAccountId);
         request.setQueuePushed(0);
+        request.setStatus("PENDING");    // V2: NOT NULL, DEFAULT 'PENDING'
+        request.setAttemptCount(0);      // V2: NOT NULL, DEFAULT 0
         request.setActive(1);
         request.setCreatedDate(now);
         request.setUpdatedDate(now);
 
-        ReportRequest saved = reportRequestRepository.save(request);
+        // saveAndFlush: TX commit öncesi INSERT'i veritabanına gönderir (henüz commit değil)
+        ReportRequest saved = reportRequestRepository.saveAndFlush(request);
+        UUID finalRequestId = saved.getRequestId();
 
-        // Kuyruğa bas; hata olursa queue_error'a yaz (istek yine kaydedildi)
-        try {
-            jobQueueProducer.publishRequest(saved.getRequestId());
-            jdbcTemplate.update(
-                    "UPDATE report_request SET queue_pushed = 1, queue_push_date = ?, updated_date = ? WHERE request_id = ?",
-                    Timestamp.valueOf(now), Timestamp.valueOf(now), saved.getRequestId());
-            saved.setQueuePushed(1);
-            saved.setQueuePushDate(now);
-            log.info("Rapor isteği oluşturuldu ve kuyruğa basıldı: requestId={}, userId={}, tip={}",
-                    saved.getRequestId(), userId, mode);
-        } catch (Exception ex) {
-            String errorMsg = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
-            jdbcTemplate.update(
-                    "UPDATE report_request SET queue_error = ?, updated_date = ? WHERE request_id = ?",
-                    errorMsg, Timestamp.valueOf(now), saved.getRequestId());
-            saved.setQueueError(errorMsg);
-            log.warn("Rapor isteği kaydedildi ancak kuyruğa basılamadı: requestId={}, hata={}",
-                    saved.getRequestId(), errorMsg);
-        }
+        // Race condition önlemi: RabbitMQ mesajını TX commit'ten SONRA gönder.
+        // Aksi hâlde worker DB'de kaydı henüz göremeden işlemeye çalışır.
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                try {
+                    jobQueueProducer.publishRequest(finalRequestId);
+                    jdbcTemplate.update(
+                            "UPDATE report_request SET queue_pushed = 1, queue_push_date = ?, updated_date = ? WHERE request_id = ?",
+                            Timestamp.valueOf(LocalDateTime.now()), Timestamp.valueOf(LocalDateTime.now()), finalRequestId);
+                    log.info("Rapor isteği TX commit sonrası kuyruğa basıldı: requestId={}, userId={}, tip={}",
+                            finalRequestId, userId, mode);
+                } catch (Exception ex) {
+                    String errorMsg = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
+                    jdbcTemplate.update(
+                            "UPDATE report_request SET queue_error = ?, updated_date = ? WHERE request_id = ?",
+                            errorMsg, Timestamp.valueOf(LocalDateTime.now()), finalRequestId);
+                    log.warn("TX commit sonrası kuyruğa basılamadı: requestId={}, hata={}", finalRequestId, errorMsg);
+                }
+            }
+        });
 
+        log.info("Rapor isteği oluşturuldu (TX commit bekleniyor): requestId={}, userId={}, tip={}",
+                finalRequestId, userId, mode);
         return reportRequestMapper.toDto(saved);
     }
 
@@ -219,7 +253,7 @@ public class ReportRequestService {
         if (!rows.isEmpty() && rows.get(0) != null && !rows.get(0).isBlank()) {
             return rows.get(0);
         }
-        return "noreply@trendora.app";
+        return "noreply@spectiqs.com";
     }
 
     /** Tekil, alfanümerik, ≤64 karakter merchant_oid (PayTR kuralı). */
@@ -229,7 +263,32 @@ public class ReportRequestService {
     }
 
     /**
+     * Seçilen rapor tipine göre bakiye yeterlilik kontrolü döner.
+     * Frontend bu bilgiyle "bakiyeniz yetersiz" uyarısını ve minimum yükleme tutarını gösterir.
+     * Endpoint: POST /payment/balance-check
+     */
+    @Transactional(readOnly = true)
+    public BalanceCheckResponse checkBalance(UUID userId, String reportType) {
+        AnalysisMode mode = parseAnalysisMode(reportType);
+        BigDecimal price = reportPriceResolver.priceFor(mode);
+        BigDecimal balance = paymentService.getBalance(userId);
+        boolean sufficient = balance.compareTo(price) >= 0;
+        BigDecimal deficit = sufficient
+                ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
+                : price.subtract(balance).setScale(2, RoundingMode.HALF_UP);
+        BalanceCheckResponse resp = new BalanceCheckResponse();
+        resp.setBalance(balance.setScale(2, RoundingMode.HALF_UP));
+        resp.setPrice(price.setScale(2, RoundingMode.HALF_UP));
+        resp.setSufficient(sufficient);
+        resp.setDeficit(deficit);
+        resp.setCurrency("TL");
+        return resp;
+    }
+
+    /**
      * Kullanıcının rapor isteklerini sayfalı listeler (en yeni önce).
+     * report tablosuyla LEFT JOIN: tamamlanan isteklerde report_id de döner; frontend
+     * bu alanı göz ikonu ile raporu açmak için kullanır.
      * Endpoint: POST /report-request/list
      */
     @Transactional(readOnly = true)
@@ -238,30 +297,118 @@ public class ReportRequestService {
         int safeSize = (size > 0) ? size : 10;
         int offset = safePage * safeSize;
 
+        // LEFT JOIN report: henüz rapor oluşmamış isteklerde rep.report_id NULL döner
         String sql = """
-                SELECT request_id, user_id, report_type, selected_user_social_account_id,
-                       queue_pushed, queue_push_date, queue_error, active, created_date, updated_date
-                FROM report_request
-                WHERE user_id = ? AND active = 1
-                ORDER BY created_date DESC
+                SELECT rr.request_id, rr.user_id, rr.report_type,
+                       rr.queue_pushed, rr.queue_push_date, rr.queue_error,
+                       rr.status, rr.process_error, rr.process_started_date, rr.process_finished_date,
+                       rr.created_date, rr.updated_date,
+                       rep.report_id
+                FROM report_request rr
+                LEFT JOIN report rep ON rep.request_id = rr.request_id
+                WHERE rr.user_id = ? AND rr.active = 1
+                ORDER BY rr.created_date DESC
                 LIMIT ? OFFSET ?
                 """;
-        List<ReportRequest> requests = jdbcTemplate.query(sql, REQUEST_ROW_MAPPER, userId, safeSize, offset);
-        return reportRequestMapper.toDtoList(requests);
+        return jdbcTemplate.query(sql, (rs, rowNum) -> {
+            ReportRequestDto dto = new ReportRequestDto();
+            dto.setRequestId(rs.getObject("request_id", UUID.class));
+            dto.setUserId(rs.getObject("user_id", UUID.class));
+            dto.setReportType(rs.getString("report_type"));
+            dto.setQueuePushed(rs.getObject("queue_pushed", Integer.class));
+            if (rs.getTimestamp("queue_push_date") != null) {
+                dto.setQueuePushDate(rs.getTimestamp("queue_push_date").toLocalDateTime());
+            }
+            dto.setQueueError(rs.getString("queue_error"));
+            dto.setStatus(rs.getString("status"));
+            dto.setProcessError(rs.getString("process_error"));
+            if (rs.getTimestamp("process_started_date") != null) {
+                dto.setProcessStartedDate(rs.getTimestamp("process_started_date").toLocalDateTime());
+            }
+            if (rs.getTimestamp("process_finished_date") != null) {
+                dto.setProcessFinishedDate(rs.getTimestamp("process_finished_date").toLocalDateTime());
+            }
+            if (rs.getTimestamp("created_date") != null) {
+                dto.setCreatedDate(rs.getTimestamp("created_date").toLocalDateTime());
+            }
+            if (rs.getTimestamp("updated_date") != null) {
+                dto.setUpdatedDate(rs.getTimestamp("updated_date").toLocalDateTime());
+            }
+            // LEFT JOIN sonucu: rapor tamamlandıysa dolu, henüz yoksa null
+            dto.setReportId(rs.getObject("report_id", UUID.class));
+            return dto;
+        }, userId, safeSize, offset);
     }
 
     /**
-     * Kullanıcının hangi analiz türlerini seçebileceğini döndürür (frontend için).
-     * NONE_SELECTABLE           : her zaman true (hesap gerekmez)
-     * OWN_SELECTABLE            : aktif kendi hesabı varsa true
-     * COMPETITOR_SELECTABLE     : en az 1 izlenen rakip hesabı varsa true
+     * Kullanıcının seçebileceği analiz türlerini fiyat + cüzdan bakiyesiyle döndürür.
+     * NONE daima listelenir; OWN_ONLY kendi hesabı varsa, COMPETITOR_ONLY rakip hesabı varsa eklenir.
      * Endpoint: POST /report-request/available-types
      */
     @Transactional(readOnly = true)
-    public AnalysisSelectabilityDto getAnalysisSelectability(UUID userId) {
+    public AvailableTypesResponseDto getAnalysisSelectability(UUID userId) {
         boolean hasOwn = findOwnAccountId(userId) != null;
         boolean hasMonitored = hasMonitoredAccounts(userId);
-        return new AnalysisSelectabilityDto(hasOwn, hasMonitored);
+        BigDecimal balance = paymentService.getBalance(userId);
+
+        List<AvailableTypesResponseDto.ReportTypeOption> types = new ArrayList<>();
+        // NONE: sektör analizi — her zaman seçilebilir
+        types.add(new AvailableTypesResponseDto.ReportTypeOption(
+                "NONE", "Sektör analizi", reportPriceResolver.priceFor(AnalysisMode.NONE)));
+        // OWN_ONLY: kendi hesabı varsa seçilebilir
+        if (hasOwn) {
+            types.add(new AvailableTypesResponseDto.ReportTypeOption(
+                    "OWN_ONLY", "Kendi hesabım analizi", reportPriceResolver.priceFor(AnalysisMode.OWN_ONLY)));
+        }
+        // COMPETITOR_ONLY: en az 1 rakip hesabı varsa seçilebilir
+        if (hasMonitored) {
+            types.add(new AvailableTypesResponseDto.ReportTypeOption(
+                    "COMPETITOR_ONLY", "Rakip hesap analizi",
+                    reportPriceResolver.priceFor(AnalysisMode.COMPETITOR_ONLY)));
+        }
+
+        return AvailableTypesResponseDto.builder()
+                .currency("TL")
+                .balance(balance.setScale(2, RoundingMode.HALF_UP))
+                .types(types)
+                .build();
+    }
+
+    /**
+     * Rapordan bağımsız bakiye yükleme (standalone topup).
+     * Mevcut deficit akışının PayTR init mantığını paylaşır; rapor niyeti null'dır.
+     * Endpoint: POST /payment/topup
+     */
+    @Transactional
+    public TopupResponse initiateTopup(UUID userId, BigDecimal amount, String clientIp) {
+        String merchantOid = generateMerchantOid();
+        LocalDateTime exp = LocalDateTime.now().plusMinutes(30);
+        // Standalone topup: pendingReportType + pendingSelectedAccountId null (rapor niyeti yok)
+        paymentService.createInitiatedPayment(userId, amount, merchantOid, exp, null, null);
+        String email = lookupEmail(userId);
+        PaytrFormPayload payload = paytrGateway.buildPaymentForm(merchantOid, clientIp, email, amount);
+        return new TopupResponse(merchantOid, payload);
+    }
+
+    /**
+     * Kullanıcının güncel cüzdan bilgisini döndürür.
+     * Endpoint: POST /payment/wallet
+     */
+    @Transactional(readOnly = true)
+    public WalletDto getWalletDto(UUID userId) {
+        UserPayment w = paymentService.findWallet(userId);
+        if (w == null) {
+            // Cüzdan henüz oluşturulmamış; sıfır bakiye döner
+            return new WalletDto(
+                    BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP), "TL",
+                    BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+                    BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
+        }
+        return new WalletDto(
+                w.getBalance().setScale(2, RoundingMode.HALF_UP),
+                w.getCurrency() != null ? w.getCurrency() : "TL",
+                w.getTotalTopup().setScale(2, RoundingMode.HALF_UP),
+                w.getTotalSpent().setScale(2, RoundingMode.HALF_UP));
     }
 
     // ============================================================
@@ -327,26 +474,41 @@ public class ReportRequestService {
         }
     }
 
+    // Requeue poison guard: aynı istek en fazla 3 kez yeniden kuyruğa basılabilir
+    private static final int MAX_ATTEMPTS = 3;
+    // Bu süreden uzun PROCESSING/PENDING kalan istek "takılı" sayılır
+    private static final int STUCK_MINUTES = 30;
+
     /**
-     * report_request tablosunda bulunup report tablosunda hiç kaydı olmayan
-     * (sunucu yeniden başlaması veya broker hatası nedeniyle takılı kalmış) istekleri
-     * yeniden kuyruğa basar. Admin tarafından POST /admin/requeue-stuck ile çağrılır.
+     * V2: Status-bazlı sweep — FAILED/PARTIAL veya takılı (eski PROCESSING/PENDING) istekleri
+     * attempt_count < MAX_ATTEMPTS koşuluyla yeniden kuyruğa alır.
+     * Admin tarafından POST /admin/requeue-stuck ile elle tetiklenir; otomatik scheduler yok.
+     *
+     * Seçim: FAILED | PARTIAL; ya da PROCESSING/PENDING olup STUCK_MINUTES'tan uzun bekleyen.
+     * Güncelleme: status='PENDING', attempt_count++, queue_error=NULL.
      *
      * @return yeniden kuyruğa basılan kayıt sayısı
      */
     @Transactional
     public int requeueStuck() {
-        // Report tablosunda eşi olmayan aktif rapor isteklerini bul
+        // Eşik zaman damgası Java'da hesaplanır (H2/PostgreSQL uyumu; interval SQL'i kullanılmaz)
+        Timestamp stuckThreshold = Timestamp.valueOf(LocalDateTime.now().minusMinutes(STUCK_MINUTES));
+
+        // V2 status-bazlı seçim + attempt_count poison guard
         String findSql = """
                 SELECT request_id
                 FROM report_request
                 WHERE active = 1
-                AND NOT EXISTS (
-                    SELECT 1 FROM report r WHERE r.request_id = report_request.request_id
-                )
+                  AND attempt_count < ?
+                  AND (
+                        status IN ('FAILED', 'PARTIAL')
+                     OR (status = 'PROCESSING' AND process_started_date < ?)
+                     OR (status = 'PENDING'    AND queue_push_date    < ?)
+                  )
                 """;
         List<UUID> stuckIds = jdbcTemplate.query(findSql,
-                (rs, rowNum) -> rs.getObject("request_id", UUID.class));
+                (rs, rowNum) -> rs.getObject("request_id", UUID.class),
+                MAX_ATTEMPTS, stuckThreshold, stuckThreshold);
 
         if (stuckIds.isEmpty()) {
             log.info("Tekrar kuyruğa basılacak takılı rapor isteği bulunamadı.");
@@ -360,9 +522,12 @@ public class ReportRequestService {
         for (UUID requestId : stuckIds) {
             try {
                 jobQueueProducer.publishRequest(requestId);
+                // V2: status PENDING'e çek, attempt_count artır, queue_error temizle
                 jdbcTemplate.update("""
                         UPDATE report_request
-                        SET queue_pushed = 1, queue_push_date = ?, queue_error = NULL, updated_date = ?
+                        SET queue_pushed = 1, queue_push_date = ?, queue_error = NULL,
+                            status = 'PENDING', attempt_count = attempt_count + 1,
+                            updated_date = ?
                         WHERE request_id = ?
                         """, Timestamp.valueOf(now), Timestamp.valueOf(now), requestId);
                 log.info("Takılı istek yeniden kuyruğa basıldı: requestId={}", requestId);
@@ -392,6 +557,15 @@ public class ReportRequestService {
             r.setQueuePushDate(rs.getTimestamp("queue_push_date").toLocalDateTime());
         }
         r.setQueueError(rs.getString("queue_error"));
+        // V2: işleme durumu ve hata bilgisi
+        r.setStatus(rs.getString("status"));
+        r.setProcessError(rs.getString("process_error"));
+        if (rs.getTimestamp("process_started_date") != null) {
+            r.setProcessStartedDate(rs.getTimestamp("process_started_date").toLocalDateTime());
+        }
+        if (rs.getTimestamp("process_finished_date") != null) {
+            r.setProcessFinishedDate(rs.getTimestamp("process_finished_date").toLocalDateTime());
+        }
         r.setActive(rs.getObject("active", Integer.class));
         if (rs.getTimestamp("created_date") != null) {
             r.setCreatedDate(rs.getTimestamp("created_date").toLocalDateTime());

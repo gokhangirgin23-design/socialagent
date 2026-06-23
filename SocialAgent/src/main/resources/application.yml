@@ -46,16 +46,16 @@ management:
 app:
   jwt:
     # PROD/TEST'te JWT_SECRET env'i zorunlu; local için güvenli olmayan varsayılan
-    secret: ${JWT_SECRET:local-dev-secret-degistir-min-32-karakter-0123456789}
+    secret: ${JWT_SECRET}
     # Access token ömrü (dakika)
     access-token-expiration-minutes: ${JWT_ACCESS_MINUTES:30}
     # Refresh token ömrü (gün)
     refresh-token-expiration-days: ${JWT_REFRESH_DAYS:30}
   google:
     # Beklenen audience = OAuth client id (prod/test'te env ile verilir)
-    client-id: ${GOOGLE_CLIENT_ID:}
+    client-id: ${GOOGLE_CLIENT_ID}
     # Gerçek imza doğrulaması (local'de application-local.yml ile false yapılır)
-    verification-enabled: ${GOOGLE_VERIFICATION_ENABLED:true}
+    verification-enabled: ${GOOGLE_VERIFICATION_ENABLED:false}
   # ===== FAZ 4: RabbitMQ kuyruk adları (vhost profil bazlı yml'den) =====
   messaging:
     job-queue: ${JOB_QUEUE:socialagent.job.queue}
@@ -64,7 +64,7 @@ app:
   # ===== FAZ 5: Apify scraping ayarları (D1) =====
   apify:
     # Apify API token (prod/test'te env ile verilir; boşsa scraping atlanır)
-    token: ${APIFY_TOKEN:}
+    token: ${APIFY_TOKEN}
     base-url: ${APIFY_BASE_URL:https://api.apify.com/v2}
     # Aktör id'leri yolda "~" ile yazılır (apify~actor-name)
     profile-actor-id: ${APIFY_PROFILE_ACTOR:apify~instagram-search-scraper}
@@ -83,14 +83,14 @@ app:
     enabled: ${AI_ENABLED:true}
     openai:
       # OpenAI API anahtarı (prod/test env ile; boşsa TEXT analizi atlanır)
-      api-key: ${OPENAI_API_KEY:}
+      api-key: ${OPENAI_API_KEY}
       model: ${OPENAI_MODEL:gpt-4o-mini}
       temperature: ${OPENAI_TEMPERATURE:0.2}
       timeout-seconds: ${OPENAI_TIMEOUT_SECONDS:60}
     gemini:
       # Gemini API anahtarı (prod/test env ile; boşsa medya analizi atlanır)
-      api-key: ${GEMINI_API_KEY:}
-      model: ${GEMINI_MODEL:gemini-2.0-flash}
+      api-key: ${GEMINI_API_KEY}
+      model: ${GEMINI_MODEL:gemini-2.5-flash}
       temperature: ${GEMINI_TEMPERATURE:0.2}
       timeout-seconds: ${GEMINI_TIMEOUT_SECONDS:60}
   # ===== FAZ 8: Bildirim (mail + push) =====
@@ -101,6 +101,11 @@ app:
   # Boş bırakılırsa admin uçları UNAUTHORIZED döner (güvenlik için prod'da mutlaka set et).
   admin:
     key: ${ADMIN_KEY:}
+  # ===== CORS: frontend origin'leri =====
+  # React local geliştirme (her port) + spectiqs domainleri. Pattern destekli (http://localhost:*).
+  # Prod/test'te CORS_ALLOWED_ORIGINS env'i ile override edilebilir (virgülle ayrılmış liste).
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:*,http://127.0.0.1:*,https://www.spectiqs.com,https://spectiqs.com,https://test.spectiqs.com}
   notification:
     # E-posta kanalı (prod'da SMTP env'leri verilince MAIL_ENABLED=true yap)
     mail-enabled: ${MAIL_ENABLED:false}
@@ -121,10 +126,10 @@ app:
     merchant-key: ${PAYTR_MERCHANT_KEY:}
     merchant-salt: ${PAYTR_MERCHANT_SALT:}
     post-url: https://www.paytr.com/odeme
-    ok-url: ${PAYTR_OK_URL:https://trendora.app/payment/ok}
-    fail-url: ${PAYTR_FAIL_URL:https://trendora.app/payment/fail}
+    ok-url: ${PAYTR_OK_URL}
+    fail-url: ${PAYTR_FAIL_URL}
     # PayTR Mağaza Paneli'ndeki Bildirim URL ile AYNI olmalı
-    callback-url: ${PAYTR_CALLBACK_URL:https://api.trendora.app/payment/callback}
+    callback-url: ${PAYTR_CALLBACK_URL}
     test-mode: ${PAYTR_TEST_MODE:0}
     debug-on: ${PAYTR_DEBUG_ON:0}
     currency: TL

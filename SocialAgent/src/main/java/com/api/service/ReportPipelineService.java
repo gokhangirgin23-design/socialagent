@@ -85,6 +85,20 @@ public class ReportPipelineService {
         reportService.markCompleted(reportId, markdown);
         log.info("Rapor üretildi (COMPLETED): requestId={}, reportId={}, hesapSayisi={}",
                 requestId, reportId, summaries.size());
+
+        // Structured insight JSON üret (dashboard kartı için — V4).
+        // Başarısız olsa bile rapor COMPLETED kalır; insight_json boş bırakılır.
+        try {
+            String insightPrompt = ReportPrompts.forInsight(summaries, reportType);
+            String insightJson = aiAnalysisService.generateInsightJson(insightPrompt);
+            if (insightJson != null && !insightJson.isBlank()) {
+                reportService.writeInsightJson(reportId, insightJson);
+                log.debug("Insight JSON yazıldı: reportId={}", reportId);
+            }
+        } catch (Exception ex) {
+            log.warn("Insight JSON üretimi başarısız (rapor COMPLETED korunur): reportId={}, hata={}",
+                    reportId, ex.getMessage());
+        }
         return true;
     }
 

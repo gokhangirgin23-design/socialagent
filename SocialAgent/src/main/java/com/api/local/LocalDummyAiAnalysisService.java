@@ -20,7 +20,12 @@ import lombok.extern.slf4j.Slf4j;
  *
  * Birleşik analiz çıktısı, gerçek servisle BİREBİR aynı zarfta döner:
  *   {"metrics": <openai-dummy>, "visual": <gemini-dummy>}
- * Böylece ReportPipelineService'in JSON parse mantığı (metrics.contentType.isReel, visual.*) aynen çalışır.
+ *
+ * Failure enjeksiyonu (LocalFailMode), analyzeFull üzerinde:
+ *   - AI_RETURN_NULL (count'lu): sıradaki N post için null döner -> her iki model timeout
+ *     simülasyonu -> o postlar atlanır -> PARTIAL. ("18/20" için count=1.)
+ *   - AI_THROW (count'lu): sıradaki N post için exception fırlatır -> analyzeRequest
+ *     (@Transactional) rollback + processRequest FAILED.
  *
  * @Primary + @Profile("local"): yalnızca local'de devreye girer; diğer ortamlarda gerçek servis çalışır.
  */
@@ -33,17 +38,33 @@ public class LocalDummyAiAnalysisService extends AiAnalysisService {
 	// Dummy yanıt havuzu
 	private final DummyResponseProvider dummy;
 
+	// Failure enjeksiyon anahtarı
+	private final LocalFailMode failMode;
+
 	// Üst sınıfın zorunlu bağımlılığı (AppProperties) super'a iletilir.
-	public LocalDummyAiAnalysisService(AppProperties appProperties, DummyResponseProvider dummy) {
+	public LocalDummyAiAnalysisService(AppProperties appProperties, DummyResponseProvider dummy, LocalFailMode failMode) {
 		super(appProperties);
 		this.dummy = dummy;
+		this.failMode = failMode;
 	}
 
 	/**
 	 * OpenAI (metrik) + Gemini (görsel) çağrılarını taklit eder; birleşik JSON döner.
+	 * Failure modu aktifse null döner (post atlanır) ya da exception fırlatır.
 	 */
 	@Override
 	public String analyzeFull(SocialPost post) {
+		// Failure enjeksiyonu (post bazında count tüketilir)
+		if (failMode.fire(LocalFailMode.Mode.AI_THROW)) {
+			log.info("[LOCAL-DUMMY] AI_THROW enjekte edildi: postId={}", post.getSocialPostId());
+			throw new RuntimeException("dummy AI failure (AI_THROW)");
+		}
+		if (failMode.fire(LocalFailMode.Mode.AI_RETURN_NULL)) {
+			log.info("[LOCAL-DUMMY] AI_RETURN_NULL enjekte edildi (post atlanacak): postId={}",
+					post.getSocialPostId());
+			return null;
+		}
+
 		String metrics = dummy.randomMetricsJson();
 		String visual = dummy.randomVisualJson();
 		log.info("[LOCAL-DUMMY] AI analizi taklit edildi: postId={}", post.getSocialPostId());
