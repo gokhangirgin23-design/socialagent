@@ -45,6 +45,12 @@ public class ReportRequestDto {
     // İsteğin oluşturulma tarihi
     private LocalDateTime createdDate;
 
+    // Son güncellenme tarihi
+    private LocalDateTime updatedDate;
+
+    // İstek tamamlandıysa oluşturulan raporun id'si (LEFT JOIN report ile gelir; henüz yoksa null)
+    private UUID reportId;
+
     // ===== FAZ PAYMENT: ödeme kapısı alanları =====
     // Bakiye yetersizse true; bu durumda requestId null'dır ve paytr alanı doldurulur
     private Boolean paymentRequired;

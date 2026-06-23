@@ -287,6 +287,8 @@ public class ReportRequestService {
 
     /**
      * Kullanıcının rapor isteklerini sayfalı listeler (en yeni önce).
+     * report tablosuyla LEFT JOIN: tamamlanan isteklerde report_id de döner; frontend
+     * bu alanı göz ikonu ile raporu açmak için kullanır.
      * Endpoint: POST /report-request/list
      */
     @Transactional(readOnly = true)
@@ -295,18 +297,47 @@ public class ReportRequestService {
         int safeSize = (size > 0) ? size : 10;
         int offset = safePage * safeSize;
 
+        // LEFT JOIN report: henüz rapor oluşmamış isteklerde rep.report_id NULL döner
         String sql = """
-                SELECT request_id, user_id, report_type, selected_user_social_account_id,
-                       queue_pushed, queue_push_date, queue_error,
-                       status, process_error, process_started_date, process_finished_date,
-                       active, created_date, updated_date
-                FROM report_request
-                WHERE user_id = ? AND active = 1
-                ORDER BY created_date DESC
+                SELECT rr.request_id, rr.user_id, rr.report_type,
+                       rr.queue_pushed, rr.queue_push_date, rr.queue_error,
+                       rr.status, rr.process_error, rr.process_started_date, rr.process_finished_date,
+                       rr.created_date, rr.updated_date,
+                       rep.report_id
+                FROM report_request rr
+                LEFT JOIN report rep ON rep.request_id = rr.request_id
+                WHERE rr.user_id = ? AND rr.active = 1
+                ORDER BY rr.created_date DESC
                 LIMIT ? OFFSET ?
                 """;
-        List<ReportRequest> requests = jdbcTemplate.query(sql, REQUEST_ROW_MAPPER, userId, safeSize, offset);
-        return reportRequestMapper.toDtoList(requests);
+        return jdbcTemplate.query(sql, (rs, rowNum) -> {
+            ReportRequestDto dto = new ReportRequestDto();
+            dto.setRequestId(rs.getObject("request_id", UUID.class));
+            dto.setUserId(rs.getObject("user_id", UUID.class));
+            dto.setReportType(rs.getString("report_type"));
+            dto.setQueuePushed(rs.getObject("queue_pushed", Integer.class));
+            if (rs.getTimestamp("queue_push_date") != null) {
+                dto.setQueuePushDate(rs.getTimestamp("queue_push_date").toLocalDateTime());
+            }
+            dto.setQueueError(rs.getString("queue_error"));
+            dto.setStatus(rs.getString("status"));
+            dto.setProcessError(rs.getString("process_error"));
+            if (rs.getTimestamp("process_started_date") != null) {
+                dto.setProcessStartedDate(rs.getTimestamp("process_started_date").toLocalDateTime());
+            }
+            if (rs.getTimestamp("process_finished_date") != null) {
+                dto.setProcessFinishedDate(rs.getTimestamp("process_finished_date").toLocalDateTime());
+            }
+            if (rs.getTimestamp("created_date") != null) {
+                dto.setCreatedDate(rs.getTimestamp("created_date").toLocalDateTime());
+            }
+            if (rs.getTimestamp("updated_date") != null) {
+                dto.setUpdatedDate(rs.getTimestamp("updated_date").toLocalDateTime());
+            }
+            // LEFT JOIN sonucu: rapor tamamlandıysa dolu, henüz yoksa null
+            dto.setReportId(rs.getObject("report_id", UUID.class));
+            return dto;
+        }, userId, safeSize, offset);
     }
 
     /**
