@@ -34,9 +34,9 @@ public class AdminController {
 	private final ReportRequestService reportRequestService;
 
 	/**
-	 * Sunucu yeniden başlaması veya broker hatası nedeniyle kuyruğa girememiş
-	 * (report_request tablosunda olup report tablosunda hiç kaydı olmayan)
-	 * rapor isteklerini yeniden kuyruğa basar.
+	 * V2: Status-bazlı sweep — FAILED/PARTIAL veya takılı (30 dk+ PROCESSING/PENDING)
+	 * rapor isteklerini attempt_count < 3 koşuluyla yeniden kuyruğa basar.
+	 * Re-queue'da status='PENDING', attempt_count++ yapılır (poison guard).
 	 *
 	 * Header: X-Admin-Key → env ADMIN_KEY değeriyle eşleşmeli.
 	 * Endpoint: POST /admin/requeue-stuck

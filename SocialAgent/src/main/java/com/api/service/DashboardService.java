@@ -170,25 +170,9 @@ public class DashboardService {
     // ── En son rapor isteği özeti ───────────────────────────────────────────
 
     private LastReportInfo findLastReport(UUID userId) {
-        // En son aktif rapor isteği + varsa raporu birleştir (LEFT JOIN eski stil)
-        String sql = """
-                SELECT rr.request_id, rr.status, r.report_id
-                FROM report_request rr, report r
-                WHERE rr.user_id = ? AND rr.active = 1
-                  AND r.request_id = rr.request_id
-                ORDER BY rr.created_date DESC LIMIT 1
-                """;
-        List<LastReportInfo> rows = jdbcTemplate.query(sql, (rs, i) ->
-                new LastReportInfo(
-                        rs.getObject("request_id", UUID.class),
-                        rs.getString("status"),
-                        rs.getObject("report_id", UUID.class)), userId);
-
-        if (!rows.isEmpty()) {
-            return rows.get(0);
-        }
-
-        // Henüz raporu olmayan istek (sadece request_id + status)
+        // 1) En son aktif rapor isteğini al (PENDING dahil tüm statüsler)
+        // Önceki implementasyon INNER JOIN kullandığından raporu olmayan (PENDING/PROCESSING)
+        // en son istek yerine raporu olan eski bir istek dönebiliyordu — düzeltildi.
         String reqSql = """
                 SELECT request_id, status FROM report_request
                 WHERE user_id = ? AND active = 1
@@ -199,7 +183,25 @@ public class DashboardService {
                         rs.getObject("request_id", UUID.class),
                         rs.getString("status"),
                         null), userId);
-        return reqRows.isEmpty() ? null : reqRows.get(0);
+
+        if (reqRows.isEmpty()) {
+            return null;
+        }
+
+        LastReportInfo latest = reqRows.get(0);
+
+        // 2) Bu isteğin raporu var mı? (ayrı sorgu; eski stil — CLAUDE.md Madde 6)
+        String reportSql = """
+                SELECT report_id FROM report
+                WHERE request_id = ?
+                ORDER BY created_date DESC LIMIT 1
+                """;
+        List<UUID> reportRows = jdbcTemplate.query(reportSql,
+                (rs, i) -> rs.getObject("report_id", UUID.class),
+                latest.getRequestId());
+
+        UUID reportId = reportRows.isEmpty() ? null : reportRows.get(0);
+        return new LastReportInfo(latest.getRequestId(), latest.getStatus(), reportId);
     }
 
     // ── Structured insight ──────────────────────────────────────────────────

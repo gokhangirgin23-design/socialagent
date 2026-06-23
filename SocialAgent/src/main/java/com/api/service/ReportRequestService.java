@@ -432,26 +432,41 @@ public class ReportRequestService {
         }
     }
 
+    // Requeue poison guard: aynı istek en fazla 3 kez yeniden kuyruğa basılabilir
+    private static final int MAX_ATTEMPTS = 3;
+    // Bu süreden uzun PROCESSING/PENDING kalan istek "takılı" sayılır
+    private static final int STUCK_MINUTES = 30;
+
     /**
-     * report_request tablosunda bulunup report tablosunda hiç kaydı olmayan
-     * (sunucu yeniden başlaması veya broker hatası nedeniyle takılı kalmış) istekleri
-     * yeniden kuyruğa basar. Admin tarafından POST /admin/requeue-stuck ile çağrılır.
+     * V2: Status-bazlı sweep — FAILED/PARTIAL veya takılı (eski PROCESSING/PENDING) istekleri
+     * attempt_count < MAX_ATTEMPTS koşuluyla yeniden kuyruğa alır.
+     * Admin tarafından POST /admin/requeue-stuck ile elle tetiklenir; otomatik scheduler yok.
+     *
+     * Seçim: FAILED | PARTIAL; ya da PROCESSING/PENDING olup STUCK_MINUTES'tan uzun bekleyen.
+     * Güncelleme: status='PENDING', attempt_count++, queue_error=NULL.
      *
      * @return yeniden kuyruğa basılan kayıt sayısı
      */
     @Transactional
     public int requeueStuck() {
-        // Report tablosunda eşi olmayan aktif rapor isteklerini bul
+        // Eşik zaman damgası Java'da hesaplanır (H2/PostgreSQL uyumu; interval SQL'i kullanılmaz)
+        Timestamp stuckThreshold = Timestamp.valueOf(LocalDateTime.now().minusMinutes(STUCK_MINUTES));
+
+        // V2 status-bazlı seçim + attempt_count poison guard
         String findSql = """
                 SELECT request_id
                 FROM report_request
                 WHERE active = 1
-                AND NOT EXISTS (
-                    SELECT 1 FROM report r WHERE r.request_id = report_request.request_id
-                )
+                  AND attempt_count < ?
+                  AND (
+                        status IN ('FAILED', 'PARTIAL')
+                     OR (status = 'PROCESSING' AND process_started_date < ?)
+                     OR (status = 'PENDING'    AND queue_push_date    < ?)
+                  )
                 """;
         List<UUID> stuckIds = jdbcTemplate.query(findSql,
-                (rs, rowNum) -> rs.getObject("request_id", UUID.class));
+                (rs, rowNum) -> rs.getObject("request_id", UUID.class),
+                MAX_ATTEMPTS, stuckThreshold, stuckThreshold);
 
         if (stuckIds.isEmpty()) {
             log.info("Tekrar kuyruğa basılacak takılı rapor isteği bulunamadı.");
@@ -465,9 +480,12 @@ public class ReportRequestService {
         for (UUID requestId : stuckIds) {
             try {
                 jobQueueProducer.publishRequest(requestId);
+                // V2: status PENDING'e çek, attempt_count artır, queue_error temizle
                 jdbcTemplate.update("""
                         UPDATE report_request
-                        SET queue_pushed = 1, queue_push_date = ?, queue_error = NULL, updated_date = ?
+                        SET queue_pushed = 1, queue_push_date = ?, queue_error = NULL,
+                            status = 'PENDING', attempt_count = attempt_count + 1,
+                            updated_date = ?
                         WHERE request_id = ?
                         """, Timestamp.valueOf(now), Timestamp.valueOf(now), requestId);
                 log.info("Takılı istek yeniden kuyruğa basıldı: requestId={}", requestId);
