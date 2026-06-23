@@ -3,16 +3,14 @@ name: Deploy PROD
 on:
   push:
     branches:
-      - main
+      - master
 
 jobs:
-
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-
-      - name: Deploy to VPS
+      - name: Deploy to PROD VPS
         uses: appleboy/ssh-action@v1.0.3
 
         with:
@@ -21,9 +19,13 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
 
           script: |
+            set -e
+
             cd /opt/socialagent/prod/api/socialagent/SocialAgent
 
             git fetch origin
+
+            git checkout master
 
             git reset --hard origin/master
 
@@ -31,8 +33,10 @@ jobs:
 
             ./mvnw clean package -DskipTests
 
-            docker-compose -p prod -f docker-compose.prod.yml down
+            docker-compose -p prod -f docker-compose.prod.yml up -d --build
 
-            docker-compose -p prod -f docker-compose.prod.yml build --no-cache
+            sleep 30
 
-            docker-compose -p prod -f docker-compose.prod.yml up -d
+            docker ps
+
+            echo "PROD DEPLOY SUCCESS"
