@@ -193,4 +193,19 @@ public class AppProperties {
 		// Admin endpoint'leri için gizli anahtar (env: ADMIN_KEY; boşsa admin endpoint'leri devre dışı)
 		private String key = "";
 	}
+
+	// FAZ PAYMENT: ödeme sistemi yapılandırması
+	private Payment payment = new Payment();
+
+	/**
+	 * Ödeme kapısı yapılandırması.
+	 * PAYMENT_ENABLED=false yapılırsa bakiye/PayTR akışı tamamen atlanır;
+	 * rapor isteği ücretsiz ve doğrudan oluşturulur (test/geliştirme kolaylığı).
+	 */
+	@Getter
+	@Setter
+	public static class Payment {
+		// Ödeme kapısı aktif mi? (env: PAYMENT_ENABLED; varsayılan true)
+		private boolean enabled = true;
+	}
 }

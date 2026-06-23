@@ -19,6 +19,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import com.api.common.ApiException;
 import com.api.common.ResponseCode;
+import com.api.config.AppProperties;
 import com.api.dto.AvailableTypesResponseDto;
 import com.api.dto.TopupResponse;
 import com.api.dto.WalletDto;
@@ -77,6 +78,8 @@ public class ReportRequestService {
     private final PaytrGateway paytrGateway;
     // report_type → fiyat çözümleyici
     private final ReportPriceResolver reportPriceResolver;
+    // Ödeme kapısı bayrak (app.payment.enabled = false → bakiye/PayTR atlanır)
+    private final AppProperties appProperties;
 
     /**
      * Yeni rapor isteği oluşturur (FAZ PAYMENT — bakiye kapısı).
@@ -119,7 +122,15 @@ public class ReportRequestService {
                     "Sektör araştırması için önce sektör seçilmelidir.");
         }
 
-        // 2) Fiyat + bakiye kapısı
+        // 2) Ödeme kapısı kapalıysa bakiye/PayTR atlanır; doğrudan istek oluşturulur (PAYMENT_ENABLED=false)
+        if (!appProperties.getPayment().isEnabled()) {
+            log.info("Ödeme kapısı kapalı; rapor isteği ücretsiz oluşturuldu: userId={}, tip={}", userId, mode);
+            ReportRequestDto freeDto = persistAndQueue(userId, mode, ownAccountId);
+            freeDto.setPaymentRequired(false);
+            return freeDto;
+        }
+
+        // 3) Fiyat + bakiye kapısı
         BigDecimal price = reportPriceResolver.priceFor(mode);
         BigDecimal balance = paymentService.getBalance(userId);
 
@@ -132,7 +143,7 @@ public class ReportRequestService {
             return dto;
         }
 
-        // 3) Bakiye yetersiz → PayTR ödemesi başlat (rapor isteği henüz OLUŞTURULMAZ)
+        // 4) Bakiye yetersiz → PayTR ödemesi başlat (rapor isteği henüz OLUŞTURULMAZ)
         BigDecimal deficit = price.subtract(balance);
         if (deficit.compareTo(BigDecimal.ZERO) <= 0) {
             deficit = price; // güvenlik

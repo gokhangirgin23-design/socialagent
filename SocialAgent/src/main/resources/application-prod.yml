@@ -33,3 +33,8 @@ spring:
     schemas: prod_schema
     default-schema: prod_schema
 
+# Prod ortamında ödeme kapısı her zaman açık
+app:
+  payment:
+    enabled: ${PAYMENT_ENABLED:true}
+

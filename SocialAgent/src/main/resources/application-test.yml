@@ -26,3 +26,8 @@ spring:
     # Migration test_schema üzerinde çalışsın
     schemas: test_schema
     default-schema: test_schema
+
+# Test ortamında ödeme kapısı varsayılan olarak kapalı
+app:
+  payment:
+    enabled: ${PAYMENT_ENABLED:false}
