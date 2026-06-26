@@ -134,11 +134,9 @@ public class ReportRequestService {
         BigDecimal price = reportPriceResolver.priceFor(mode);
         BigDecimal balance = paymentService.getBalance(userId);
 
-        if (balance.compareTo(price) >= 0 && paymentService.tryDebit(userId, price, null)) {
-            // Bakiye yeterli → ücret düşüldü → rapor isteğini oluştur ve kuyruğa bas
+        if (balance.compareTo(price) >= 0) {
+            // Bakiye yeterli → rapor isteğini oluştur; bakiye düşümü pipeline COMPLETED olduğunda yapılır (#40)
             ReportRequestDto dto = persistAndQueue(userId, mode, ownAccountId);
-            // Doğrudan ödeme: DEBIT log request oluşturulmadan yazıldı; geriye dönük bağla
-            paymentService.linkLatestDebitToRequest(userId, dto.getRequestId());
             dto.setPaymentRequired(false);
             return dto;
         }
@@ -182,16 +180,9 @@ public class ReportRequestService {
         AnalysisMode mode = parseAnalysisMode(reportType);
         BigDecimal price = reportPriceResolver.priceFor(mode);
 
-        // Bakiyeden rapor ücretini düş (topup sonrası yeterli olmalı)
-        if (!paymentService.tryDebit(userId, price, null)) {
-            log.warn("Ödeme sonrası bakiye beklenenden az; rapor isteği oluşturulmadı: userId={}, merchant_oid={}",
-                    userId, merchantOid);
-            return;
-        }
-        // Rapor isteğini oluştur + kuyruğa bas, ardından ödeme kayıtlarına bağla
+        // Bakiye PayTR ile zaten yüklendi; ücret düşümü pipeline COMPLETED olduğunda yapılır (#40)
         ReportRequestDto dto = persistAndQueue(userId, mode, selectedAccountId);
         paymentService.linkReportRequest(merchantOid, dto.getRequestId()); // TOPUP log bağlantısı
-        paymentService.linkLatestDebitToRequest(userId, dto.getRequestId()); // DEBIT log bağlantısı
         log.info("Ödeme tamamlandı, rapor isteği oluşturuldu: requestId={}, merchant_oid={}",
                 dto.getRequestId(), merchantOid);
     }
@@ -358,7 +349,7 @@ public class ReportRequestService {
         // OWN_ONLY: kendi hesabı varsa seçilebilir
         if (hasOwn) {
             types.add(new AvailableTypesResponseDto.ReportTypeOption(
-                    "OWN_ONLY", "Kendi hesabım analizi", reportPriceResolver.priceFor(AnalysisMode.OWN_ONLY)));
+                    "OWN_ONLY", "Kendi Hesabım ile Sektör Analizi", reportPriceResolver.priceFor(AnalysisMode.OWN_ONLY)));
         }
         // COMPETITOR_ONLY: en az 1 rakip hesabı varsa seçilebilir
         if (hasMonitored) {

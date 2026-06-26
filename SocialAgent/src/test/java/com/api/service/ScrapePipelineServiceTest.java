@@ -59,7 +59,7 @@ class ScrapePipelineServiceTest {
         paymentService = org.mockito.Mockito.mock(PaymentService.class);
         pipeline = new ScrapePipelineService(jdbcTemplate, targetResolver, apifyClient, socialPostService,
                 analysisPipelineService, reportPipelineService, notificationService, appProperties,
-                reportService, paymentService);
+                reportService, paymentService, null);
     }
 
     @SuppressWarnings("unchecked")

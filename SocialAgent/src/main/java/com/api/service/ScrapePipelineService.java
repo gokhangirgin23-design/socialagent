@@ -1,9 +1,12 @@
 package com.api.service;
 
+import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
+
+import com.api.entity.AnalysisMode;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -68,6 +71,9 @@ public class ScrapePipelineService {
 
     // Rapor tamamlanınca ödeme log'una report_id bağlamak için
     private final PaymentService paymentService;
+
+    // COMPLETED sonrası bakiye düşümü için rapor tip fiyatı (CLAUDE.md Madde 6, #40)
+    private final ReportPriceResolver reportPriceResolver;
 
     /**
      * Tek bir rapor isteğini baştan sona işler (worker bunu çağırır).
@@ -134,6 +140,9 @@ public class ScrapePipelineService {
                 } else {
                     // Tam → COMPLETED
                     markFinished(requestId, "COMPLETED", null);
+
+                    // #40 — Bakiyeyi ancak COMPLETED olunca düş (başarısız raporlarda ücret alınmaz)
+                    debitOnCompleted(requestId, request);
                 }
 
                 // 6b) Ödeme log'una report_id'yi bağla (bağımsız; hatası pipeline'ı bozmaz)
@@ -156,16 +165,17 @@ public class ScrapePipelineService {
                 }
             } else {
                 // Akış patlamadı ama kullanılabilir rapor üretilemedi (ör. veri yok / generateReport=false)
-                markFinished(requestId, "FAILED", "Rapor üretilemedi (generateReport=false)");
+                markFinished(requestId, "FAILED", "Analiz edilecek gönderi bulunamadı veya rapor üretilemedi.");
                 log.warn("Rapor üretilemedi (FAILED): requestId={}", requestId);
             }
         } catch (Exception ex) {
             // Beklenmedik hata (DB/altyapı/kod) — exception kaçtı → FAILED
             // NOT: Apify/OpenAI/Gemini timeout'ları alt servislerde yutulur; buraya GELMEZ.
             //      Buraya yalnız infra/kod arızası ya da analyzeRequest @Transactional rollback'i kaçar.
-            String errMsg = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
-            markFinished(requestId, "FAILED", errMsg);
-            log.error("İşleme hatası (FAILED): requestId={}, hata={}", requestId, errMsg, ex);
+            // #40 — process_error: kullanıcıya gösterilecek kısa mesaj + "---" + detaylı stack trace + ID'ler
+            String detailedError = buildDetailedError(requestId, request.getUserId(), ex);
+            markFinished(requestId, "FAILED", detailedError);
+            log.error("İşleme hatası (FAILED): requestId={}, hata={}", requestId, ex.getMessage(), ex);
             // JobWorker üst seviyede yine ack eder; gerçek retry admin POST /admin/requeue-stuck ile elle tetiklenir.
         }
     }
@@ -215,6 +225,61 @@ public class ScrapePipelineService {
                               WHERE pa.social_post_id = sp.social_post_id)
                 """, Integer.class, requestId);
         return n != null ? n : 0;
+    }
+
+    // ============================================================
+    // #40 — Ödeme yardımcıları
+    // ============================================================
+
+    /**
+     * Rapor COMPLETED olduğunda bakiyeyi düşer.
+     * İstek oluşturma sırasında bakiye rezerve edilmez; sadece başarılı raporlarda ücret alınır.
+     * Hata pipeline durumunu etkilemez; sadece log'a yazılır.
+     */
+    private void debitOnCompleted(UUID requestId, ReportRequest request) {
+        try {
+            AnalysisMode mode = AnalysisMode.valueOf(request.getReportType());
+            BigDecimal price = reportPriceResolver.priceFor(mode);
+            boolean debited = paymentService.tryDebit(request.getUserId(), price, requestId);
+            if (debited) {
+                paymentService.linkLatestDebitToRequest(request.getUserId(), requestId);
+                log.info("COMPLETED — bakiye düşüldü: requestId={}, userId={}, tutar={}",
+                        requestId, request.getUserId(), price);
+            } else {
+                // Bakiye yetersiz (edge case: iki eş zamanlı istek, manuel düşüm vb.)
+                log.warn("COMPLETED — bakiye düşümü başarısız (yetersiz bakiye): requestId={}, userId={}",
+                        requestId, request.getUserId());
+            }
+        } catch (Exception ex) {
+            log.warn("COMPLETED — bakiye düşümü sırasında hata (rapor durumu etkilenmez): requestId={}, hata={}",
+                    requestId, ex.getMessage());
+        }
+    }
+
+    /**
+     * Detaylı hata kaydı oluşturur: ilk satır kullanıcıya gösterilebilir kısa mesaj,
+     * "---" ayracından sonra stack trace + ID bilgileri (DB'de debug için saklanır).
+     * #40 — process_error kolonuna yazılır.
+     */
+    private String buildDetailedError(UUID requestId, UUID userId, Exception ex) {
+        String userMessage = "Beklenmedik bir sistem hatası oluştu.";
+        StringBuilder sb = new StringBuilder();
+        sb.append(userMessage).append('\n');
+        sb.append("---\n");
+        sb.append("requestId: ").append(requestId).append('\n');
+        if (userId != null) sb.append("userId: ").append(userId).append('\n');
+        sb.append("errorClass: ").append(ex.getClass().getName()).append('\n');
+        sb.append("message: ").append(ex.getMessage() != null ? ex.getMessage() : "(null)").append('\n');
+        sb.append("stackTrace:\n");
+        StackTraceElement[] stack = ex.getStackTrace();
+        int limit = Math.min(stack.length, 15);
+        for (int i = 0; i < limit; i++) {
+            sb.append("  at ").append(stack[i]).append('\n');
+        }
+        if (stack.length > limit) {
+            sb.append("  ... ").append(stack.length - limit).append(" more frames\n");
+        }
+        return sb.toString();
     }
 
     /**
