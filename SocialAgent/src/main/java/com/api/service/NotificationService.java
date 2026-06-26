@@ -45,8 +45,8 @@ public class NotificationService {
     // Notification entity -> DTO dönüştürücü
     private final NotificationMapper notificationMapper;
 
-    // E-posta gönderim adaptörü
-    private final MailSender mailSender;
+    // E-posta gönderim adaptörü (AppMailSender: "mailSender" bean adı çakışması nedeniyle yeniden adlandırıldı)
+    private final AppMailSender mailSender;
 
     // Push gönderim adaptörü
     private final PushSender pushSender;

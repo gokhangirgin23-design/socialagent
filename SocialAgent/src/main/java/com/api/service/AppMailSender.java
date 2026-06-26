@@ -3,6 +3,7 @@ package com.api.service;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.stereotype.Component;
 
 import com.api.config.AppProperties;
 
@@ -11,14 +12,22 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * @deprecated AppMailSender kullanın.
- * Spring Boot 4 auto-config "mailSender" bean'iyle isim çakışması nedeniyle
- * @Component kaldırıldı; bu sınıf artık Spring bean olarak kayıtlı değildir.
+ * E-posta bildirimi gönderen adaptör (FAZ 8 — CLAUDE.md Bölüm 12).
+ *
+ * NOT: Sınıf adı "AppMailSender" — Spring Boot auto-config "mailSender" bean adıyla
+ * çakışmamak için (Boot 4'te bean override kapalı).
+ *
+ * HTML gövde + opsiyonel PDF eki destekler (MimeMessage).
+ * spring.mail.host verilmemişse JavaMailSender bean'i OLUŞMAZ → sessizce atlanır.
+ * app.notification.mail-enabled=false ise yine atlanır.
+ * Gönderim hatası DIŞARI SIZDIRILMAZ; pipeline ve DB kaydı etkilenmez.
+ *
+ * Service interface yok (CLAUDE.md Madde 1); @Component concrete adaptör.
  */
 @Slf4j
+@Component
 @RequiredArgsConstructor
-@Deprecated
-public class MailSender {
+public class AppMailSender {
 
     // JavaMailSender opsiyoneldir: spring.mail.host yoksa bean oluşmaz (ObjectProvider boş döner)
     private final ObjectProvider<JavaMailSender> mailSenderProvider;
@@ -31,9 +40,9 @@ public class MailSender {
      *
      * @param to             alıcı e-posta
      * @param subject        konu
-     * @param htmlBody       HTML gövde (null veya boş ise düz metin fallback kullnılmaz — gönderilmez)
+     * @param htmlBody       HTML gövde
      * @param pdfAttachment  PDF byte dizisi (null ise ek eklenmez)
-     * @param attachFileName PDF dosya adı (pdfAttachment null ise dikkate alınmaz)
+     * @param attachFileName PDF dosya adı
      * @return gönderim sonucu
      */
     public SendResult send(String to, String subject, String htmlBody,
@@ -49,15 +58,14 @@ public class MailSender {
             return SendResult.fail("Alıcı e-posta adresi boş");
         }
         // 3) JavaMailSender bean'i var mı?
-        JavaMailSender mailSender = mailSenderProvider.getIfAvailable();
-        if (mailSender == null) {
+        JavaMailSender javaMailSender = mailSenderProvider.getIfAvailable();
+        if (javaMailSender == null) {
             log.debug("JavaMailSender yapılandırılmamış (spring.mail.host yok), mail atlandı: to={}", to);
             return SendResult.fail("JavaMailSender yapılandırılmamış (spring.mail.host yok)");
         }
         // 4) HTML + opsiyonel ek ile MimeMessage gönder
         try {
-            MimeMessage mimeMsg = mailSender.createMimeMessage();
-            // multipart=true: hem HTML hem ek taşıyabilir
+            MimeMessage mimeMsg = javaMailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(mimeMsg, true, "UTF-8");
 
             String from = appProperties.getNotification().getFromAddress();
@@ -67,7 +75,6 @@ public class MailSender {
             helper.setTo(to);
             helper.setSubject(subject);
 
-            // HTML gövde (metin versiyonu otomatik çıkarılır)
             String body = (htmlBody != null && !htmlBody.isBlank()) ? htmlBody : "<p>.</p>";
             helper.setText(body, true);
 
@@ -80,7 +87,7 @@ public class MailSender {
                         "application/pdf");
             }
 
-            mailSender.send(mimeMsg);
+            javaMailSender.send(mimeMsg);
             log.info("Bildirim e-postası gönderildi: to={}, subject={}, ekVar={}",
                     to, subject, (pdfAttachment != null && pdfAttachment.length > 0));
             return SendResult.ok();
@@ -91,8 +98,7 @@ public class MailSender {
     }
 
     /**
-     * Eski imza — geriye dönük uyumluluk (e.g. test/admin tarafından çağrılabilir).
-     * HTML olmadan düz metin benzeri HTML ile gönderir; ek yok.
+     * Düz metin mesaj — geriye dönük uyumluluk.
      */
     public SendResult send(String to, String subject, String body) {
         String htmlBody = "<p style=\"font-family:Arial,sans-serif;font-size:14px;\">"
