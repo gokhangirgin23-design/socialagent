@@ -57,7 +57,7 @@ class NotificationServiceTest {
         mailSender = org.mockito.Mockito.mock(MailSender.class);
         pushSender = org.mockito.Mockito.mock(PushSender.class);
         service = new NotificationService(jdbcTemplate, notificationRepository, notificationMapper,
-                mailSender, pushSender);
+                mailSender, pushSender, null);
     }
 
     @SuppressWarnings("unchecked")
@@ -65,7 +65,7 @@ class NotificationServiceTest {
     void tamamlanmisRaporVarsaBildirimVeMailPushUretilir() {
         // loadCompletedReportTarget -> query(sql, mapper, requestId): tek UUID vararg
         NotificationService.ReportTarget target =
-                new NotificationService.ReportTarget(reportId, userId, "BOTH", "user@example.com");
+                new NotificationService.ReportTarget(reportId, userId, "BOTH", "user@example.com", null);
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(UUID.class)))
                 .thenReturn(List.of(target));
         when(mailSender.send(anyString(), anyString(), anyString())).thenReturn(SendResult.ok());
