@@ -99,6 +99,51 @@ public class SocialPostService {
     }
 
     /**
+     * Tekrar-analiz koruması devreye girdiğinde (isRecentlyAnalyzed=true), mevcut post'ları
+     * yeni requestId'ye bağlar. Bu olmadan analiz ve rapor sorguları (request_id bazlı)
+     * hiçbir post görmez ve pipeline FAILED döner.
+     *
+     * @param requestId yeni rapor isteğinin id'si
+     * @param target    cache hit olan hedef
+     * @return güncellenen satır sayısı
+     */
+    @Transactional
+    public int relinkExistingPosts(UUID requestId, ScrapeTarget target) {
+        Timestamp now = Timestamp.valueOf(LocalDateTime.now());
+        int updated;
+        switch (target.type()) {
+            case MONITORED -> {
+                // Rakip hesap: monitored_account_id üzerinden bul, yeni isteğe bağla
+                String sql = """
+                        UPDATE social_post
+                        SET request_id = ?, updated_date = ?
+                        WHERE monitored_account_id = ?
+                        """;
+                updated = jdbcTemplate.update(sql, requestId, now, target.monitoredAccountId());
+            }
+            case OWN -> {
+                // Kendi hesabı: aynı selected_user_social_account_id'ye ait eski request'lerdeki
+                // OWN post'ları yeni isteğe bağla (source_type ile daralt — SECTOR post'larını koru)
+                String sql = """
+                        UPDATE social_post
+                        SET request_id = ?, updated_date = ?
+                        WHERE source_type = 'OWN'
+                          AND request_id IN (
+                              SELECT rr.request_id
+                              FROM report_request rr
+                              WHERE rr.selected_user_social_account_id = ?
+                          )
+                        """;
+                updated = jdbcTemplate.update(sql, requestId, now, target.selectedUserSocialAccountId());
+            }
+            default -> updated = 0;
+        }
+        log.info("Tekrar-analiz koruması: mevcut post'lar yeni isteğe bağlandı: requestId={}, tip={}, hesap={}, güncellenen={}",
+                requestId, target.type(), target.accountName(), updated);
+        return updated;
+    }
+
+    /**
      * Bir hedefin Apify'dan çekilen gönderilerini social_post'a yazar (save-or-update).
      * Mevcut gönderi varsa etkileşim metrikleri + result_json güncellenir, request_id yenilenir.
      * Yeni gönderi ise JPA save ile insert edilir.

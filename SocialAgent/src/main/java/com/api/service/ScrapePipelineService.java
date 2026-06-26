@@ -105,8 +105,11 @@ public class ScrapePipelineService {
                 int totalInserted = 0;
                 // 3) Her hedef için pipeline
                 for (ScrapeTarget target : targets) {
-                    // Tekrar-analiz koruması: pencere içinde analiz edildiyse hem Apify hem AI atlanır
+                    // Tekrar-analiz koruması: pencere içinde analiz edildiyse Apify/AI atlanır
+                    // ANCAK mevcut post'lar yeni requestId'ye bağlanmalı; aksi halde analiz sorguları
+                    // (request_id bazlı) hiçbir post görmez → pipeline FAILED olur.
                     if (socialPostService.isRecentlyAnalyzed(target)) {
+                        socialPostService.relinkExistingPosts(requestId, target);
                         continue;
                     }
                     // Apify'dan URL bazlı post çek

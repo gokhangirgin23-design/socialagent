@@ -11,6 +11,19 @@ spring:
       cache:
         period: 0
         use-last-modified: false
+  # SMTP (FAZ 8): MAIL_HOST verilmezse JavaMailSender bean'i oluşmaz → mail sessizce atlanır.
+  # Aktifleştirmek: MAIL_HOST, MAIL_USERNAME, MAIL_PASSWORD, MAIL_FROM, MAIL_ENABLED=true
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
 
 server:
   port: 8080
@@ -135,19 +148,4 @@ app:
     currency: TL
     client-lang: tr
 
-# ===== FAZ 8: SMTP ayarları (opsiyonel) =====
-# spring.mail.host verildiğinde Spring Boot JavaMailSender bean'ini oluşturur.
-# Aşağıdaki blok env ile beslenir; MAIL_HOST verilmezse blok devreye girmez (mail atlanır).
-# Prod/test'te env üzerinden sağlayın: SPRING_MAIL_HOST, SPRING_MAIL_USERNAME, SPRING_MAIL_PASSWORD.
-#  spring:
-#    mail:
-#      host: ${MAIL_HOST:}
-#      port: ${MAIL_PORT:587}
-#      username: ${MAIL_USERNAME:}
-#      password: ${MAIL_PASSWORD:}
-#      properties:
-#        mail:
-#          smtp:
-#            auth: true
-#            starttls:
-#              enable: true
+# Mail config yukarıdaki spring.mail bloğuna taşındı (duplicate spring: key olmadan)
