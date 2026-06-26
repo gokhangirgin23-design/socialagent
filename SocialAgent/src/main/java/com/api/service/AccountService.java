@@ -263,32 +263,53 @@ public class AccountService {
 			monitoredAccountId = maRows.get(0);
 		}
 
-		// 2) Bu kullanıcı bu monitored_account'u zaten takip ediyor mu? (unique kontrol)
-		String umaCheckSql = """
+		// 2) Bu kullanıcı bu monitored_account'u zaten AKTIF izliyor mu? (unique kontrol)
+		String umaActiveSql = """
 				SELECT user_monitored_account_id
 				FROM user_monitored_account
 				WHERE user_id = ? AND monitored_account_id = ? AND active = 1
 				""";
-		List<UUID> umaRows = jdbcTemplate.query(umaCheckSql,
+		List<UUID> activeRows = jdbcTemplate.query(umaActiveSql,
 				(rs, rowNum) -> rs.getObject("user_monitored_account_id", UUID.class),
 				userId, monitoredAccountId);
 
-		// Bağlantı zaten varsa DUPLICATE döndür
-		if (!umaRows.isEmpty()) {
+		if (!activeRows.isEmpty()) {
 			throw new ApiException(ResponseCode.DUPLICATE,
 					"Bu hesap zaten izleniyor: " + platformNorm + " / " + accountName);
 		}
 
-		// 3) user_monitored_account bağlantısı kur
-		UserMonitoredAccount uma = new UserMonitoredAccount();
-		uma.setUserMonitoredAccountId(UUID.randomUUID());
-		uma.setUserId(userId);
-		uma.setMonitoredAccountId(monitoredAccountId);
-		uma.setActive(1);
-		uma.setCreatedDate(now);
-		uma.setUpdatedDate(now);
-		// JPA save ile insert
-		UserMonitoredAccount savedUma = userMonitoredAccountRepository.save(uma);
+		// 3) Pasif kayıt var mı? Varsa yeniden aktif et (unique constraint ihlalinden kaçınmak için INSERT yerine UPDATE).
+		// Kullanıcı silip tekrar eklemek istediğinde bu dal çalışır.
+		String umaInactiveSql = """
+				SELECT user_monitored_account_id
+				FROM user_monitored_account
+				WHERE user_id = ? AND monitored_account_id = ? AND active = 0
+				""";
+		List<UUID> inactiveRows = jdbcTemplate.query(umaInactiveSql,
+				(rs, rowNum) -> rs.getObject("user_monitored_account_id", UUID.class),
+				userId, monitoredAccountId);
+
+		UserMonitoredAccount savedUma;
+		if (!inactiveRows.isEmpty()) {
+			// Pasif kaydı yeniden aktif et — veritabanı unique constraint'i aşmak için UPDATE tercih edilir
+			jdbcTemplate.update("""
+					UPDATE user_monitored_account
+					SET active = 1, updated_date = ?
+					WHERE user_monitored_account_id = ?
+					""", now, inactiveRows.get(0));
+			// Güncellenmiş kaydı getir
+			savedUma = userMonitoredAccountRepository.findById(inactiveRows.get(0)).orElseThrow();
+		} else {
+			// Hiç kayıt yok; yeni user_monitored_account bağlantısı kur
+			UserMonitoredAccount uma = new UserMonitoredAccount();
+			uma.setUserMonitoredAccountId(UUID.randomUUID());
+			uma.setUserId(userId);
+			uma.setMonitoredAccountId(monitoredAccountId);
+			uma.setActive(1);
+			uma.setCreatedDate(now);
+			uma.setUpdatedDate(now);
+			savedUma = userMonitoredAccountRepository.save(uma);
+		}
 
 		// 4) MonitoredAccountDto oluştur ve döndür
 		MonitoredAccountDto dto = new MonitoredAccountDto();

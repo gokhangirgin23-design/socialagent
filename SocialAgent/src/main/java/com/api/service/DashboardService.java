@@ -265,11 +265,12 @@ public class DashboardService {
         List<Base> bases = new ArrayList<>();
 
         // OWN: kullanıcının kendi hesabı
+        // GREATEST(0,...) — Apify bazen -1 döndürebilir; negatif değerleri 0'a kilitle
         String ownSql = """
                 SELECT 'OWN' AS source_type, 'kendi_hesap' AS account_name,
-                       ROUND(AVG(COALESCE(likes_count, 0)))    AS avg_likes,
-                       ROUND(AVG(COALESCE(comments_count, 0))) AS avg_comments,
-                       ROUND(AVG(COALESCE(views_count, 0)))    AS avg_views,
+                       GREATEST(0, ROUND(AVG(COALESCE(likes_count,    0)))) AS avg_likes,
+                       GREATEST(0, ROUND(AVG(COALESCE(comments_count, 0)))) AS avg_comments,
+                       GREATEST(0, ROUND(AVG(COALESCE(views_count,    0)))) AS avg_views,
                        COUNT(*) AS post_count
                 FROM social_post
                 WHERE request_id = ? AND source_type = 'OWN'
@@ -283,9 +284,9 @@ public class DashboardService {
         String sectorSql = """
                 SELECT 'SECTOR' AS source_type,
                        COALESCE(sector_account_name, 'sektör') AS account_name,
-                       ROUND(AVG(COALESCE(likes_count, 0)))    AS avg_likes,
-                       ROUND(AVG(COALESCE(comments_count, 0))) AS avg_comments,
-                       ROUND(AVG(COALESCE(views_count, 0)))    AS avg_views,
+                       GREATEST(0, ROUND(AVG(COALESCE(likes_count,    0)))) AS avg_likes,
+                       GREATEST(0, ROUND(AVG(COALESCE(comments_count, 0)))) AS avg_comments,
+                       GREATEST(0, ROUND(AVG(COALESCE(views_count,    0)))) AS avg_views,
                        COUNT(*) AS post_count
                 FROM social_post
                 WHERE request_id = ? AND source_type = 'SECTOR'
@@ -300,9 +301,9 @@ public class DashboardService {
         String monSql = """
                 SELECT 'MONITORED' AS source_type,
                        ma.account_name AS account_name,
-                       ROUND(AVG(COALESCE(sp.likes_count, 0)))    AS avg_likes,
-                       ROUND(AVG(COALESCE(sp.comments_count, 0))) AS avg_comments,
-                       ROUND(AVG(COALESCE(sp.views_count, 0)))    AS avg_views,
+                       GREATEST(0, ROUND(AVG(COALESCE(sp.likes_count,    0)))) AS avg_likes,
+                       GREATEST(0, ROUND(AVG(COALESCE(sp.comments_count, 0)))) AS avg_comments,
+                       GREATEST(0, ROUND(AVG(COALESCE(sp.views_count,    0)))) AS avg_views,
                        COUNT(*) AS post_count
                 FROM social_post sp, monitored_account ma
                 WHERE sp.monitored_account_id = ma.monitored_account_id
