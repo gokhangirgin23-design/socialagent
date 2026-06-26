@@ -64,6 +64,16 @@ public class AccountController {
 	}
 
 	/**
+	 * Kullanıcının aktif kendi hesabını kaldırır (soft delete).
+	 */
+	@Operation(summary = "Kendi hesabı kaldır", description = "Kullanıcının ekli kendi hesabını pasifleştirir.")
+	@PostMapping("/own/remove")
+	public DataResponse<Void> removeOwnAccount() {
+		UUID userId = SecurityUtil.getCurrentUserId();
+		return accountService.removeOwnAccount(userId);
+	}
+
+	/**
 	 * Rakip (izlenen) hesap ekler.
 	 * Onboarding adım 6 (opsiyonel).
 	 */

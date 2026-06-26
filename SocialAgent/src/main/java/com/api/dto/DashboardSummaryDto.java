@@ -39,7 +39,22 @@ public class DashboardSummaryDto {
     // Kullanıcı cüzdan özeti
     private WalletInfo wallet;
 
+    // Hesap bazlı kıyaslama satırları (son tamamlanmış analizden); yoksa boş liste
+    private List<AccountComparisonRow> accountComparison;
+
     // ── İç veri sınıfları ─────────────────────────────────────────────────
+
+    @Getter
+    @AllArgsConstructor
+    public static class AccountComparisonRow {
+        private String sourceType;   // OWN | SECTOR | MONITORED
+        private String accountName;
+        private long avgLikes;
+        private long avgComments;
+        private long avgViews;
+        private long reelCount;
+        private long postCount;
+    }
 
     @Getter
     @AllArgsConstructor

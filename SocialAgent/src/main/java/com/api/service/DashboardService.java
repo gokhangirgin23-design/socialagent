@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.api.dto.DashboardSummaryDto;
+import com.api.dto.DashboardSummaryDto.AccountComparisonRow;
 import com.api.dto.DashboardSummaryDto.AlertInfo;
 import com.api.dto.DashboardSummaryDto.InsightInfo;
 import com.api.dto.DashboardSummaryDto.LastReportInfo;
@@ -68,6 +69,10 @@ public class DashboardService {
         // 8) Uyarılar (etkileşim düşüşü, rakip aktivitesi, format trendi)
         List<AlertInfo> alerts = buildAlerts(userId, lastCompletedRequestId);
 
+        // 9) Hesap bazlı kıyaslama verileri (dashboard tablo)
+        List<AccountComparisonRow> accountComparison = (lastCompletedRequestId != null)
+                ? buildAccountComparison(lastCompletedRequestId) : List.of();
+
         return DashboardSummaryDto.builder()
                 .accountScore(accountScore)
                 .monitored(monitored)
@@ -75,6 +80,7 @@ public class DashboardService {
                 .lastReport(lastReport)
                 .latestInsight(latestInsight)
                 .alerts(alerts)
+                .accountComparison(accountComparison)
                 .wallet(wallet)
                 .build();
     }
@@ -245,6 +251,138 @@ public class DashboardService {
             log.warn("Insight JSON parse hatası: {}", ex.getMessage());
             return null;
         }
+    }
+
+    // ── Hesap kıyaslama tablosu ─────────────────────────────────────────────
+
+    /**
+     * Son tamamlanmış analizin hesap bazlı özet metriklerini döndürür.
+     * Kaynak tipine göre ayrı sorgular çalıştırılır (eski stil "=" join — CLAUDE.md Madde 6).
+     * OWN: 'kendi_hesap', SECTOR: sector_account_name, MONITORED: monitored_account.account_name
+     */
+    private List<AccountComparisonRow> buildAccountComparison(UUID requestId) {
+        record Base(String sourceType, String accountName, long avgLikes, long avgComments, long avgViews, long postCount) {}
+        List<Base> bases = new ArrayList<>();
+
+        // OWN: kullanıcının kendi hesabı
+        String ownSql = """
+                SELECT 'OWN' AS source_type, 'kendi_hesap' AS account_name,
+                       ROUND(AVG(COALESCE(likes_count, 0)))    AS avg_likes,
+                       ROUND(AVG(COALESCE(comments_count, 0))) AS avg_comments,
+                       ROUND(AVG(COALESCE(views_count, 0)))    AS avg_views,
+                       COUNT(*) AS post_count
+                FROM social_post
+                WHERE request_id = ? AND source_type = 'OWN'
+                """;
+        bases.addAll(jdbcTemplate.query(ownSql, (rs, i) -> new Base(
+                rs.getString("source_type"), rs.getString("account_name"),
+                rs.getLong("avg_likes"), rs.getLong("avg_comments"),
+                rs.getLong("avg_views"), rs.getLong("post_count")), requestId));
+
+        // SECTOR: sektör top-5 hesapları (account adına göre GROUP BY)
+        String sectorSql = """
+                SELECT 'SECTOR' AS source_type,
+                       COALESCE(sector_account_name, 'sektör') AS account_name,
+                       ROUND(AVG(COALESCE(likes_count, 0)))    AS avg_likes,
+                       ROUND(AVG(COALESCE(comments_count, 0))) AS avg_comments,
+                       ROUND(AVG(COALESCE(views_count, 0)))    AS avg_views,
+                       COUNT(*) AS post_count
+                FROM social_post
+                WHERE request_id = ? AND source_type = 'SECTOR'
+                GROUP BY sector_account_name
+                """;
+        bases.addAll(jdbcTemplate.query(sectorSql, (rs, i) -> new Base(
+                rs.getString("source_type"), rs.getString("account_name"),
+                rs.getLong("avg_likes"), rs.getLong("avg_comments"),
+                rs.getLong("avg_views"), rs.getLong("post_count")), requestId));
+
+        // MONITORED: rakip hesaplar — monitored_account ile eski stil "=" join
+        String monSql = """
+                SELECT 'MONITORED' AS source_type,
+                       ma.account_name AS account_name,
+                       ROUND(AVG(COALESCE(sp.likes_count, 0)))    AS avg_likes,
+                       ROUND(AVG(COALESCE(sp.comments_count, 0))) AS avg_comments,
+                       ROUND(AVG(COALESCE(sp.views_count, 0)))    AS avg_views,
+                       COUNT(*) AS post_count
+                FROM social_post sp, monitored_account ma
+                WHERE sp.monitored_account_id = ma.monitored_account_id
+                  AND sp.request_id = ?
+                  AND sp.source_type = 'MONITORED'
+                GROUP BY ma.account_name
+                """;
+        bases.addAll(jdbcTemplate.query(monSql, (rs, i) -> new Base(
+                rs.getString("source_type"), rs.getString("account_name"),
+                rs.getLong("avg_likes"), rs.getLong("avg_comments"),
+                rs.getLong("avg_views"), rs.getLong("post_count")), requestId));
+
+        if (bases.isEmpty()) return List.of();
+
+        // Reel sayısı: analysis_json içindeki metrics.contentType.isReel
+        // post_analysis ile eski stil "=" join; hesap adı yukarıdaki sorgularla aynı mantıkla türetilir
+        String reelSql = """
+                SELECT sp.source_type,
+                       COALESCE(sp.sector_account_name,
+                           CASE WHEN sp.source_type = 'OWN' THEN 'kendi_hesap' ELSE 'sektör' END
+                       ) AS sect_name,
+                       ma.account_name AS mon_name,
+                       pa.analysis_json
+                FROM social_post sp, post_analysis pa, monitored_account ma
+                WHERE sp.social_post_id = pa.social_post_id
+                  AND sp.monitored_account_id = ma.monitored_account_id
+                  AND sp.request_id = ?
+                  AND sp.source_type = 'MONITORED'
+                """;
+        // OWN + SECTOR için ayrı reel sorgusu
+        String reelOwnSectorSql = """
+                SELECT sp.source_type,
+                       CASE WHEN sp.source_type = 'OWN' THEN 'kendi_hesap'
+                            ELSE COALESCE(sp.sector_account_name, 'sektör')
+                       END AS acct_name,
+                       pa.analysis_json
+                FROM social_post sp, post_analysis pa
+                WHERE sp.social_post_id = pa.social_post_id
+                  AND sp.request_id = ?
+                  AND sp.source_type IN ('OWN', 'SECTOR')
+                """;
+
+        java.util.Map<String, Long> reelMap = new java.util.HashMap<>();
+        // OWN + SECTOR reels
+        jdbcTemplate.query(reelOwnSectorSql, (rs, i) -> {
+            String key = rs.getString("source_type") + ":" + rs.getString("acct_name");
+            boolean isReel = false;
+            String json = rs.getString("analysis_json");
+            if (json != null) {
+                try {
+                    JsonNode node = MAPPER.readTree(json).path("metrics").path("contentType").path("isReel");
+                    isReel = node.isBoolean() && node.asBoolean();
+                } catch (Exception ignored) {}
+            }
+            if (isReel) reelMap.merge(key, 1L, Long::sum);
+            return null;
+        }, requestId);
+        // MONITORED reels
+        jdbcTemplate.query(reelSql, (rs, i) -> {
+            String key = "MONITORED:" + rs.getString("mon_name");
+            boolean isReel = false;
+            String json = rs.getString("analysis_json");
+            if (json != null) {
+                try {
+                    JsonNode node = MAPPER.readTree(json).path("metrics").path("contentType").path("isReel");
+                    isReel = node.isBoolean() && node.asBoolean();
+                } catch (Exception ignored) {}
+            }
+            if (isReel) reelMap.merge(key, 1L, Long::sum);
+            return null;
+        }, requestId);
+
+        List<AccountComparisonRow> result = new ArrayList<>();
+        for (Base b : bases) {
+            String key = b.sourceType() + ":" + b.accountName();
+            long reelCount = reelMap.getOrDefault(key, 0L);
+            result.add(new AccountComparisonRow(b.sourceType(), b.accountName(),
+                    b.avgLikes(), b.avgComments(), b.avgViews(), reelCount, b.postCount()));
+        }
+        return result;
     }
 
     // ── Uyarılar ───────────────────────────────────────────────────────────

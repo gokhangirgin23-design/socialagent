@@ -26,7 +26,7 @@ public final class ReportPrompts {
 	private static final String COMPARISON_RULE = """
 			Sen kıdemli bir sosyal medya strateji danışmanısın. Sana bir kullanıcının Instagram analiz
 			işine ait hesap bazlı istatistikler veriliyor (her hesap için: ortalama beğeni, içerik tipi
-			dağılımı, reel oranı, insan/model kullanımı, ürün odaklılık vb.).
+			dağılımı, reel oranı, insan/model kullanımı, ürün odaklılık, açıklama tonu, görsel temalar vb.).
 
 			Veriler; kullanıcının KENDİ hesabı ile rakip/sektör hesaplarını içermektedir.
 			Karşılaştırmalı bir Türkçe rapor üret.
@@ -34,20 +34,33 @@ public final class ReportPrompts {
 			Çıktı kuralları:
 			- SADECE Markdown döndür. Kod bloğu (```), JSON veya ön/son açıklama EKLEME.
 			- Profesyonel, okunaklı ve uygulanabilir bir rapor yaz.
+			- Her ana başlık önüne uygun bir emoji ikon koy (📊 📝 💡 📅 🎯 🚀 🔥 ✨ vb.).
+			- Etkileşim karşılaştırma verilerini mutlaka bir Markdown tablosu olarak göster.
+			- İçerik önerilerinde her format (Reel, Fotoğraf, Story) için somut görsel/sahne/yazı fikirleri ver:
+			  * Hangi tür ortam/sahne çekimi (doğa, ofis, ürün close-up, lifestyle vb.)
+			  * Görselin üzerindeki yazı/mesaj önerileri (viral yazı formatları, CTA'lar)
+			  * Müzik/ses tonu önerileri (enerjik, duygusal, eğlenceli vb.) varsa
+			- Paylaşım açıklaması (caption) yazım önerileri: ton, CTA, anahtar cümleler.
 			- Aşağıdaki başlık iskeletini kullan:
 
-			# Sosyal Medya Analiz Raporu
-			## Özet
-			## Etkileşim Karşılaştırması (Kendi Hesabın vs. Rakip/Sektör)
-			## İçerik Önerileri
-			## Hashtag Önerileri
-			## Paylaşım Takvimi
-			## Rakiplerden Öğren
-			## Aksiyon Planı
+			# 📱 Sosyal Medya Analiz Raporu
+			## 📊 Özet
+			## 📈 Etkileşim Karşılaştırması
+			(tablo: Hesap | Ort. Beğeni | Ort. Yorum | Ort. Görüntülenme | Reel Oranı | İçerik Tipi)
+			## 💡 İçerik Önerileri
+			### 🎬 Reel / Video
+			### 📷 Fotoğraf
+			### 📖 Story
+			## ✍️ Açıklama (Caption) Stratejisi
+			## #️⃣ Hashtag Önerileri
+			## 📅 Paylaşım Takvimi
+			## 🔍 Rakiplerden Öğren
+			## 🚀 Aksiyon Planı
 
 			Notlar:
 			- Takipçi sayısı yoksa ortalama beğeni + yorum sayısı etkileşim karşılaştırma metriği olarak kullan.
 			- Veri azsa bunu dürüstçe belirt; uydurma sayı/iddia ekleme.
+			- İçerik fikirleri gerçekçi ve sektöre özgü olsun (genel klişelerden kaçın).
 			""";
 
 	private static final String SUCCESS_FACTOR_RULE = """
@@ -59,20 +72,34 @@ public final class ReportPrompts {
 			Çıktı kuralları:
 			- SADECE Markdown döndür. Kod bloğu (```), JSON veya ön/son açıklama EKLEME.
 			- Profesyonel, okunaklı ve uygulanabilir bir rapor yaz.
+			- Her ana başlık önüne uygun bir emoji ikon koy (📊 📝 💡 📅 🎯 🚀 🔥 ✨ vb.).
+			- Başarılı hesapların metriklerini mutlaka bir Markdown tablosu olarak göster.
+			- İçerik önerilerinde her format (Reel, Fotoğraf, Story) için somut görsel/sahne/yazı fikirleri ver:
+			  * Hangi tür ortam/sahne çekimi (doğa, ofis, ürün close-up, lifestyle vb.)
+			  * Görselin üzerindeki yazı/mesaj önerileri (viral yazı formatları, CTA'lar)
+			  * Müzik/ses tonu önerileri varsa
+			- Paylaşım açıklaması (caption) yazım önerileri: ton, CTA, anahtar cümleler.
 			- Aşağıdaki başlık iskeletini kullan:
 
-			# Sosyal Medya Sektör Analiz Raporu
-			## Özet
-			## Başarılı Hesapların Ortak Özellikleri
-			## İçerik Önerileri
-			## Hashtag Önerileri
-			## Paylaşım Takvimi
-			## Rakiplerden Öğren
-			## Aksiyon Planı
+			# 📱 Sosyal Medya Sektör Analiz Raporu
+			## 📊 Özet
+			## 🏆 Başarılı Hesapların Karşılaştırması
+			(tablo: Hesap | Ort. Beğeni | Ort. Yorum | Ort. Görüntülenme | Reel Oranı | İçerik Tipi)
+			## 🔑 Başarı Faktörleri
+			## 💡 İçerik Önerileri
+			### 🎬 Reel / Video
+			### 📷 Fotoğraf
+			### 📖 Story
+			## ✍️ Açıklama (Caption) Stratejisi
+			## #️⃣ Hashtag Önerileri
+			## 📅 Paylaşım Takvimi
+			## 🔍 Rakiplerden Öğren
+			## 🚀 Aksiyon Planı
 
 			Notlar:
 			- Takipçi sayısı yoksa ortalama beğeni + yorum sayısı etkileşim metriği olarak kullan.
 			- Veri azsa bunu dürüstçe belirt; uydurma sayı/iddia ekleme.
+			- İçerik fikirleri gerçekçi ve sektöre özgü olsun (genel klişelerden kaçın).
 			""";
 
 	/**

@@ -52,49 +52,121 @@ public class AccountService {
 	//test
 
 	/**
-	 * Kullanıcının kendi sosyal medya hesabını ekler.
-	 * Unique(user_id, platform, account_name) kısıtı kontrol edilir.
-	 * D2: tek hesap kuralı; zaten aynı platform+account_name varsa DUPLICATE döner.
+	 * Kullanıcının kendi sosyal medya hesabını ekler veya günceller.
+	 * D2: tek hesap kuralı.
+	 * - Aynı platform+hesap_adı zaten aktifse → DUPLICATE (zaten kayıtlı)
+	 * - Farklı hesap adıyla değiştirme: mevcut aktif kaydın adı güncellenir (INSERT yok)
+	 * - Hiç kayıt yoksa → INSERT
 	 * Endpoint: POST /account/own/add
 	 */
 	@Transactional
 	public UserSocialAccountDto addOwnAccount(UUID userId, AddOwnAccountRequest req) {
 		LocalDateTime now = LocalDateTime.now();
+		String platformNorm = req.getPlatform().toUpperCase();
+		String newName = req.getAccountName();
+		String newUrl = buildProfileUrl(platformNorm, newName);
 
-		// 1) Unique kısıt kontrolü: aynı kullanıcı + platform + accountName var mı?
-		String uniqueCheckSql = """
+		// 1) Aynı kullanıcı + platform + hesap_adı zaten aktif mi? → DUPLICATE
+		String sameNameSql = """
 				SELECT user_social_account_id
 				FROM user_social_account
 				WHERE user_id = ? AND platform = ? AND account_name = ? AND active = 1
 				""";
-		List<UUID> existing = jdbcTemplate.query(uniqueCheckSql,
+		List<UUID> sameNameRows = jdbcTemplate.query(sameNameSql,
 				(rs, rowNum) -> rs.getObject("user_social_account_id", UUID.class),
-				userId, req.getPlatform(), req.getAccountName());
-
-		// Kayıt zaten varsa DUPLICATE döndür (HTTP 200, responseCode=3)
-		if (!existing.isEmpty()) {
+				userId, platformNorm, newName);
+		if (!sameNameRows.isEmpty()) {
 			throw new ApiException(ResponseCode.DUPLICATE,
-					"Bu platform ve hesap adı zaten eklenmiş: " + req.getPlatform() + " / " + req.getAccountName());
+					"Bu hesap adı zaten aktif olarak eklenmiş: " + platformNorm + " / " + newName);
 		}
 
-		// 2) Yeni kayıt oluştur ve JPA ile kaydet
+		// 2) Kullanıcının bu platform için farklı aktif kaydı var mı? → güncelle (değiştirme)
+		String existingActiveSql = """
+				SELECT user_social_account_id, user_id, platform, account_name, profile_url,
+				       active, created_date, updated_date
+				FROM user_social_account
+				WHERE user_id = ? AND platform = ? AND active = 1
+				LIMIT 1
+				""";
+		List<UserSocialAccount> activeRows = jdbcTemplate.query(existingActiveSql, (rs, rowNum) -> {
+			UserSocialAccount a = new UserSocialAccount();
+			a.setUserSocialAccountId(rs.getObject("user_social_account_id", UUID.class));
+			a.setUserId(rs.getObject("user_id", UUID.class));
+			a.setPlatform(rs.getString("platform"));
+			a.setAccountName(rs.getString("account_name"));
+			a.setProfileUrl(rs.getString("profile_url"));
+			a.setActive(rs.getObject("active", Integer.class));
+			if (rs.getTimestamp("created_date") != null)
+				a.setCreatedDate(rs.getTimestamp("created_date").toLocalDateTime());
+			if (rs.getTimestamp("updated_date") != null)
+				a.setUpdatedDate(rs.getTimestamp("updated_date").toLocalDateTime());
+			return a;
+		}, userId, platformNorm);
+
+		if (!activeRows.isEmpty()) {
+			// Mevcut kaydı yeni hesap adıyla güncelle (D2: tek kayıt korunur)
+			UserSocialAccount existing = activeRows.get(0);
+			existing.setAccountName(newName);
+			existing.setProfileUrl(newUrl);
+			existing.setUpdatedDate(now);
+			UserSocialAccount saved = userSocialAccountRepository.save(existing);
+			return userSocialAccountMapper.toDto(saved);
+		}
+
+		// 3) Hiç aktif kayıt yoksa yeni oluştur
 		UserSocialAccount account = new UserSocialAccount();
 		account.setUserSocialAccountId(UUID.randomUUID());
 		account.setUserId(userId);
-		// Platform string olarak saklanır (enum doğrulaması iş katmanında yapılabilir)
-		account.setPlatform(req.getPlatform().toUpperCase());
-		account.setAccountName(req.getAccountName());
-		// profileUrl istekten alınmaz; platforma göre otomatik üretilir (INSTAGRAM şimdilik)
-		account.setProfileUrl(buildProfileUrl(req.getPlatform().toUpperCase(), req.getAccountName()));
+		account.setPlatform(platformNorm);
+		account.setAccountName(newName);
+		account.setProfileUrl(newUrl);
 		account.setActive(1);
 		account.setCreatedDate(now);
 		account.setUpdatedDate(now);
-
-		// JPA save ile insert
 		UserSocialAccount saved = userSocialAccountRepository.save(account);
-
-		// 3) Eklenen kaydı DTO olarak döndür
 		return userSocialAccountMapper.toDto(saved);
+	}
+
+	/**
+	 * Kullanıcının aktif kendi hesabını kaldırır (soft delete).
+	 * Kayıt bulunamazsa NOT_FOUND döner.
+	 * Endpoint: POST /account/own/remove
+	 */
+	@Transactional
+	public DataResponse<Void> removeOwnAccount(UUID userId) {
+		// Kullanıcının aktif kendi hesabını bul
+		String findSql = """
+				SELECT user_social_account_id, user_id, platform, account_name, profile_url,
+				       active, created_date, updated_date
+				FROM user_social_account
+				WHERE user_id = ? AND active = 1
+				LIMIT 1
+				""";
+		List<UserSocialAccount> rows = jdbcTemplate.query(findSql, (rs, rowNum) -> {
+			UserSocialAccount a = new UserSocialAccount();
+			a.setUserSocialAccountId(rs.getObject("user_social_account_id", UUID.class));
+			a.setUserId(rs.getObject("user_id", UUID.class));
+			a.setPlatform(rs.getString("platform"));
+			a.setAccountName(rs.getString("account_name"));
+			a.setProfileUrl(rs.getString("profile_url"));
+			a.setActive(rs.getObject("active", Integer.class));
+			if (rs.getTimestamp("created_date") != null)
+				a.setCreatedDate(rs.getTimestamp("created_date").toLocalDateTime());
+			if (rs.getTimestamp("updated_date") != null)
+				a.setUpdatedDate(rs.getTimestamp("updated_date").toLocalDateTime());
+			return a;
+		}, userId);
+
+		if (rows.isEmpty()) {
+			throw new ApiException(ResponseCode.NOT_FOUND, "Silinecek aktif kendi hesabı bulunamadı");
+		}
+
+		// Soft delete
+		UserSocialAccount account = rows.get(0);
+		account.setActive(0);
+		account.setUpdatedDate(LocalDateTime.now());
+		userSocialAccountRepository.save(account);
+		return DataResponse.of(ResponseCode.SUCCESS);
 	}
 
 	/**

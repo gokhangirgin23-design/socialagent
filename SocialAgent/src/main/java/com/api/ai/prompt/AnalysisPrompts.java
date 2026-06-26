@@ -37,6 +37,12 @@ public final class AnalysisPrompts {
 			  },
 			  "themes": ["gönderinin ana temaları (Türkçe, 1-5 madde)"],
 			  "tone": "gönderinin tonu (ör. samimi, kurumsal, esprili) — Türkçe",
+			  "captionAnalysis": {
+			    "summary": "açıklamanın (caption) kısa yorumu (Türkçe)",
+			    "callToAction": "varsa harekete geçirici mesaj (CTA) — yoksa null",
+			    "sentiment": "pozitif | nötr | negatif",
+			    "keyPhrases": ["göze çarpan anahtar kelimeler veya cümleler (Türkçe, 1-3 madde)"]
+			  },
 			  "hashtagAnalysis": {
 			    "effective": ["işe yarayan hashtag'ler"],
 			    "suggestions": ["önerilen ek hashtag'ler"]
@@ -65,7 +71,12 @@ public final class AnalysisPrompts {
 			  "isProductFocused": <true/false — içerik ürün odaklı mı>,
 			  "visualThemes": ["görselin ana temaları (Türkçe, 1-3 madde)"],
 			  "composition": "görsel kompozisyon kısa yorumu (Türkçe)",
-			  "brandElements": ["varsa marka öğeleri (logo, renk, font vb.) — yoksa boş dizi"]
+			  "brandElements": ["varsa marka öğeleri (logo, renk, font vb.) — yoksa boş dizi"],
+			  "sceneDescription": "sahnede ne görünüyor: ortam, ışık, renk paleti, mekan (Türkçe)",
+			  "textOverlay": "görselin üzerindeki yazılar veya mesajlar (yoksa null)",
+			  "hasMusic": <true/false — video ise müzik/ses var gibi görünüyor mu; görselden anlaşılmıyorsa false>,
+			  "musicMood": "müzik/ses varsa tahmini tonu: enerjik, duygusal, sakin, neşeli vb. (yoksa null)",
+			  "contentIdea": "bu görsel/video formatından ilham alarak benzer içerik oluşturmak isteyenlere somut fikir önerisi (Türkçe, 1-2 cümle)"
 			}
 			""";
 
