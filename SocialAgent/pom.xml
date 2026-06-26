@@ -100,17 +100,17 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-mail</artifactId>
 		</dependency>
-		<!-- Markdown → HTML dönüşümü (rapor PDF ve mail için) -->
+		<!-- Markdown AST ayrıştırma (rapor PDF için) -->
 		<dependency>
 			<groupId>org.commonmark</groupId>
 			<artifactId>commonmark</artifactId>
 			<version>0.24.0</version>
 		</dependency>
-		<!-- HTML → PDF (rapor mail eki — rapor_content Markdown'dan PDF üretilir) -->
+		<!-- PDF üretimi (rapor mail eki; iText 2.x fork, LGPL) -->
 		<dependency>
-			<groupId>io.github.openhtmltopdf</groupId>
-			<artifactId>openhtmltopdf-pdfbox</artifactId>
-			<version>1.0.10</version>
+			<groupId>com.github.librepdf</groupId>
+			<artifactId>openpdf</artifactId>
+			<version>1.3.30</version>
 		</dependency>
 
 		<!-- Flyway (şema migration) -->
