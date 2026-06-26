@@ -41,7 +41,7 @@ class NotificationServiceTest {
     private JdbcTemplate jdbcTemplate;
     private NotificationRepository notificationRepository;
     private NotificationMapper notificationMapper;
-    private MailSender mailSender;
+    private AppMailSender mailSender;
     private PushSender pushSender;
     private NotificationService service;
 
@@ -54,7 +54,7 @@ class NotificationServiceTest {
         jdbcTemplate = org.mockito.Mockito.mock(JdbcTemplate.class);
         notificationRepository = org.mockito.Mockito.mock(NotificationRepository.class);
         notificationMapper = org.mockito.Mockito.mock(NotificationMapper.class);
-        mailSender = org.mockito.Mockito.mock(MailSender.class);
+        mailSender = org.mockito.Mockito.mock(AppMailSender.class);
         pushSender = org.mockito.Mockito.mock(PushSender.class);
         service = new NotificationService(jdbcTemplate, notificationRepository, notificationMapper,
                 mailSender, pushSender, null);
@@ -68,7 +68,7 @@ class NotificationServiceTest {
                 new NotificationService.ReportTarget(reportId, userId, "BOTH", "user@example.com", null);
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(UUID.class)))
                 .thenReturn(List.of(target));
-        when(mailSender.send(anyString(), anyString(), anyString())).thenReturn(SendResult.ok());
+        when(mailSender.send(anyString(), anyString(), anyString(), any(), anyString())).thenReturn(SendResult.ok());
         when(pushSender.send(any(), anyString(), anyString())).thenReturn(SendResult.ok());
 
         service.notifyReportCompleted(requestId);
@@ -88,7 +88,7 @@ class NotificationServiceTest {
         assertTrue(channels.contains(NotificationChannel.MAIL.name()));
         assertTrue(channels.contains(NotificationChannel.PUSH_NOTIFICATION.name()));
 
-        verify(mailSender, times(1)).send(eq("user@example.com"), anyString(), anyString());
+        verify(mailSender, times(1)).send(eq("user@example.com"), anyString(), anyString(), any(), anyString());
         verify(pushSender, times(1)).send(eq(userId), anyString(), anyString());
     }
 
@@ -102,7 +102,7 @@ class NotificationServiceTest {
         service.notifyReportCompleted(requestId);
 
         verify(notificationRepository, never()).save(any());
-        verify(mailSender, never()).send(anyString(), anyString(), anyString());
+        verify(mailSender, never()).send(anyString(), anyString(), anyString(), any(), anyString());
         verify(pushSender, never()).send(any(), anyString(), anyString());
     }
 
