@@ -1,5 +1,6 @@
 package com.api.service;
 
+import java.util.Base64;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
@@ -68,8 +69,14 @@ public class S3UploadService {
      * @return "https://{bucket}.s3.{region}.amazonaws.com/{key}" veya null
      */
     public String upload(byte[] imageBytes, UUID userId, UUID contentRequestId, int index) {
-        if (s3Client == null || imageBytes == null) {
+        if (imageBytes == null) {
             return null;
+        }
+        // S3 yapılandırılmadıysa base64 data URL olarak sakla (geliştirme ortamı fallback)
+        if (s3Client == null) {
+            log.info("S3 kapalı; görsel base64 data URL olarak saklanıyor: contentRequestId={}, index={}",
+                    contentRequestId, index);
+            return "data:image/png;base64," + Base64.getEncoder().encodeToString(imageBytes);
         }
         try {
             String key = "content/%s/%s/image_%d.png".formatted(userId, contentRequestId, index);

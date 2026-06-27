@@ -12,6 +12,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 
 import com.api.config.AppProperties;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -92,9 +93,14 @@ public class GeminiImageService {
                     .retrieve()
                     .body(String.class);
 
+            log.debug("Gemini image yanıtı: uzunluk={}", responseJson == null ? 0 : responseJson.length());
             return extractImageBytes(responseJson);
+        } catch (RestClientResponseException ex) {
+            log.error("Gemini API HTTP hatası: status={}, model={}, body={}",
+                    ex.getStatusCode(), imageModel, ex.getResponseBodyAsString());
+            return null;
         } catch (Exception ex) {
-            log.error("Gemini görsel üretimi başarısız: model={}, hata={}", imageModel, ex.getMessage());
+            log.error("Gemini görsel üretimi başarısız: model={}, hata={}", imageModel, ex.getMessage(), ex);
             return null;
         }
     }
@@ -102,21 +108,21 @@ public class GeminiImageService {
     private Map<String, Object> buildRequestBody(String textPrompt, String productImageUrl) throws IOException {
         List<Map<String, Object>> parts = new ArrayList<>();
 
-        // Ürün görseli varsa modele gönder (base64 inline)
+        // Ürün görseli varsa modele gönder (base64 inline — Gemini REST API camelCase gerektirir)
         if (productImageUrl != null && !productImageUrl.isBlank()) {
             try {
                 if (productImageUrl.startsWith("data:")) {
                     // Frontend'den gelen data URI: data:image/jpeg;base64,/9j/...
                     int comma = productImageUrl.indexOf(',');
-                    String header = productImageUrl.substring(5, comma);         // image/jpeg;base64
-                    String mimeType = header.split(";")[0];                      // image/jpeg
+                    String header = productImageUrl.substring(5, comma);   // image/jpeg;base64
+                    String mimeType = header.split(";")[0];                // image/jpeg
                     String base64 = productImageUrl.substring(comma + 1);
-                    parts.add(Map.of("inline_data", Map.of("mime_type", mimeType, "data", base64)));
+                    parts.add(Map.of("inlineData", Map.of("mimeType", mimeType, "data", base64)));
                 } else {
                     byte[] imageBytes = downloadBytes(productImageUrl);
                     String base64 = Base64.getEncoder().encodeToString(imageBytes);
                     String mimeType = detectMimeType(productImageUrl);
-                    parts.add(Map.of("inline_data", Map.of("mime_type", mimeType, "data", base64)));
+                    parts.add(Map.of("inlineData", Map.of("mimeType", mimeType, "data", base64)));
                 }
             } catch (Exception ex) {
                 log.warn("Ürün görseli işlenemedi, atlanıyor: hata={}", ex.getMessage());
@@ -125,17 +131,30 @@ public class GeminiImageService {
 
         parts.add(Map.of("text", textPrompt));
 
+        // responseModalities: TEXT+IMAGE — sadece IMAGE bazı model versiyonlarında hata verebilir
         return Map.of(
                 "contents", List.of(Map.of("parts", parts)),
-                "generationConfig", Map.of("responseModalities", List.of("IMAGE"))
+                "generationConfig", Map.of("responseModalities", List.of("TEXT", "IMAGE"))
         );
     }
 
     private byte[] extractImageBytes(String responseJson) throws Exception {
+        if (responseJson == null || responseJson.isBlank()) {
+            log.warn("Gemini boş yanıt döndü.");
+            return null;
+        }
         JsonNode root = objectMapper.readTree(responseJson);
+
+        // Hata objesi varsa logla
+        if (!root.path("error").isMissingNode()) {
+            log.error("Gemini yanıtında hata nesnesi: {}", root.path("error").toString());
+            return null;
+        }
+
         JsonNode candidates = root.path("candidates");
         if (candidates.isEmpty()) {
-            log.warn("Gemini yanıtında 'candidates' yok.");
+            log.warn("Gemini yanıtında 'candidates' yok. Yanıt: {}",
+                    responseJson.substring(0, Math.min(500, responseJson.length())));
             return null;
         }
         JsonNode parts = candidates.get(0).path("content").path("parts");
@@ -143,10 +162,13 @@ public class GeminiImageService {
             JsonNode inlineData = part.path("inlineData");
             if (!inlineData.isMissingNode()) {
                 String base64Data = inlineData.path("data").asText();
+                log.info("Gemini görsel verisi alındı: {} bytes (base64)", base64Data.length());
                 return Base64.getDecoder().decode(base64Data);
             }
         }
-        log.warn("Gemini yanıtında görsel verisi bulunamadı.");
+        // Parts var ama image yok — text-only yanıt döndü
+        log.warn("Gemini görsel verisi bulunamadı; parts={}",
+                responseJson.substring(0, Math.min(500, responseJson.length())));
         return null;
     }
 

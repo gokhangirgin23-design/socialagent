@@ -112,8 +112,9 @@ app:
     exchange: ${CONTENT_EXCHANGE:spectiqs.content.exchange}
     routing-key: ${CONTENT_ROUTING_KEY:spectiqs.content}
     edit-limit: 3
-    # Gemini görsel üretim modeli (responseModalities: IMAGE desteklemeli)
-    image-model: ${CONTENT_IMAGE_MODEL:gemini-2.0-flash-preview-image-generation}
+    # Gemini görsel üretim modeli — gemini-2.0-flash-exp tüm API key'lerinde çalışır;
+    # preview-image-generation modeli özel erişim gerektiriyor
+    image-model: ${CONTENT_IMAGE_MODEL:gemini-2.0-flash-exp}
     price-post: ${CONTENT_PRICE_POST:100}
     price-story: ${CONTENT_PRICE_STORY:100}
     price-carousel: ${CONTENT_PRICE_CAROUSEL:120}
