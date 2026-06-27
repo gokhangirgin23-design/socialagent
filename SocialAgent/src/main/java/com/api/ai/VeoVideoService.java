@@ -196,43 +196,86 @@ public class VeoVideoService {
 
         log.info("Veo video URI: {}", videoUri);
 
-        // Veo response URI formatı: "files/{id}:download?alt=media"
-        // :download custom metodu GCS redirect'e yönlendiriyor; standart Files API formatını kullan.
+        // Veo URI formatı: "files/{id}:download?alt=media"
+        // :download endpoint'i GCS pre-signed URL'e 302 redirect yapar.
+        // Pre-signed URL kendi kendine auth'lu — x-goog-api-key header'ı GCS'e GÖNDERİLMEMELİ.
         String fileBase = videoUri.replaceAll(":download.*$", "").replaceAll("\\?.*$", "");
-        String downloadUrl = fileBase + "?alt=media&key=" + apiKey;
+        String step1Url = fileBase + ":download?alt=media&key=" + apiKey;
 
-        log.info("Veo indirme başlıyor: {}", downloadUrl.replaceAll("key=[^&]+", "key=***"));
+        log.info("Veo indirme adım-1: {}", step1Url.replaceAll("key=[^&]+", "key=***"));
 
-        // Java 11 HttpClient: ALWAYS redirect — cross-domain yönlendirmede headerlar korunur.
-        // SimpleClientHttpRequestFactory/HttpURLConnection, farklı host'a redirect'te headerları strip eder.
+        // NEVER redirect: 302 Location header'ını elle okuyup GCS'e ayrı, temiz istek yapacağız
         HttpClient httpClient = HttpClient.newBuilder()
-                .followRedirects(HttpClient.Redirect.ALWAYS)
+                .followRedirects(HttpClient.Redirect.NEVER)
                 .connectTimeout(Duration.ofSeconds(30))
                 .build();
 
-        HttpRequest httpRequest = HttpRequest.newBuilder()
-                .uri(URI.create(downloadUrl))
+        HttpRequest step1Request = HttpRequest.newBuilder()
+                .uri(URI.create(step1Url))
                 .header("x-goog-api-key", apiKey)
                 .GET()
                 .build();
 
-        HttpResponse<byte[]> httpResponse = httpClient.send(httpRequest,
+        HttpResponse<byte[]> step1Response = httpClient.send(step1Request,
                 HttpResponse.BodyHandlers.ofByteArray());
 
-        if (httpResponse.statusCode() != 200) {
-            log.warn("Veo indirme HTTP {}: {}", httpResponse.statusCode(),
-                    new String(httpResponse.body(), StandardCharsets.UTF_8));
+        int status1 = step1Response.statusCode();
+
+        if (status1 == 302 || status1 == 301) {
+            // GCS pre-signed URL'i al
+            String gcsUrl = step1Response.headers().firstValue("location")
+                    .or(() -> step1Response.headers().firstValue("Location"))
+                    .orElse(null);
+
+            if (gcsUrl == null || gcsUrl.isBlank()) {
+                log.warn("Veo: {} redirect ama Location header yok. Body: {}",
+                        status1, new String(step1Response.body(), StandardCharsets.UTF_8));
+                return null;
+            }
+
+            log.info("Veo indirme adım-2 (GCS): {}", gcsUrl.substring(0, Math.min(80, gcsUrl.length())));
+
+            // GCS pre-signed URL: auth header olmadan indir
+            HttpRequest step2Request = HttpRequest.newBuilder()
+                    .uri(URI.create(gcsUrl))
+                    .GET()
+                    .build();
+
+            HttpResponse<byte[]> step2Response = httpClient.send(step2Request,
+                    HttpResponse.BodyHandlers.ofByteArray());
+
+            if (step2Response.statusCode() != 200) {
+                log.warn("Veo GCS indirme HTTP {}: {}", step2Response.statusCode(),
+                        new String(step2Response.body(), StandardCharsets.UTF_8).substring(0, Math.min(300,
+                                step2Response.body().length)));
+                return null;
+            }
+
+            byte[] bytes = step2Response.body();
+            if (bytes.length < 10_000) {
+                log.warn("Veo: GCS indirilen boyut çok küçük ({} bytes): {}", bytes.length,
+                        new String(bytes, StandardCharsets.UTF_8));
+                return null;
+            }
+
+            log.info("Veo video indirildi: {} bytes", bytes.length);
+            return bytes;
+
+        } else if (status1 == 200) {
+            // Redirect yok, direkt içerik
+            byte[] bytes = step1Response.body();
+            if (bytes.length < 10_000) {
+                log.warn("Veo: HTTP 200 ama küçük yanıt ({} bytes): {}", bytes.length,
+                        new String(bytes, StandardCharsets.UTF_8));
+                return null;
+            }
+            log.info("Veo video indirildi (direkt): {} bytes", bytes.length);
+            return bytes;
+
+        } else {
+            log.warn("Veo indirme HTTP {}: {}", status1,
+                    new String(step1Response.body(), StandardCharsets.UTF_8));
             return null;
         }
-
-        byte[] bytes = httpResponse.body();
-        if (bytes.length < 10_000) {
-            log.warn("Veo: indirilen boyut çok küçük ({} bytes): {}", bytes.length,
-                    new String(bytes, StandardCharsets.UTF_8));
-            return null;
-        }
-
-        log.info("Veo video indirildi: {} bytes", bytes.length);
-        return bytes;
     }
 }
