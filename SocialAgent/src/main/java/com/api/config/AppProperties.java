@@ -218,8 +218,8 @@ public class AppProperties {
 		private String routingKey = "spectiqs.content";
 		// Maksimum düzenleme hakkı
 		private int editLimit = 3;
-		// Görsel üretim için Gemini modeli (responseModalities: IMAGE desteklemeli)
-		private String imageModel = "gemini-2.0-flash-preview-image-generation";
+		// Görsel üretim için OpenAI modeli
+		private String imageModel = "gpt-image-1";
 		// Reel video üretimi için Veo modeli
 		private String videoModel = "veo-3.1-generate-preview";
 		// Tarife (TL) — PAYMENT_ENABLED=true olduğunda uygulanır

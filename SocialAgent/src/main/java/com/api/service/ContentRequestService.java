@@ -91,6 +91,9 @@ public class ContentRequestService {
     public ContentCreateResponse create(UUID userId, ContentCreateRequest request) {
         // contentType validasyonu
         ContentType contentType = parseContentType(request.getContentType());
+        if (contentType == ContentType.REEL) {
+            throw new ApiException(ResponseCode.VALIDATION_ERROR, "REEL içerik üretimi şu an kullanılamıyor.");
+        }
 
         // Bakiye kontrolü (PAYMENT_ENABLED = true ise)
         BigDecimal price = priceFor(contentType);
@@ -158,16 +161,11 @@ public class ContentRequestService {
                     "Düzenleme hakkınız dolmuştur (maksimum " + editLimit + ").");
         }
 
-        // Eski görsel + metadata temizle (brand_dna_json korunur)
+        // Eski görsel + metadata KORUNUR — yeni üretim başarılı olursa üzerine yazar,
+        // başarısız olursa kullanıcı bir önceki başarılı içeriği görmeye devam eder.
         entity.setEditInstruction(request.getEditInstruction());
         entity.setEditCount(entity.getEditCount() + 1);
         entity.setStatus(ContentRequestStatus.PENDING);
-        entity.setVisualUrls(null);
-        entity.setCaption(null);
-        entity.setHashtags(null);
-        entity.setCta(null);
-        entity.setFirstComment(null);
-        entity.setSuggestedPostTime(null);
         entity.setProcessError(null);
         entity.setUpdatedDate(LocalDateTime.now());
 
