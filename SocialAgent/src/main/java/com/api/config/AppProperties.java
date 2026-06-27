@@ -194,8 +194,47 @@ public class AppProperties {
 		private String key = "";
 	}
 
+	// İçerik üretimi yapılandırması
+	private Content content = new Content();
+
+	// AWS S3 yapılandırması (görsel depolama)
+	private Aws aws = new Aws();
+
 	// FAZ PAYMENT: ödeme sistemi yapılandırması
 	private Payment payment = new Payment();
+
+	/**
+	 * İçerik üretimi yapılandırması.
+	 * Rapor bazlı görsel + caption üretim kuyruğu ayarları.
+	 */
+	@Getter
+	@Setter
+	public static class Content {
+		// İçerik üretim kuyruğu adı
+		private String queue = "spectiqs.content.queue";
+		// İçerik exchange adı
+		private String exchange = "spectiqs.content.exchange";
+		// Routing-key
+		private String routingKey = "spectiqs.content";
+		// Maksimum düzenleme hakkı
+		private int editLimit = 3;
+		// Görsel üretim için Gemini modeli (responseModalities: IMAGE desteklemeli)
+		private String imageModel = "gemini-2.0-flash-preview-image-generation";
+	}
+
+	/**
+	 * AWS S3 yapılandırması.
+	 * Üretilen görseller S3'e yüklenir; public URL döner.
+	 * Key'ler boşsa S3 yükleme atlanır (URL null kalır).
+	 */
+	@Getter
+	@Setter
+	public static class Aws {
+		private String region = "eu-central-1";
+		private String bucket = "trendora-content";
+		private String accessKeyId;
+		private String secretAccessKey;
+	}
 
 	/**
 	 * Ödeme kapısı yapılandırması.

@@ -106,6 +106,20 @@ app:
       model: ${GEMINI_MODEL:gemini-2.5-flash}
       temperature: ${GEMINI_TEMPERATURE:0.2}
       timeout-seconds: ${GEMINI_TIMEOUT_SECONDS:60}
+  # ===== İçerik üretimi: görsel + caption kuyruğu =====
+  content:
+    queue: ${CONTENT_QUEUE:spectiqs.content.queue}
+    exchange: ${CONTENT_EXCHANGE:spectiqs.content.exchange}
+    routing-key: ${CONTENT_ROUTING_KEY:spectiqs.content}
+    edit-limit: 3
+    # Gemini görsel üretim modeli (responseModalities: IMAGE desteklemeli)
+    image-model: ${CONTENT_IMAGE_MODEL:gemini-2.0-flash-preview-image-generation}
+  # ===== AWS S3: üretilen görsellerin depolanması =====
+  aws:
+    region: ${AWS_REGION:eu-central-1}
+    bucket: ${AWS_S3_BUCKET:trendora-content}
+    access-key-id: ${AWS_ACCESS_KEY_ID:}
+    secret-access-key: ${AWS_SECRET_ACCESS_KEY:}
   # ===== FAZ 8: Bildirim (mail + push) =====
   # Rapor tamamlanınca notification kaydı her zaman yazılır; mail/push kanalları aşağıdaki
   # bayraklarla açılır. SMTP verilmezse (spring.mail.host yok) mail otomatik atlanır.

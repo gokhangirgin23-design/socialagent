@@ -169,6 +169,43 @@ public class AiAnalysisService {
 	}
 
 	/**
+	 * Brand DNA JSON üretir (içerik üretimi için).
+	 * generateInsightJson ile aynı OpenAI modelini kullanır.
+	 * Model yoksa null döner → pipeline atlar.
+	 */
+	public String generateBrandDna(String prompt) {
+		if (openAiModel == null) {
+			log.debug("OpenAI modeli yok; Brand DNA üretimi atlandı.");
+			return null;
+		}
+		try {
+			String raw = openAiModel.chat(prompt);
+			return cleanJson(raw);
+		} catch (Exception ex) {
+			log.warn("OpenAI Brand DNA üretimi başarısız: hata={}", ex.getMessage());
+			return null;
+		}
+	}
+
+	/**
+	 * Caption, hashtag, CTA ve paylaşım zamanı JSON üretir (içerik üretimi için).
+	 * Model yoksa null döner → pipeline atlar.
+	 */
+	public String generateContentMetadata(String prompt) {
+		if (openAiModel == null) {
+			log.debug("OpenAI modeli yok; content metadata üretimi atlandı.");
+			return null;
+		}
+		try {
+			String raw = openAiModel.chat(prompt);
+			return cleanJson(raw);
+		} catch (Exception ex) {
+			log.warn("OpenAI content metadata üretimi başarısız: hata={}", ex.getMessage());
+			return null;
+		}
+	}
+
+	/**
 	 * Dashboard structured insight JSON üretir (V4).
 	 * generateReport ile aynı OpenAI modelini kullanır; çıktı cleanJson ile temizlenir.
 	 * Model yoksa (key boş / AI kapalı) null döner → çağıran sessizce atlar.
