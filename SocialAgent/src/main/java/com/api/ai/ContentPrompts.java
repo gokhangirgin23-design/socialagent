@@ -117,6 +117,7 @@ public final class ContentPrompts {
         sb.append("Görsellerde platform adları (reels, story, spectiqs vb.) OLMAYACAK.\n");
         sb.append("Gerçek kişilerin, ünlülerin veya tanınmış kişiliklerin isim ya da görüntülerine yer verme.\n");
         sb.append("Sadece ürün, mekân, soyut görsel ve animasyon kullan.\n");
+        sb.append("Videonun içinde hiçbir şekilde yazı olmayacak.\n");
 
         return sb.toString();
     }
