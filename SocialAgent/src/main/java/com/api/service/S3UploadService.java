@@ -1,6 +1,6 @@
 package com.api.service;
 
-import java.util.Base64;
+import java.time.Duration;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
@@ -16,6 +16,8 @@ import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 
 /**
  * AWS S3 görsel yükleme servisi.
@@ -32,6 +34,7 @@ public class S3UploadService {
     private final AppProperties appProperties;
 
     private S3Client s3Client;
+    private S3Presigner s3Presigner;
     private String bucket;
     private String region;
 
@@ -49,10 +52,18 @@ public class S3UploadService {
             return;
         }
 
+        StaticCredentialsProvider creds = StaticCredentialsProvider.create(
+                AwsBasicCredentials.create(accessKey, secretKey));
+        Region awsRegion = Region.of(region);
+
         this.s3Client = S3Client.builder()
-                .region(Region.of(region))
-                .credentialsProvider(StaticCredentialsProvider.create(
-                        AwsBasicCredentials.create(accessKey, secretKey)))
+                .region(awsRegion)
+                .credentialsProvider(creds)
+                .build();
+
+        this.s3Presigner = S3Presigner.builder()
+                .region(awsRegion)
+                .credentialsProvider(creds)
                 .build();
 
         log.info("S3 client hazır: bucket={}, region={}", bucket, region);
@@ -69,40 +80,48 @@ public class S3UploadService {
      * @return "https://{bucket}.s3.{region}.amazonaws.com/{key}" veya null
      */
     public String upload(byte[] imageBytes, UUID userId, UUID contentRequestId, int index) {
-        if (imageBytes == null) {
+        if (imageBytes == null) return null;
+        if (s3Client == null) {
+            log.warn("S3 kapalı; görsel yüklenemedi: contentRequestId={}, index={}", contentRequestId, index);
             return null;
         }
-        // Gerçek MIME type'ı byte magic number'dan tespit et
         String mimeType = detectMimeType(imageBytes);
         String ext = mimeType.equals("image/jpeg") ? "jpg" : mimeType.equals("image/webp") ? "webp" : "png";
-
-        // DB'ye her zaman data URL kaydet — tarayıcı S3 erişim izni olmadan da görebilsin
-        String dataUrl = "data:" + mimeType + ";base64," + Base64.getEncoder().encodeToString(imageBytes);
-
-        // S3 varsa yedek olarak yükle (CDN/arşiv amaçlı)
-        if (s3Client != null) {
-            try {
-                String key = "content/%s/%s/image_%d.%s".formatted(userId, contentRequestId, index, ext);
-                s3Client.putObject(
-                        PutObjectRequest.builder().bucket(bucket).key(key).contentType(mimeType).build(),
-                        RequestBody.fromBytes(imageBytes));
-                log.info("Görsel S3'e yedeklendi: key={}, mimeType={}", key, mimeType);
-            } catch (Exception ex) {
-                log.warn("S3 yedekleme başarısız (data URL kullanılacak): contentRequestId={}, hata={}",
-                        contentRequestId, ex.getMessage());
-            }
+        String key = "content/%s/%s/image_%d.%s".formatted(userId, contentRequestId, index, ext);
+        try {
+            s3Client.putObject(
+                    PutObjectRequest.builder().bucket(bucket).key(key).contentType(mimeType).build(),
+                    RequestBody.fromBytes(imageBytes));
+            String s3Url = "https://%s.s3.%s.amazonaws.com/%s".formatted(bucket, region, key);
+            log.info("Görsel S3'e yüklendi: key={}", key);
+            return s3Url;
+        } catch (Exception ex) {
+            log.error("S3 yükleme başarısız: contentRequestId={}, index={}, hata={}", contentRequestId, index, ex.getMessage());
+            return null;
         }
+    }
 
-        return dataUrl;
+    /** S3 URL'ini 1 saatlik pre-signed URL'e çevirir. data: URL ise dokunmaz. */
+    public String presign(String s3Url) {
+        if (s3Presigner == null || s3Url == null || s3Url.startsWith("data:")) return s3Url;
+        String prefix = "https://" + bucket + ".s3." + region + ".amazonaws.com/";
+        if (!s3Url.startsWith(prefix)) return s3Url;
+        String key = s3Url.substring(prefix.length());
+        try {
+            return s3Presigner.presignGetObject(GetObjectPresignRequest.builder()
+                    .signatureDuration(Duration.ofHours(1))
+                    .getObjectRequest(r -> r.bucket(bucket).key(key))
+                    .build()).url().toString();
+        } catch (Exception ex) {
+            log.warn("Pre-signed URL oluşturulamadı: key={}, hata={}", key, ex.getMessage());
+            return s3Url;
+        }
     }
 
     private String detectMimeType(byte[] bytes) {
         if (bytes.length >= 4) {
-            // PNG: 89 50 4E 47
             if ((bytes[0] & 0xFF) == 0x89 && bytes[1] == 0x50) return "image/png";
-            // JPEG: FF D8
             if ((bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xFF) == 0xD8) return "image/jpeg";
-            // WEBP: RIFF....WEBP
             if (bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46
                     && bytes.length >= 12 && bytes[8] == 0x57 && bytes[9] == 0x45) return "image/webp";
         }

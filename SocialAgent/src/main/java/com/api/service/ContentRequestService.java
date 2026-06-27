@@ -45,6 +45,7 @@ public class ContentRequestService {
     private final JdbcTemplate jdbcTemplate;
     private final AppProperties appProperties;
     private final PaymentService paymentService;
+    private final S3UploadService s3UploadService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -295,7 +296,9 @@ public class ContentRequestService {
     private List<String> parseVisualUrls(String json) {
         if (json == null || json.isBlank()) return new ArrayList<>();
         try {
-            return objectMapper.readValue(json, new TypeReference<List<String>>() {});
+            List<String> urls = objectMapper.readValue(json, new TypeReference<List<String>>() {});
+            // S3 URL'lerini pre-signed URL'e çevir (private bucket erişimi için)
+            return urls.stream().map(s3UploadService::presign).collect(java.util.stream.Collectors.toList());
         } catch (Exception ex) {
             return new ArrayList<>();
         }
