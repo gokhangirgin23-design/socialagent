@@ -12,6 +12,7 @@ import java.math.BigDecimal;
 
 import com.api.ai.AiAnalysisService;
 import com.api.ai.ContentPrompts;
+import com.api.ai.GeminiImageService;
 import com.api.ai.OpenAiImageService;
 import com.api.ai.VeoVideoService;
 import com.api.config.AppProperties;
@@ -47,6 +48,7 @@ public class ContentPipelineService {
     private final JdbcTemplate jdbcTemplate;
     private final AiAnalysisService aiAnalysisService;
     private final OpenAiImageService openAiImageService;
+    private final GeminiImageService geminiImageService;
     private final VeoVideoService veoVideoService;
     private final S3UploadService s3UploadService;
     private final ContentRequestService contentRequestService;
@@ -91,7 +93,7 @@ public class ContentPipelineService {
             // Görsel/video üretim servisi aktifken üretim başarısızsa FAILED — bakiye düşülmez
             boolean imageServiceActive = req.getContentType() == ContentType.REEL
                     ? veoVideoService.isActive()
-                    : openAiImageService.isActive();
+                    : openAiImageService.isActive() || geminiImageService.isActive();
             if (imageServiceActive && visual.anyFailed()) {
                 String err = "Görsel üretimi başarısız oldu (" + visual.failCount() + "/" + visual.expected() + " görsel üretilemedi)";
                 log.warn("İçerik FAILED: contentRequestId={}, sebep={}", contentRequestId, err);
@@ -222,6 +224,13 @@ public class ContentPipelineService {
     private String generateAndUpload(ContentRequest req, String prompt, int index) {
         String size = sizeForType(req.getContentType());
         byte[] imageBytes = openAiImageService.generateImage(prompt, req.getProductImageUrl(), size);
+
+        if (imageBytes == null && geminiImageService.isActive()) {
+            log.warn("OpenAI görsel başarısız; Gemini fallback deneniyor: contentRequestId={}, index={}",
+                    req.getContentRequestId(), index);
+            imageBytes = geminiImageService.generateImage(prompt, req.getProductImageUrl());
+        }
+
         if (imageBytes == null) {
             log.warn("Görsel üretilemedi: contentRequestId={}, index={}", req.getContentRequestId(), index);
             return null;
