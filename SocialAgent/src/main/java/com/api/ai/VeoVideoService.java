@@ -1,5 +1,6 @@
 package com.api.ai;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -178,13 +179,21 @@ public class VeoVideoService {
             return null;
         }
 
-        log.info("Veo video indiriliyor: {}", videoUri.substring(0, Math.min(80, videoUri.length())));
+        log.info("Veo video URI: {}", videoUri);
 
-        // Files API URL ise alt=media ekle; aksi hâlde direkt indir
+        // SimpleClientHttpRequestFactory redirect'te x-goog-api-key header'ını strip eder
+        // (Cloud Storage'a yönlendirme). key= query param redirect'te korunur — her ikisini ekle.
+        String sep = videoUri.contains("?") ? "&" : "?";
         String downloadUrl = videoUri;
         if (!downloadUrl.contains("alt=media")) {
-            downloadUrl += (downloadUrl.contains("?") ? "&" : "?") + "alt=media";
+            downloadUrl += sep + "alt=media";
+            sep = "&";
         }
+        if (!downloadUrl.contains("key=")) {
+            downloadUrl += sep + "key=" + apiKey;
+        }
+
+        log.info("Veo indirme başlıyor: {}", downloadUrl.replaceAll("key=[^&]+", "key=***"));
 
         byte[] bytes = RestClient.builder()
                 .defaultHeader("x-goog-api-key", apiKey)
@@ -193,6 +202,13 @@ public class VeoVideoService {
                 .uri(downloadUrl)
                 .retrieve()
                 .body(byte[].class);
+
+        if (bytes != null && bytes.length < 10_000) {
+            // Küçük yanıt → muhtemelen hata JSON'u (video MB seviyesinde olmalı)
+            log.warn("Veo: indirilen boyut çok küçük ({} bytes) — hata yanıtı olabilir: {}",
+                    bytes.length, new String(bytes, StandardCharsets.UTF_8));
+            return null;
+        }
 
         log.info("Veo video indirildi: {} bytes", bytes == null ? 0 : bytes.length);
         return bytes;
