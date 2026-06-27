@@ -205,7 +205,7 @@ public class ContentPipelineService {
     }
 
     private String generateAndUploadVideo(ContentRequest req, String prompt) {
-        byte[] videoBytes = veoVideoService.generateVideo(prompt);
+        byte[] videoBytes = veoVideoService.generateVideo(prompt, req.getProductImageUrl());
         if (videoBytes == null) {
             // Veo pasifse Gemini ile statik görsel fallback
             if (!veoVideoService.isActive()) {

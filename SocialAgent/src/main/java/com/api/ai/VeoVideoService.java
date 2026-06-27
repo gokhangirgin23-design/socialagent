@@ -6,6 +6,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Base64;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -79,18 +81,21 @@ public class VeoVideoService {
     }
 
     /**
-     * Prompt'a göre 9:16 dikey, 8 saniyelik Reel videosu üretir.
+     * Prompt ve opsiyonel ürün görseline göre 9:16 dikey Reel videosu üretir.
      *
+     * @param productImageUrl data URL veya HTTP URL (null olabilir; varsa Veo'ya referans görsel gönderilir)
      * @return MP4 byte dizisi; hata veya servis pasif ise null
      */
-    public byte[] generateVideo(String prompt) {
+    public byte[] generateVideo(String prompt, String productImageUrl) {
         if (restClient == null) {
             log.info("Veo service aktif değil; video üretimi atlandı.");
             return null;
         }
         try {
+            Map<String, Object> instance = buildInstance(prompt, productImageUrl);
+
             Map<String, Object> body = Map.of(
-                    "instances",  List.of(Map.of("prompt", prompt)),
+                    "instances",  List.of(instance),
                     "parameters", Map.of(
                             "aspectRatio",     ASPECT_RATIO,
                             "resolution",      RESOLUTION,
@@ -125,6 +130,53 @@ public class VeoVideoService {
             log.error("Veo video üretimi başarısız: {}", ex.getMessage(), ex);
             return null;
         }
+    }
+
+    // ============================================================
+    // Instance builder (prompt + opsiyonel ürün görseli)
+    // ============================================================
+
+    private Map<String, Object> buildInstance(String prompt, String productImageUrl) {
+        Map<String, Object> instance = new HashMap<>();
+        instance.put("prompt", prompt);
+
+        if (productImageUrl == null || productImageUrl.isBlank()) {
+            return instance;
+        }
+        try {
+            String base64;
+            String mimeType = "image/jpeg";
+
+            if (productImageUrl.startsWith("data:")) {
+                // data:[mimeType];base64,[data]
+                int commaIdx = productImageUrl.indexOf(',');
+                String header = productImageUrl.substring(5, commaIdx); // "image/jpeg;base64"
+                mimeType = header.split(";")[0];
+                base64 = productImageUrl.substring(commaIdx + 1);
+            } else {
+                // HTTP / S3 URL — indir ve encode et
+                HttpClient dlClient = HttpClient.newBuilder()
+                        .connectTimeout(Duration.ofSeconds(30))
+                        .followRedirects(HttpClient.Redirect.ALWAYS)
+                        .build();
+                HttpResponse<byte[]> dlResp = dlClient.send(
+                        HttpRequest.newBuilder().uri(URI.create(productImageUrl)).GET().build(),
+                        HttpResponse.BodyHandlers.ofByteArray());
+                if (dlResp.statusCode() != 200) {
+                    log.warn("Veo: ürün görseli indirilemedi (HTTP {}); görsel olmadan devam.", dlResp.statusCode());
+                    return instance;
+                }
+                base64 = Base64.getEncoder().encodeToString(dlResp.body());
+                if (productImageUrl.toLowerCase().contains(".png")) mimeType = "image/png";
+                else if (productImageUrl.toLowerCase().contains(".webp")) mimeType = "image/webp";
+            }
+
+            instance.put("image", Map.of("bytesBase64Encoded", base64, "mimeType", mimeType));
+            log.info("Veo: ürün görseli referans olarak eklendi (mimeType={})", mimeType);
+        } catch (Exception ex) {
+            log.warn("Veo: ürün görseli eklenemedi (görsel olmadan devam): {}", ex.getMessage());
+        }
+        return instance;
     }
 
     // ============================================================
