@@ -1,6 +1,11 @@
 package com.api.ai;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -191,36 +196,43 @@ public class VeoVideoService {
 
         log.info("Veo video URI: {}", videoUri);
 
-        // SimpleClientHttpRequestFactory redirect'te x-goog-api-key header'ını strip eder
-        // (Cloud Storage'a yönlendirme). key= query param redirect'te korunur — her ikisini ekle.
-        String sep = videoUri.contains("?") ? "&" : "?";
-        String downloadUrl = videoUri;
-        if (!downloadUrl.contains("alt=media")) {
-            downloadUrl += sep + "alt=media";
-            sep = "&";
-        }
-        if (!downloadUrl.contains("key=")) {
-            downloadUrl += sep + "key=" + apiKey;
-        }
+        // Veo response URI formatı: "files/{id}:download?alt=media"
+        // :download custom metodu GCS redirect'e yönlendiriyor; standart Files API formatını kullan.
+        String fileBase = videoUri.replaceAll(":download.*$", "").replaceAll("\\?.*$", "");
+        String downloadUrl = fileBase + "?alt=media&key=" + apiKey;
 
         log.info("Veo indirme başlıyor: {}", downloadUrl.replaceAll("key=[^&]+", "key=***"));
 
-        byte[] bytes = RestClient.builder()
-                .defaultHeader("x-goog-api-key", apiKey)
-                .build()
-                .get()
-                .uri(downloadUrl)
-                .retrieve()
-                .body(byte[].class);
+        // Java 11 HttpClient: ALWAYS redirect — cross-domain yönlendirmede headerlar korunur.
+        // SimpleClientHttpRequestFactory/HttpURLConnection, farklı host'a redirect'te headerları strip eder.
+        HttpClient httpClient = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.ALWAYS)
+                .connectTimeout(Duration.ofSeconds(30))
+                .build();
 
-        if (bytes != null && bytes.length < 10_000) {
-            // Küçük yanıt → muhtemelen hata JSON'u (video MB seviyesinde olmalı)
-            log.warn("Veo: indirilen boyut çok küçük ({} bytes) — hata yanıtı olabilir: {}",
-                    bytes.length, new String(bytes, StandardCharsets.UTF_8));
+        HttpRequest httpRequest = HttpRequest.newBuilder()
+                .uri(URI.create(downloadUrl))
+                .header("x-goog-api-key", apiKey)
+                .GET()
+                .build();
+
+        HttpResponse<byte[]> httpResponse = httpClient.send(httpRequest,
+                HttpResponse.BodyHandlers.ofByteArray());
+
+        if (httpResponse.statusCode() != 200) {
+            log.warn("Veo indirme HTTP {}: {}", httpResponse.statusCode(),
+                    new String(httpResponse.body(), StandardCharsets.UTF_8));
             return null;
         }
 
-        log.info("Veo video indirildi: {} bytes", bytes == null ? 0 : bytes.length);
+        byte[] bytes = httpResponse.body();
+        if (bytes.length < 10_000) {
+            log.warn("Veo: indirilen boyut çok küçük ({} bytes): {}", bytes.length,
+                    new String(bytes, StandardCharsets.UTF_8));
+            return null;
+        }
+
+        log.info("Veo video indirildi: {} bytes", bytes.length);
         return bytes;
     }
 }
