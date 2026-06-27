@@ -79,7 +79,7 @@ public class GeminiImageService {
      */
     public byte[] generateImage(String textPrompt, String productImageUrl) {
         if (restClient == null) {
-            log.debug("Gemini image service aktif değil; görsel üretim atlandı.");
+            log.info("Gemini image service aktif değil (API key tanımlı değil); görsel üretim atlandı.");
             return null;
         }
         try {

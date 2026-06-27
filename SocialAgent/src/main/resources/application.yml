@@ -54,6 +54,9 @@ management:
   endpoint:
     health:
       show-details: always
+  health:
+    mail:
+      enabled: false
 
 # ===== Uygulama bazlı ayarlar (FAZ 1: JWT + Google SSO) =====
 app:
