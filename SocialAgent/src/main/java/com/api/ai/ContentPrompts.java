@@ -115,6 +115,8 @@ public final class ContentPrompts {
         sb.append("Video akıcı, dinamik ve estetik olmalı; modern geçiş efektleri kullanılabilir.\n");
         sb.append("Ürünü veya marka kimliğini görsel olarak güçlü biçimde vurgula.\n");
         sb.append("Görsellerde platform adları (reels, story, spectiqs vb.) OLMAYACAK.\n");
+        sb.append("Gerçek kişilerin, ünlülerin veya tanınmış kişiliklerin isim ya da görüntülerine yer verme.\n");
+        sb.append("Sadece ürün, mekân, soyut görsel ve animasyon kullan.\n");
 
         return sb.toString();
     }

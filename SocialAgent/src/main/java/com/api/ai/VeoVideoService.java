@@ -169,7 +169,17 @@ public class VeoVideoService {
         }
 
         if (samples.isMissingNode() || samples.isEmpty()) {
-            log.warn("Veo: generatedSamples bulunamadı. response: {}", response.toString().substring(0, Math.min(300, response.toString().length())));
+            // RAI (Responsible AI) filtre kontrolü
+            JsonNode gvr = response.path("generateVideoResponse");
+            int filtered = gvr.path("raiMediaFilteredCount").asInt(0);
+            if (filtered > 0) {
+                JsonNode reasons = gvr.path("raiMediaFilteredReasons");
+                log.warn("Veo: video Responsible AI filtresi tarafından engellendi ({}). Neden: {}",
+                        filtered, reasons);
+            } else {
+                log.warn("Veo: generatedSamples bulunamadı. response: {}",
+                        response.toString().substring(0, Math.min(400, response.toString().length())));
+            }
             return null;
         }
 
