@@ -70,6 +70,15 @@ public class NotificationService {
             return;
         }
 
+        // Idempotency: pipeline tekrar çalışırsa (requeue vb.) çift mail gitmesin.
+        Long existingMail = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM notification WHERE reference_id = ? AND channel = 'MAIL' AND success = 1",
+                Long.class, target.reportId());
+        if (existingMail != null && existingMail > 0) {
+            log.info("Mail bildirimi zaten gönderilmiş, atlandı: reportId={}", target.reportId());
+            return;
+        }
+
         // Ortak bildirim metni
         LocalDateTime now = LocalDateTime.now();
         String title = "Raporunuz hazır";

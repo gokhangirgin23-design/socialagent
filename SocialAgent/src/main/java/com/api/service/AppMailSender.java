@@ -1,6 +1,7 @@
 package com.api.service;
 
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Component;
@@ -35,6 +36,13 @@ public class AppMailSender {
     // app.notification ayarları (enabled bayrağı, from adresi)
     private final AppProperties appProperties;
 
+    // SMTP kimlik bilgileri: boşsa AuthenticationException oluşmadan erken çıkış yapılır
+    @Value("${spring.mail.username:}")
+    private String smtpUsername;
+
+    @Value("${spring.mail.password:}")
+    private String smtpPassword;
+
     /**
      * HTML gövdeli, opsiyonel PDF ekli e-posta gönderir.
      *
@@ -63,7 +71,12 @@ public class AppMailSender {
             log.debug("JavaMailSender yapılandırılmamış (spring.mail.host yok), mail atlandı: to={}", to);
             return SendResult.fail("JavaMailSender yapılandırılmamış (spring.mail.host yok)");
         }
-        // 4) HTML + opsiyonel ek ile MimeMessage gönder
+        // 4) SMTP kimlik bilgileri eksikse bağlanmayı dene → AuthenticationException oluşmadan çık
+        if (smtpPassword == null || smtpPassword.isBlank()) {
+            log.warn("SMTP şifresi tanımlı değil (MAIL_PASSWORD), mail atlandı: to={}", to);
+            return SendResult.fail("SMTP şifresi tanımlı değil (MAIL_PASSWORD eksik)");
+        }
+        // 5) HTML + opsiyonel ek ile MimeMessage gönder
         try {
             MimeMessage mimeMsg = javaMailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(mimeMsg, true, "UTF-8");
