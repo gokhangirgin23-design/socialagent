@@ -72,17 +72,21 @@ public class S3UploadService {
         if (imageBytes == null) {
             return null;
         }
+        // Gerçek MIME type'ı byte magic number'dan tespit et
+        String mimeType = detectMimeType(imageBytes);
+        String ext = mimeType.equals("image/jpeg") ? "jpg" : mimeType.equals("image/webp") ? "webp" : "png";
+
         // DB'ye her zaman data URL kaydet — tarayıcı S3 erişim izni olmadan da görebilsin
-        String dataUrl = "data:image/png;base64," + Base64.getEncoder().encodeToString(imageBytes);
+        String dataUrl = "data:" + mimeType + ";base64," + Base64.getEncoder().encodeToString(imageBytes);
 
         // S3 varsa yedek olarak yükle (CDN/arşiv amaçlı)
         if (s3Client != null) {
             try {
-                String key = "content/%s/%s/image_%d.png".formatted(userId, contentRequestId, index);
+                String key = "content/%s/%s/image_%d.%s".formatted(userId, contentRequestId, index, ext);
                 s3Client.putObject(
-                        PutObjectRequest.builder().bucket(bucket).key(key).contentType("image/png").build(),
+                        PutObjectRequest.builder().bucket(bucket).key(key).contentType(mimeType).build(),
                         RequestBody.fromBytes(imageBytes));
-                log.info("Görsel S3'e yedeklendi: key={}", key);
+                log.info("Görsel S3'e yedeklendi: key={}, mimeType={}", key, mimeType);
             } catch (Exception ex) {
                 log.warn("S3 yedekleme başarısız (data URL kullanılacak): contentRequestId={}, hata={}",
                         contentRequestId, ex.getMessage());
@@ -90,5 +94,18 @@ public class S3UploadService {
         }
 
         return dataUrl;
+    }
+
+    private String detectMimeType(byte[] bytes) {
+        if (bytes.length >= 4) {
+            // PNG: 89 50 4E 47
+            if ((bytes[0] & 0xFF) == 0x89 && bytes[1] == 0x50) return "image/png";
+            // JPEG: FF D8
+            if ((bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xFF) == 0xD8) return "image/jpeg";
+            // WEBP: RIFF....WEBP
+            if (bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46
+                    && bytes.length >= 12 && bytes[8] == 0x57 && bytes[9] == 0x45) return "image/webp";
+        }
+        return "image/png";
     }
 }
