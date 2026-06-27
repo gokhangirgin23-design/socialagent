@@ -115,7 +115,7 @@ app:
     exchange: ${CONTENT_EXCHANGE:spectiqs.content.exchange}
     routing-key: ${CONTENT_ROUTING_KEY:spectiqs.content}
     edit-limit: 3
-    image-model: ${CONTENT_IMAGE_MODEL:gemini-2.0-flash-preview-image-generation}
+    image-model: ${CONTENT_IMAGE_MODEL:gemini-2.5-flash-image}
     price-post: ${CONTENT_PRICE_POST:100}
     price-story: ${CONTENT_PRICE_STORY:100}
     price-carousel: ${CONTENT_PRICE_CAROUSEL:120}

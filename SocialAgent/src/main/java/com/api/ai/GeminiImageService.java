@@ -77,6 +77,10 @@ public class GeminiImageService {
      * @param productImageUrl ürün görseli URL'i (null olabilir)
      * @return PNG byte dizisi; hata veya model yoksa null
      */
+    public boolean isActive() {
+        return restClient != null;
+    }
+
     public byte[] generateImage(String textPrompt, String productImageUrl) {
         if (restClient == null) {
             log.info("Gemini image service aktif değil (API key tanımlı değil); görsel üretim atlandı.");

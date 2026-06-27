@@ -84,8 +84,17 @@ public class ContentPipelineService {
             }
 
             // Görsel üretim + S3 yükleme
-            List<String> visualUrls = generateAndUploadVisuals(req, brandDna, reportContent);
-            req.setVisualUrls(toJsonArray(visualUrls));
+            VisualResult visual = generateAndUploadVisuals(req, brandDna, reportContent);
+
+            // Gemini aktifken herhangi bir görsel üretilemezse FAILED — bakiye düşülmez
+            if (geminiImageService.isActive() && visual.anyFailed()) {
+                String err = "Görsel üretimi başarısız oldu (" + visual.failCount() + "/" + visual.expected() + " görsel üretilemedi)";
+                log.warn("İçerik FAILED: contentRequestId={}, sebep={}", contentRequestId, err);
+                markFinished(req, ContentRequestStatus.FAILED, err);
+                return;
+            }
+
+            req.setVisualUrls(toJsonArray(visual.urls()));
 
             // Caption + hashtag + CTA
             applyContentMetadata(req, brandDna, reportContent);
@@ -93,7 +102,7 @@ public class ContentPipelineService {
             markFinished(req, ContentRequestStatus.COMPLETED, null);
             log.info("İçerik üretimi tamamlandı: contentRequestId={}", contentRequestId);
 
-            // Ödeme: COMPLETED olunca bakiyeyi düş (hata pipeline'ı bozmaz)
+            // Ödeme: yalnızca COMPLETED olunca bakiyeyi düş (hata pipeline'ı bozmaz)
             if (appProperties.getPayment().isEnabled()) {
                 try {
                     BigDecimal price = contentRequestService.priceFor(req.getContentType());
@@ -158,12 +167,16 @@ public class ContentPipelineService {
     // Görsel üretim + S3
     // ============================================================
 
-    private List<String> generateAndUploadVisuals(ContentRequest req, String brandDna, String reportContent) {
+    private record VisualResult(List<String> urls, int expected) {
+        boolean anyFailed() { return urls.size() < expected; }
+        int failCount()     { return expected - urls.size(); }
+    }
+
+    private VisualResult generateAndUploadVisuals(ContentRequest req, String brandDna, String reportContent) {
         ContentType type = req.getContentType();
         List<String> urls = new ArrayList<>();
 
         if (type == ContentType.CAROUSEL) {
-            // 3 slayt: HOOK, CONTENT, CTA
             String[] roles = {"HOOK", "CONTENT", "CTA"};
             for (int i = 0; i < roles.length; i++) {
                 String prompt = ContentPrompts.forVisual(brandDna, reportContent, "CAROUSEL", i, roles[i],
@@ -171,15 +184,14 @@ public class ContentPipelineService {
                 String url = generateAndUpload(req, prompt, i);
                 if (url != null) urls.add(url);
             }
+            return new VisualResult(urls, roles.length);
         } else {
-            String typeName = type.name();
-            String prompt = ContentPrompts.forVisual(brandDna, reportContent, typeName, 0, null,
+            String prompt = ContentPrompts.forVisual(brandDna, reportContent, type.name(), 0, null,
                     req.isIncludeTextInVisual());
             String url = generateAndUpload(req, prompt, 0);
             if (url != null) urls.add(url);
+            return new VisualResult(urls, 1);
         }
-
-        return urls;
     }
 
     private String generateAndUpload(ContentRequest req, String prompt, int index) {
