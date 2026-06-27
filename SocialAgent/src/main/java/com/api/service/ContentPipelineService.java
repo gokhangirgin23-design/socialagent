@@ -8,6 +8,8 @@ import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+
 import com.api.ai.AiAnalysisService;
 import com.api.ai.ContentPrompts;
 import com.api.ai.GeminiImageService;
@@ -45,6 +47,9 @@ public class ContentPipelineService {
     private final AiAnalysisService aiAnalysisService;
     private final GeminiImageService geminiImageService;
     private final S3UploadService s3UploadService;
+    private final ContentRequestService contentRequestService;
+    private final PaymentService paymentService;
+    private final AppProperties appProperties;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -87,6 +92,17 @@ public class ContentPipelineService {
 
             markFinished(req, ContentRequestStatus.COMPLETED, null);
             log.info("İçerik üretimi tamamlandı: contentRequestId={}", contentRequestId);
+
+            // Ödeme: COMPLETED olunca bakiyeyi düş (hata pipeline'ı bozmaz)
+            if (appProperties.getPayment().isEnabled()) {
+                try {
+                    BigDecimal price = contentRequestService.priceFor(req.getContentType());
+                    paymentService.tryDebit(req.getUserId(), price, req.getContentRequestId());
+                } catch (Exception ex) {
+                    log.warn("İçerik ödeme düşümü başarısız (üretim etkilenmez): id={}, hata={}",
+                            contentRequestId, ex.getMessage());
+                }
+            }
 
         } catch (Exception ex) {
             log.error("İçerik üretimi başarısız: contentRequestId={}, hata={}", contentRequestId, ex.getMessage(), ex);
@@ -207,7 +223,7 @@ public class ContentPipelineService {
     // ============================================================
 
     private String loadReportContent(UUID reportId) {
-        String sql = "SELECT report_content FROM report WHERE report_id = ? AND active = 1";
+        String sql = "SELECT report_content FROM report WHERE report_id = ?";
         try {
             List<String> rows = jdbcTemplate.queryForList(sql, String.class, reportId);
             return rows.isEmpty() ? null : rows.get(0);

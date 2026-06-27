@@ -220,6 +220,12 @@ public class AppProperties {
 		private int editLimit = 3;
 		// Görsel üretim için Gemini modeli (responseModalities: IMAGE desteklemeli)
 		private String imageModel = "gemini-2.0-flash-preview-image-generation";
+		// Tarife (TL) — PAYMENT_ENABLED=true olduğunda uygulanır
+		private int pricePost = 100;
+		private int priceStory = 100;
+		private int priceCarousel = 120;
+		private int priceReel = 150;
+		private int priceAll = 300;
 	}
 
 	/**

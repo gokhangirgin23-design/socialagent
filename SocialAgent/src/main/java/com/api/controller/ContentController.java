@@ -1,6 +1,7 @@
 package com.api.controller;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.web.bind.annotation.PostMapping;
@@ -11,6 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.api.common.DataResponse;
 import com.api.common.ResponseCode;
 import com.api.dto.ContentCreateRequest;
+import com.api.dto.ContentCreateResponse;
 import com.api.dto.ContentEditRequest;
 import com.api.dto.ContentListRequest;
 import com.api.dto.ContentRequestDto;
@@ -36,16 +38,28 @@ public class ContentController {
     private final ContentRequestService contentRequestService;
 
     /**
+     * Kullanılabilir içerik tiplerini, fiyatlarını ve mevcut bakiyeyi döner.
+     * Endpoint: POST /content/available-types
+     */
+    @Operation(summary = "İçerik tipleri ve fiyatlar",
+            description = "Kullanılabilir içerik tiplerini, birim fiyatlarını ve kullanıcı bakiyesini döner.")
+    @PostMapping("/available-types")
+    public DataResponse<Map<String, Object>> availableTypes() {
+        UUID userId = SecurityUtil.getCurrentUserId();
+        return DataResponse.success(contentRequestService.availableTypes(userId));
+    }
+
+    /**
      * Rapor üzerinden yeni içerik üretim isteği başlatır.
      * Endpoint: POST /content/create
      */
     @Operation(summary = "İçerik üretim isteği oluştur",
             description = "Seçilen rapor ve içerik tipine göre görsel + caption üretimini başlatır.")
     @PostMapping("/create")
-    public DataResponse<UUID> create(@Valid @RequestBody ContentCreateRequest request) {
+    public DataResponse<ContentCreateResponse> create(@Valid @RequestBody ContentCreateRequest request) {
         UUID userId = SecurityUtil.getCurrentUserId();
-        UUID contentRequestId = contentRequestService.create(userId, request);
-        return DataResponse.success(contentRequestId);
+        ContentCreateResponse response = contentRequestService.create(userId, request);
+        return DataResponse.success(response);
     }
 
     /**

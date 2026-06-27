@@ -114,6 +114,11 @@ app:
     edit-limit: 3
     # Gemini görsel üretim modeli (responseModalities: IMAGE desteklemeli)
     image-model: ${CONTENT_IMAGE_MODEL:gemini-2.0-flash-preview-image-generation}
+    price-post: ${CONTENT_PRICE_POST:100}
+    price-story: ${CONTENT_PRICE_STORY:100}
+    price-carousel: ${CONTENT_PRICE_CAROUSEL:120}
+    price-reel: ${CONTENT_PRICE_REEL:150}
+    price-all: ${CONTENT_PRICE_ALL:300}
   # ===== AWS S3: üretilen görsellerin depolanması =====
   aws:
     region: ${AWS_REGION:eu-north-1}

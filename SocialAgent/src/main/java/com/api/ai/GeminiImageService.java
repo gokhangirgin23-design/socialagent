@@ -105,12 +105,21 @@ public class GeminiImageService {
         // Ürün görseli varsa modele gönder (base64 inline)
         if (productImageUrl != null && !productImageUrl.isBlank()) {
             try {
-                byte[] imageBytes = downloadBytes(productImageUrl);
-                String base64 = Base64.getEncoder().encodeToString(imageBytes);
-                String mimeType = detectMimeType(productImageUrl);
-                parts.add(Map.of("inline_data", Map.of("mime_type", mimeType, "data", base64)));
+                if (productImageUrl.startsWith("data:")) {
+                    // Frontend'den gelen data URI: data:image/jpeg;base64,/9j/...
+                    int comma = productImageUrl.indexOf(',');
+                    String header = productImageUrl.substring(5, comma);         // image/jpeg;base64
+                    String mimeType = header.split(";")[0];                      // image/jpeg
+                    String base64 = productImageUrl.substring(comma + 1);
+                    parts.add(Map.of("inline_data", Map.of("mime_type", mimeType, "data", base64)));
+                } else {
+                    byte[] imageBytes = downloadBytes(productImageUrl);
+                    String base64 = Base64.getEncoder().encodeToString(imageBytes);
+                    String mimeType = detectMimeType(productImageUrl);
+                    parts.add(Map.of("inline_data", Map.of("mime_type", mimeType, "data", base64)));
+                }
             } catch (Exception ex) {
-                log.warn("Ürün görseli indirilemedi, atlanıyor: url={}, hata={}", productImageUrl, ex.getMessage());
+                log.warn("Ürün görseli işlenemedi, atlanıyor: hata={}", ex.getMessage());
             }
         }
 

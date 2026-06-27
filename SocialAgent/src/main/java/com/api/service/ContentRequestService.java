@@ -1,9 +1,12 @@
 package com.api.service;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -13,6 +16,7 @@ import com.api.common.ApiException;
 import com.api.common.ResponseCode;
 import com.api.config.AppProperties;
 import com.api.dto.ContentCreateRequest;
+import com.api.dto.ContentCreateResponse;
 import com.api.dto.ContentEditRequest;
 import com.api.dto.ContentRequestDto;
 import com.api.dto.repository.ContentRequestRepository;
@@ -40,6 +44,7 @@ public class ContentRequestService {
     private final ContentQueueProducer contentQueueProducer;
     private final JdbcTemplate jdbcTemplate;
     private final AppProperties appProperties;
+    private final PaymentService paymentService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -48,13 +53,53 @@ public class ContentRequestService {
     // ============================================================
 
     /**
-     * Yeni içerik üretim isteği oluşturur ve kuyruğa basar.
-     *
-     * @return oluşturulan content_request_id
+     * Kullanılabilir içerik tiplerini, fiyatlarını ve kullanıcının bakiyesini döner.
+     * Endpoint: POST /content/available-types
      */
-    public UUID create(UUID userId, ContentCreateRequest request) {
+    public Map<String, Object> availableTypes(UUID userId) {
+        BigDecimal balance = paymentService.getBalance(userId);
+        AppProperties.Content cfg = appProperties.getContent();
+        List<Map<String, Object>> types = List.of(
+                typeEntry("POST",     "Post",          cfg.getPricePost()),
+                typeEntry("STORY",    "Story",         cfg.getPriceStory()),
+                typeEntry("CAROUSEL", "Carousel",      cfg.getPriceCarousel()),
+                typeEntry("REEL",     "Reel",          cfg.getPriceReel()),
+                typeEntry("ALL",      "Tüm Formatlar", cfg.getPriceAll())
+        );
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("currency", "TL");
+        result.put("balance", balance);
+        result.put("types", types);
+        return result;
+    }
+
+    private Map<String, Object> typeEntry(String value, String label, int priceTl) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("type", value);
+        m.put("label", label);
+        m.put("price", new BigDecimal(priceTl));
+        return m;
+    }
+
+    /**
+     * Yeni içerik üretim isteği oluşturur ve kuyruğa basar.
+     * Ödeme aktifse bakiye kontrolü yapılır.
+     *
+     * @return ContentCreateResponse (QUEUED veya INSUFFICIENT)
+     */
+    public ContentCreateResponse create(UUID userId, ContentCreateRequest request) {
         // contentType validasyonu
         ContentType contentType = parseContentType(request.getContentType());
+
+        // Bakiye kontrolü (PAYMENT_ENABLED = true ise)
+        BigDecimal price = priceFor(contentType);
+        if (appProperties.getPayment().isEnabled()) {
+            BigDecimal balance = paymentService.getBalance(userId);
+            if (balance.compareTo(price) < 0) {
+                log.info("Yetersiz bakiye: userId={}, contentType={}, price={}, balance={}", userId, contentType, price, balance);
+                return ContentCreateResponse.insufficient(price, balance);
+            }
+        }
 
         // Rapor kullanıcıya ait mi?
         validateReportOwnership(userId, request.getReportId());
@@ -77,10 +122,22 @@ public class ContentRequestService {
         contentRequestRepository.save(entity);
         contentQueueProducer.publish(entity.getContentRequestId());
 
-        log.info("İçerik isteği oluşturuldu: id={}, userId={}, reportId={}, type={}",
-                entity.getContentRequestId(), userId, request.getReportId(), contentType);
+        log.info("İçerik isteği oluşturuldu: id={}, userId={}, reportId={}, type={}, price={}",
+                entity.getContentRequestId(), userId, request.getReportId(), contentType, price);
 
-        return entity.getContentRequestId();
+        return ContentCreateResponse.queued(entity.getContentRequestId(), price);
+    }
+
+    /** İçerik tipine göre TL fiyat. */
+    public BigDecimal priceFor(ContentType type) {
+        AppProperties.Content cfg = appProperties.getContent();
+        return switch (type) {
+            case STORY    -> new BigDecimal(cfg.getPriceStory());
+            case CAROUSEL -> new BigDecimal(cfg.getPriceCarousel());
+            case REEL     -> new BigDecimal(cfg.getPriceReel());
+            case ALL      -> new BigDecimal(cfg.getPriceAll());
+            default       -> new BigDecimal(cfg.getPricePost());
+        };
     }
 
     // ============================================================
@@ -185,7 +242,7 @@ public class ContentRequestService {
         String sql = """
                 SELECT COUNT(*) FROM report r
                 JOIN report_request rr ON rr.request_id = r.request_id
-                WHERE r.report_id = ? AND rr.user_id = ? AND r.active = 1
+                WHERE r.report_id = ? AND rr.user_id = ?
                 """;
         Integer count = jdbcTemplate.queryForObject(sql, Integer.class, reportId, userId);
         if (count == null || count == 0) {
