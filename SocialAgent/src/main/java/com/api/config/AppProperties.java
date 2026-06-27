@@ -220,6 +220,8 @@ public class AppProperties {
 		private int editLimit = 3;
 		// Görsel üretim için Gemini modeli (responseModalities: IMAGE desteklemeli)
 		private String imageModel = "gemini-2.0-flash-preview-image-generation";
+		// Reel video üretimi için Sora modeli
+		private String videoModel = "sora-1";
 		// Tarife (TL) — PAYMENT_ENABLED=true olduğunda uygulanır
 		private int pricePost = 100;
 		private int priceStory = 100;

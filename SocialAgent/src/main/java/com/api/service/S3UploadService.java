@@ -101,6 +101,29 @@ public class S3UploadService {
         }
     }
 
+    /**
+     * MP4 video byte dizisini S3'e yükler ve URL döner.
+     */
+    public String uploadVideo(byte[] videoBytes, UUID userId, UUID contentRequestId) {
+        if (videoBytes == null) return null;
+        if (s3Client == null) {
+            log.warn("S3 kapalı; video yüklenemedi: contentRequestId={}", contentRequestId);
+            return null;
+        }
+        String key = "content/%s/%s/video_0.mp4".formatted(userId, contentRequestId);
+        try {
+            s3Client.putObject(
+                    PutObjectRequest.builder().bucket(bucket).key(key).contentType("video/mp4").build(),
+                    RequestBody.fromBytes(videoBytes));
+            String s3Url = "https://%s.s3.%s.amazonaws.com/%s".formatted(bucket, region, key);
+            log.info("Video S3'e yüklendi: key={}, {} bytes", key, videoBytes.length);
+            return s3Url;
+        } catch (Exception ex) {
+            log.error("S3 video yükleme başarısız: contentRequestId={}, hata={}", contentRequestId, ex.getMessage());
+            return null;
+        }
+    }
+
     /** S3 URL'ini 1 saatlik pre-signed URL'e çevirir. data: URL ise dokunmaz. */
     public String presign(String s3Url) {
         if (s3Presigner == null || s3Url == null || s3Url.startsWith("data:")) return s3Url;

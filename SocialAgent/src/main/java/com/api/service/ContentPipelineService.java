@@ -13,6 +13,7 @@ import java.math.BigDecimal;
 import com.api.ai.AiAnalysisService;
 import com.api.ai.ContentPrompts;
 import com.api.ai.GeminiImageService;
+import com.api.ai.SoraVideoService;
 import com.api.config.AppProperties;
 import com.api.dto.repository.ContentRequestRepository;
 import com.api.entity.ContentRequest;
@@ -46,6 +47,7 @@ public class ContentPipelineService {
     private final JdbcTemplate jdbcTemplate;
     private final AiAnalysisService aiAnalysisService;
     private final GeminiImageService geminiImageService;
+    private final SoraVideoService soraVideoService;
     private final S3UploadService s3UploadService;
     private final ContentRequestService contentRequestService;
     private final PaymentService paymentService;
@@ -86,8 +88,11 @@ public class ContentPipelineService {
             // Görsel üretim + S3 yükleme
             VisualResult visual = generateAndUploadVisuals(req, brandDna, reportContent);
 
-            // Gemini aktifken herhangi bir görsel üretilemezse FAILED — bakiye düşülmez
-            if (geminiImageService.isActive() && visual.anyFailed()) {
+            // Görsel/video üretim servisi aktifken üretim başarısızsa FAILED — bakiye düşülmez
+            boolean imageServiceActive = req.getContentType() == ContentType.REEL
+                    ? soraVideoService.isActive()
+                    : geminiImageService.isActive();
+            if (imageServiceActive && visual.anyFailed()) {
                 String err = "Görsel üretimi başarısız oldu (" + visual.failCount() + "/" + visual.expected() + " görsel üretilemedi)";
                 log.warn("İçerik FAILED: contentRequestId={}, sebep={}", contentRequestId, err);
                 markFinished(req, ContentRequestStatus.FAILED, err);
@@ -185,6 +190,11 @@ public class ContentPipelineService {
                 if (url != null) urls.add(url);
             }
             return new VisualResult(urls, roles.length);
+        } else if (type == ContentType.REEL) {
+            String prompt = ContentPrompts.forVideo(brandDna, reportContent);
+            String url = generateAndUploadVideo(req, prompt);
+            if (url != null) urls.add(url);
+            return new VisualResult(urls, 1);
         } else {
             String prompt = ContentPrompts.forVisual(brandDna, reportContent, type.name(), 0, null,
                     req.isIncludeTextInVisual());
@@ -192,6 +202,21 @@ public class ContentPipelineService {
             if (url != null) urls.add(url);
             return new VisualResult(urls, 1);
         }
+    }
+
+    private String generateAndUploadVideo(ContentRequest req, String prompt) {
+        byte[] videoBytes = soraVideoService.generateVideo(prompt);
+        if (videoBytes == null) {
+            // Sora pasifse Gemini ile statik görsel fallback
+            if (!soraVideoService.isActive()) {
+                log.info("Sora pasif; REEL için Gemini fallback: contentRequestId={}", req.getContentRequestId());
+                String imagePrompt = ContentPrompts.forVisual(null, null, "REEL", 0, null, false);
+                return generateAndUpload(req, imagePrompt, 0);
+            }
+            log.warn("Sora video üretilemedi: contentRequestId={}", req.getContentRequestId());
+            return null;
+        }
+        return s3UploadService.uploadVideo(videoBytes, req.getUserId(), req.getContentRequestId());
     }
 
     private String generateAndUpload(ContentRequest req, String prompt, int index) {

@@ -76,7 +76,7 @@ public final class ContentPrompts {
         String formatLabel = switch (contentType.toUpperCase()) {
             case "STORY" -> "Instagram Story (9:16 dikey format)";
             case "CAROUSEL" -> "Instagram Carousel slaydı (" + slideRole + " — slayt " + (slideIndex + 1) + ")";
-            case "REEL" -> "Instagram Reel kapak görseli (kare veya 9:16)";
+            case "REEL" -> "Instagram Reel kapak görseli (9:16 dikey format — portrait)";
             default -> "Instagram Post (kare veya 4:5 format)";
         };
         sb.append("Instagram için premium bir ").append(formatLabel).append(" oluştur.\n\n");
@@ -86,6 +86,35 @@ public final class ContentPrompts {
             sb.append("Görselde metin, yazı veya slogan OLMAYACAK.\n");
         }
         sb.append("Görsellerde rapordaki ifadelerin (reels, video, paylaşım takvimi, story, spectiqs gibi) hiçbiri olmayacak.\n");
+
+        return sb.toString();
+    }
+
+    /**
+     * Sora ile Instagram Reel video üretimi için prompt.
+     * Statik görsel değil, video sahnesini tanımlar.
+     *
+     * @param brandDnaJson Brand DNA JSON (null olabilir)
+     * @param reportContent rapor içeriği (gelişim önerileri alınır)
+     */
+    public static String forVideo(String brandDnaJson, String reportContent) {
+        StringBuilder sb = new StringBuilder();
+
+        if (brandDnaJson != null && !brandDnaJson.isBlank()) {
+            sb.append("Bu markanın Brand DNA'sına sadık kal:\n").append(brandDnaJson).append("\n\n");
+        }
+
+        if (reportContent != null && !reportContent.isBlank()) {
+            String snippet = reportContent.length() > 800
+                    ? reportContent.substring(0, 800) + "..."
+                    : reportContent;
+            sb.append("Gelişim raporundaki önerileri uygula. Rapor özeti:\n").append(snippet).append("\n\n");
+        }
+
+        sb.append("Instagram Reel için 9:16 dikey formatta, maksimum 30 saniyelik kısa bir ürün tanıtım videosu oluştur.\n");
+        sb.append("Video akıcı, dinamik ve estetik olmalı; modern geçiş efektleri kullanılabilir.\n");
+        sb.append("Ürünü veya marka kimliğini görsel olarak güçlü biçimde vurgula.\n");
+        sb.append("Görsellerde platform adları (reels, story, spectiqs vb.) OLMAYACAK.\n");
 
         return sb.toString();
     }
