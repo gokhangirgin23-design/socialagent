@@ -13,7 +13,7 @@ import java.math.BigDecimal;
 import com.api.ai.AiAnalysisService;
 import com.api.ai.ContentPrompts;
 import com.api.ai.GeminiImageService;
-import com.api.ai.SoraVideoService;
+import com.api.ai.VeoVideoService;
 import com.api.config.AppProperties;
 import com.api.dto.repository.ContentRequestRepository;
 import com.api.entity.ContentRequest;
@@ -47,7 +47,7 @@ public class ContentPipelineService {
     private final JdbcTemplate jdbcTemplate;
     private final AiAnalysisService aiAnalysisService;
     private final GeminiImageService geminiImageService;
-    private final SoraVideoService soraVideoService;
+    private final VeoVideoService veoVideoService;
     private final S3UploadService s3UploadService;
     private final ContentRequestService contentRequestService;
     private final PaymentService paymentService;
@@ -90,7 +90,7 @@ public class ContentPipelineService {
 
             // Görsel/video üretim servisi aktifken üretim başarısızsa FAILED — bakiye düşülmez
             boolean imageServiceActive = req.getContentType() == ContentType.REEL
-                    ? soraVideoService.isActive()
+                    ? veoVideoService.isActive()
                     : geminiImageService.isActive();
             if (imageServiceActive && visual.anyFailed()) {
                 String err = "Görsel üretimi başarısız oldu (" + visual.failCount() + "/" + visual.expected() + " görsel üretilemedi)";
@@ -205,15 +205,15 @@ public class ContentPipelineService {
     }
 
     private String generateAndUploadVideo(ContentRequest req, String prompt) {
-        byte[] videoBytes = soraVideoService.generateVideo(prompt);
+        byte[] videoBytes = veoVideoService.generateVideo(prompt);
         if (videoBytes == null) {
-            // Sora pasifse Gemini ile statik görsel fallback
-            if (!soraVideoService.isActive()) {
-                log.info("Sora pasif; REEL için Gemini fallback: contentRequestId={}", req.getContentRequestId());
+            // Veo pasifse Gemini ile statik görsel fallback
+            if (!veoVideoService.isActive()) {
+                log.info("Veo pasif; REEL için Gemini görsel fallback: contentRequestId={}", req.getContentRequestId());
                 String imagePrompt = ContentPrompts.forVisual(null, null, "REEL", 0, null, false);
                 return generateAndUpload(req, imagePrompt, 0);
             }
-            log.warn("Sora video üretilemedi: contentRequestId={}", req.getContentRequestId());
+            log.warn("Veo video üretilemedi: contentRequestId={}", req.getContentRequestId());
             return null;
         }
         return s3UploadService.uploadVideo(videoBytes, req.getUserId(), req.getContentRequestId());

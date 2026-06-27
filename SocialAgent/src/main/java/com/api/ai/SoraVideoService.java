@@ -1,13 +1,10 @@
 package com.api.ai;
 
-import java.io.InputStream;
-import java.net.URI;
-import java.util.Base64;
 import java.util.Map;
 
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
-import org.springframework.stereotype.Service;
+// SoraVideoService devre dışı — Veo ile değiştirildi (VeoVideoService.java)
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
@@ -21,30 +18,30 @@ import lombok.extern.slf4j.Slf4j;
 
 /**
  * OpenAI Sora video üretim servisi.
- * REEL içerik tipinde statik görsel yerine 9:16 dikey video (max 30 sn) üretir.
+ * REEL içerik tipinde 9:16 dikey video üretir.
  *
- * Akış: POST /v1/video/generations → async → polling → video byte indir
- * API key tanımlı değilse tüm çağrılar null döner; pipeline çökmez.
+ * Sora API kısıtları (sora-2): seconds = 4 | 8 | 12, size = 720x1280 (portrait 9:16)
+ * Akış: POST /v1/videos → polling GET /v1/videos/{id} → download /v1/videos/{id}/content
  */
 @Slf4j
-@Service
 @RequiredArgsConstructor
 public class SoraVideoService {
 
-    private static final String BASE_URL = "https://api.openai.com/v1";
-    private static final int MAX_POLL_ATTEMPTS = 72;   // 6 dakika (5s * 72)
-    private static final int POLL_INTERVAL_MS  = 5_000;
+    private static final String BASE_URL    = "https://api.openai.com/v1";
+    private static final int MAX_POLL       = 120;        // 10 dakika (5s * 120)
+    private static final int POLL_DELAY_MS  = 5_000;
+    private static final String REEL_SIZE   = "720x1280"; // 9:16 portrait
+    private static final int REEL_SECONDS   = 12;         // Sora max: 4 | 8 | 12
 
     private final AppProperties appProperties;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private RestClient restClient;
-    private String apiKey;
     private String videoModel;
 
     @PostConstruct
     void init() {
-        this.apiKey    = appProperties.getAi().getOpenai().getApiKey();
+        String apiKey = appProperties.getAi().getOpenai().getApiKey();
         this.videoModel = appProperties.getContent().getVideoModel();
 
         if (apiKey == null || apiKey.isBlank()) {
@@ -62,7 +59,8 @@ public class SoraVideoService {
                 .requestFactory(factory)
                 .build();
 
-        log.info("Sora video service hazır: model={}", videoModel);
+        log.info("Sora video service hazır: model={}, size={}, seconds={}",
+                videoModel, REEL_SIZE, REEL_SECONDS);
     }
 
     public boolean isActive() {
@@ -70,9 +68,8 @@ public class SoraVideoService {
     }
 
     /**
-     * Prompt'a göre 9:16 dikey, max 30 saniyelik Reel videosu üretir.
+     * Prompt'a göre 9:16 dikey Reel videosu üretir (12 sn, 720×1280).
      *
-     * @param prompt video içerik açıklaması
      * @return MP4 byte dizisi; hata veya servis pasif ise null
      */
     public byte[] generateVideo(String prompt) {
@@ -82,15 +79,14 @@ public class SoraVideoService {
         }
         try {
             Map<String, Object> body = Map.of(
-                    "model",      videoModel,
-                    "prompt",     prompt,
-                    "resolution", "1080x1920",
-                    "duration",   30,
-                    "n",          1
+                    "model",   videoModel,
+                    "prompt",  prompt,
+                    "size",    REEL_SIZE,
+                    "seconds", REEL_SECONDS
             );
 
             String createJson = restClient.post()
-                    .uri("/video/generations")
+                    .uri("/videos")
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(body)
                     .retrieve()
@@ -103,20 +99,15 @@ public class SoraVideoService {
                 return null;
             }
 
-            // Senkron yanıt — generations hemen geldiyse indir
-            if (!root.path("generations").isMissingNode()) {
-                return downloadFromGenerations(root);
-            }
-
-            // Asenkron — job id ile polling
-            String jobId = root.path("id").asText(null);
-            if (jobId == null || jobId.isBlank()) {
-                log.warn("Sora: job id bulunamadı. Yanıt: {}",
+            String videoId = root.path("id").asText(null);
+            if (videoId == null || videoId.isBlank()) {
+                log.warn("Sora: video id bulunamadı. Yanıt: {}",
                         createJson.substring(0, Math.min(400, createJson.length())));
                 return null;
             }
-            log.info("Sora video kuyruğa alındı: jobId={}", jobId);
-            return pollAndDownload(jobId);
+
+            log.info("Sora video oluşturuldu: id={}, durum={}", videoId, root.path("status").asText());
+            return pollAndDownload(videoId);
 
         } catch (RestClientResponseException ex) {
             log.error("Sora API HTTP hatası: status={}, body={}",
@@ -132,58 +123,43 @@ public class SoraVideoService {
     // Yardımcılar
     // ============================================================
 
-    private byte[] pollAndDownload(String jobId) throws Exception {
-        for (int i = 0; i < MAX_POLL_ATTEMPTS; i++) {
-            Thread.sleep(POLL_INTERVAL_MS);
+    private byte[] pollAndDownload(String videoId) throws Exception {
+        for (int i = 0; i < MAX_POLL; i++) {
+            Thread.sleep(POLL_DELAY_MS);
 
             String statusJson = restClient.get()
-                    .uri("/video/generations/" + jobId)
+                    .uri("/videos/" + videoId)
                     .retrieve()
                     .body(String.class);
 
             JsonNode root = objectMapper.readTree(statusJson);
             String status = root.path("status").asText("");
 
-            log.debug("Sora polling: jobId={}, status={}, attempt={}/{}", jobId, status, i + 1, MAX_POLL_ATTEMPTS);
+            log.debug("Sora polling: id={}, status={}, attempt={}/{}", videoId, status, i + 1, MAX_POLL);
 
             switch (status.toLowerCase()) {
-                case "completed" -> { return downloadFromGenerations(root); }
-                case "failed", "cancelled" -> {
-                    log.error("Sora video başarısız: jobId={}, status={}", jobId, status);
+                case "completed" -> { return downloadContent(videoId); }
+                case "failed"    -> {
+                    log.error("Sora video başarısız: id={}", videoId);
                     return null;
                 }
             }
         }
-        log.error("Sora polling zaman aşımı: jobId={}", jobId);
+        log.error("Sora polling zaman aşımı: id={}", videoId);
         return null;
     }
 
-    private byte[] downloadFromGenerations(JsonNode root) throws Exception {
-        JsonNode generations = root.path("generations");
-        if (generations.isEmpty()) {
-            log.warn("Sora: generations dizisi boş");
+    private byte[] downloadContent(String videoId) {
+        try {
+            byte[] bytes = restClient.get()
+                    .uri("/videos/" + videoId + "/content")
+                    .retrieve()
+                    .body(byte[].class);
+            log.info("Sora video indirildi: id={}, {} bytes", videoId, bytes == null ? 0 : bytes.length);
+            return bytes;
+        } catch (Exception ex) {
+            log.error("Sora video indirme başarısız: id={}, hata={}", videoId, ex.getMessage());
             return null;
         }
-        JsonNode first = generations.get(0);
-
-        // URL ile indir
-        String videoUrl = first.path("url").asText(null);
-        if (videoUrl != null && !videoUrl.isBlank()) {
-            log.info("Sora video indiriliyor: url uzunluğu={}", videoUrl.length());
-            try (InputStream is = URI.create(videoUrl).toURL().openStream()) {
-                byte[] bytes = is.readAllBytes();
-                log.info("Sora video indirildi: {} bytes", bytes.length);
-                return bytes;
-            }
-        }
-
-        // b64_json ile decode et (fallback)
-        String b64 = first.path("b64_json").asText(null);
-        if (b64 != null && !b64.isBlank()) {
-            return Base64.getDecoder().decode(b64);
-        }
-
-        log.warn("Sora: video URL veya b64_json bulunamadı. Yanıt: {}", first);
-        return null;
     }
 }
