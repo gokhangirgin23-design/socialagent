@@ -72,27 +72,23 @@ public class S3UploadService {
         if (imageBytes == null) {
             return null;
         }
-        // S3 yapılandırılmadıysa base64 data URL olarak sakla (geliştirme ortamı fallback)
-        if (s3Client == null) {
-            log.info("S3 kapalı; görsel base64 data URL olarak saklanıyor: contentRequestId={}, index={}",
-                    contentRequestId, index);
-            return "data:image/png;base64," + Base64.getEncoder().encodeToString(imageBytes);
+        // DB'ye her zaman data URL kaydet — tarayıcı S3 erişim izni olmadan da görebilsin
+        String dataUrl = "data:image/png;base64," + Base64.getEncoder().encodeToString(imageBytes);
+
+        // S3 varsa yedek olarak yükle (CDN/arşiv amaçlı)
+        if (s3Client != null) {
+            try {
+                String key = "content/%s/%s/image_%d.png".formatted(userId, contentRequestId, index);
+                s3Client.putObject(
+                        PutObjectRequest.builder().bucket(bucket).key(key).contentType("image/png").build(),
+                        RequestBody.fromBytes(imageBytes));
+                log.info("Görsel S3'e yedeklendi: key={}", key);
+            } catch (Exception ex) {
+                log.warn("S3 yedekleme başarısız (data URL kullanılacak): contentRequestId={}, hata={}",
+                        contentRequestId, ex.getMessage());
+            }
         }
-        try {
-            String key = "content/%s/%s/image_%d.png".formatted(userId, contentRequestId, index);
-            PutObjectRequest request = PutObjectRequest.builder()
-                    .bucket(bucket)
-                    .key(key)
-                    .contentType("image/png")
-                    .build();
-            s3Client.putObject(request, RequestBody.fromBytes(imageBytes));
-            String url = "https://%s.s3.%s.amazonaws.com/%s".formatted(bucket, region, key);
-            log.info("Görsel S3'e yüklendi: key={}", key);
-            return url;
-        } catch (Exception ex) {
-            log.error("S3 yükleme başarısız: contentRequestId={}, index={}, hata={}",
-                    contentRequestId, index, ex.getMessage());
-            return null;
-        }
+
+        return dataUrl;
     }
 }
