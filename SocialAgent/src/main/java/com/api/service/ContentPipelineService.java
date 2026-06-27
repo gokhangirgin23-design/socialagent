@@ -288,6 +288,17 @@ public class ContentPipelineService {
 
     private void markFinished(ContentRequest req, ContentRequestStatus status, String error) {
         LocalDateTime now = LocalDateTime.now();
+
+        // Düzenleme denemesi başarısız olursa hak yenmez — sayacı geri al
+        if (status == ContentRequestStatus.FAILED
+                && req.getEditInstruction() != null
+                && !req.getEditInstruction().isBlank()
+                && req.getEditCount() > 0) {
+            req.setEditCount(req.getEditCount() - 1);
+            log.info("Düzenleme başarısız; editCount geri alındı: id={}, yeni editCount={}",
+                    req.getContentRequestId(), req.getEditCount());
+        }
+
         req.setStatus(status);
         req.setProcessFinishedDate(now);
         req.setProcessError(error);
