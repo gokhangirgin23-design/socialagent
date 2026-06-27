@@ -186,11 +186,12 @@ public class ContentRequestService {
      */
     public List<ContentRequestDto> list(UUID userId, int page, int size) {
         int offset = page * size;
+        // visual_urls ve product_image_url base64 data URL içerebilir (MB boyutunda) —
+        // liste görünümü için gereksiz, sadece detail endpoint dönsün
         String sql = """
                 SELECT content_request_id, report_id, content_type, status,
-                       product_image_url, include_text_in_visual, edit_instruction,
-                       edit_count, visual_urls, caption, hashtags, cta,
-                       first_comment, suggested_post_time,
+                       include_text_in_visual, edit_instruction,
+                       edit_count, caption,
                        created_date, process_finished_date, process_error
                 FROM content_request
                 WHERE user_id = ? AND active = 1
@@ -198,7 +199,7 @@ public class ContentRequestService {
                 LIMIT ? OFFSET ?
                 """;
         try {
-            return jdbcTemplate.query(sql, (rs, rowNum) -> mapRow(rs), userId, size, offset);
+            return jdbcTemplate.query(sql, (rs, rowNum) -> mapListRow(rs), userId, size, offset);
         } catch (Exception ex) {
             log.error("İçerik listesi yüklenemedi: userId={}, hata={}", userId, ex.getMessage());
             return Collections.emptyList();
@@ -259,34 +260,35 @@ public class ContentRequestService {
         }
     }
 
-    private ContentRequestDto mapRow(java.sql.ResultSet rs) throws java.sql.SQLException {
+    /** Liste için hafif mapper — büyük alanlar (visual_urls, product_image_url) dahil değil. */
+    private ContentRequestDto mapListRow(java.sql.ResultSet rs) throws java.sql.SQLException {
         ContentRequestDto dto = new ContentRequestDto();
         dto.setContentRequestId((UUID) rs.getObject("content_request_id"));
         dto.setReportId((UUID) rs.getObject("report_id"));
         dto.setContentType(rs.getString("content_type"));
         dto.setStatus(rs.getString("status"));
-        dto.setProductImageUrl(rs.getString("product_image_url"));
         dto.setIncludeTextInVisual(rs.getBoolean("include_text_in_visual"));
         dto.setEditInstruction(rs.getString("edit_instruction"));
         dto.setEditCount(rs.getInt("edit_count"));
         dto.setEditLimit(appProperties.getContent().getEditLimit());
         dto.setCaption(rs.getString("caption"));
+        dto.setProcessError(rs.getString("process_error"));
+        java.sql.Timestamp created = rs.getTimestamp("created_date");
+        if (created != null) dto.setCreatedDate(created.toLocalDateTime());
+        java.sql.Timestamp finished = rs.getTimestamp("process_finished_date");
+        if (finished != null) dto.setProcessFinishedDate(finished.toLocalDateTime());
+        return dto;
+    }
+
+    /** Detail için tam mapper — tüm alanlar dahil. */
+    private ContentRequestDto mapRow(java.sql.ResultSet rs) throws java.sql.SQLException {
+        ContentRequestDto dto = mapListRow(rs);
+        dto.setProductImageUrl(rs.getString("product_image_url"));
         dto.setHashtags(rs.getString("hashtags"));
         dto.setCta(rs.getString("cta"));
         dto.setFirstComment(rs.getString("first_comment"));
         dto.setSuggestedPostTime(rs.getString("suggested_post_time"));
-        dto.setProcessError(rs.getString("process_error"));
-
-        // visual_urls JSON array → List<String>
-        String visualUrlsJson = rs.getString("visual_urls");
-        dto.setVisualUrls(parseVisualUrls(visualUrlsJson));
-
-        java.sql.Timestamp created = rs.getTimestamp("created_date");
-        if (created != null) dto.setCreatedDate(created.toLocalDateTime());
-
-        java.sql.Timestamp finished = rs.getTimestamp("process_finished_date");
-        if (finished != null) dto.setProcessFinishedDate(finished.toLocalDateTime());
-
+        dto.setVisualUrls(parseVisualUrls(rs.getString("visual_urls")));
         return dto;
     }
 
