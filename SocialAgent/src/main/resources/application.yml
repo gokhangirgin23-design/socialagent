@@ -116,10 +116,10 @@ app:
     image-model: ${CONTENT_IMAGE_MODEL:gemini-2.0-flash-preview-image-generation}
   # ===== AWS S3: üretilen görsellerin depolanması =====
   aws:
-    region: ${AWS_REGION:eu-central-1}
-    bucket: ${AWS_S3_BUCKET:trendora-content}
-    access-key-id: ${AWS_ACCESS_KEY_ID:}
-    secret-access-key: ${AWS_SECRET_ACCESS_KEY:}
+    region: ${AWS_REGION:eu-north-1}
+    bucket: ${AWS_S3_BUCKET:spectiqs-storage}
+    access-key-id: ${AWS_ACCESS_KEY_ID}
+    secret-access-key: ${AWS_SECRET_ACCESS_KEY}
   # ===== FAZ 8: Bildirim (mail + push) =====
   # Rapor tamamlanınca notification kaydı her zaman yazılır; mail/push kanalları aşağıdaki
   # bayraklarla açılır. SMTP verilmezse (spring.mail.host yok) mail otomatik atlanır.
