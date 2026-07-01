@@ -70,6 +70,10 @@ public class ContentPipelineService {
         markProcessing(req);
 
         try {
+            // ==== GEÇİCİ TEST — bakiye koruma doğrulama — deploy sonrası SİL ====
+            if (Boolean.TRUE) throw new RuntimeException("[GEÇİCİ TEST] İçerik pipeline kasıtlı hata: bakiye düşmemeli.");
+            // ==== GEÇİCİ TEST SONU ====
+
             String reportContent = loadReportContent(req.getReportId());
             if (reportContent == null || reportContent.isBlank()) {
                 log.warn("Rapor içeriği bulunamadı: reportId={}", req.getReportId());
@@ -133,7 +137,9 @@ public class ContentPipelineService {
     private String generateBrandDna(ContentRequest req, String reportContent) {
         // Kullanıcının kendi hesabına ait son 10 post caption'ını al
         String postsContext = loadOwnPostsCaptions(req.getReportId());
-        String prompt = ContentPrompts.forBrandDna(postsContext, reportContent);
+        // Görsel analiz verilerini al (ürün kategorisi, atmosfer, renkler, çekim stili)
+        String visualPatterns = loadVisualPatterns(req.getReportId());
+        String prompt = ContentPrompts.forBrandDna(postsContext, reportContent, visualPatterns);
         String dna = aiAnalysisService.generateBrandDna(prompt);
         if (dna != null) {
             log.info("Brand DNA üretildi: contentRequestId={}", req.getContentRequestId());
@@ -170,6 +176,84 @@ public class ContentPipelineService {
         }
     }
 
+    /**
+     * Görsel analizden ürün kategorisi, atmosfer, renk ve çekim stili özetini çeker.
+     * Brand DNA'nın mainProductOrService alanını beslemek için kullanılır.
+     * Hem OWN hem SECTOR + MONITORED post_analysis kayıtlarından çeker.
+     */
+    private String loadVisualPatterns(UUID reportId) {
+        // analysis_json içinden visual alt alanlarını çek (OWN + SECTOR + MONITORED)
+        String sql = """
+                SELECT pa.analysis_json
+                FROM post_analysis pa, social_post sp, report r
+                WHERE pa.social_post_id = sp.social_post_id
+                  AND sp.request_id = r.request_id
+                  AND r.report_id = ?
+                  AND pa.analysis_json IS NOT NULL
+                ORDER BY sp.post_date DESC
+                LIMIT 15
+                """;
+        try {
+            List<String> analysisJsonList = jdbcTemplate.queryForList(sql, String.class, reportId);
+            if (analysisJsonList.isEmpty()) return null;
+
+            // Her analiz JSON'undan visual alanlarını basit string eşleşmesiyle çek
+            StringBuilder sb = new StringBuilder();
+            int count = 0;
+            for (String json : analysisJsonList) {
+                if (json == null || json.isBlank()) continue;
+                // visual alt objesini bul
+                int visualIdx = json.indexOf("\"visual\":");
+                if (visualIdx < 0) continue;
+                String visualSection = json.substring(visualIdx);
+
+                String productCategory = extractSimpleField(visualSection, "productCategory");
+                String specificProduct = extractSimpleField(visualSection, "specificProduct");
+                String shootingStyle = extractSimpleField(visualSection, "shootingStyle");
+                String lightingStyle = extractSimpleField(visualSection, "lightingStyle");
+                String backgroundType = extractSimpleField(visualSection, "backgroundType");
+                String atmosphere = extractSimpleField(visualSection, "atmosphere");
+
+                // En az bir değer varsa ekle
+                if (productCategory != null || specificProduct != null || atmosphere != null) {
+                    count++;
+                    sb.append("Görsel ").append(count).append(": ");
+                    if (specificProduct != null) sb.append("Ürün=").append(specificProduct).append(", ");
+                    if (productCategory != null) sb.append("Kategori=").append(productCategory).append(", ");
+                    if (atmosphere != null) sb.append("Atmosfer=").append(atmosphere).append(", ");
+                    if (shootingStyle != null) sb.append("Çekim=").append(shootingStyle).append(", ");
+                    if (lightingStyle != null) sb.append("Işık=").append(lightingStyle).append(", ");
+                    if (backgroundType != null) sb.append("Arka plan=").append(backgroundType);
+                    sb.append("\n");
+                }
+                if (count >= 10) break;
+            }
+            return sb.isEmpty() ? null : sb.toString();
+        } catch (Exception ex) {
+            log.warn("Görsel analiz verileri yüklenemedi: hata={}", ex.getMessage());
+            return null;
+        }
+    }
+
+    // JSON string değeri basitçe çeker (parse bağımlılığı yok)
+    private String extractSimpleField(String json, String fieldName) {
+        String key = "\"" + fieldName + "\":";
+        int idx = json.indexOf(key);
+        if (idx < 0) return null;
+        int valueStart = idx + key.length();
+        while (valueStart < json.length() && Character.isWhitespace(json.charAt(valueStart))) valueStart++;
+        if (valueStart >= json.length()) return null;
+        char first = json.charAt(valueStart);
+        if (first == '"') {
+            int end = json.indexOf('"', valueStart + 1);
+            if (end > valueStart) {
+                String val = json.substring(valueStart + 1, end);
+                return (val.isBlank() || val.equals("null")) ? null : val;
+            }
+        }
+        return null;
+    }
+
     // ============================================================
     // Görsel üretim + S3
     // ============================================================
@@ -182,37 +266,38 @@ public class ContentPipelineService {
     private VisualResult generateAndUploadVisuals(ContentRequest req, String brandDna, String reportContent) {
         ContentType type = req.getContentType();
         List<String> urls = new ArrayList<>();
+        String editInstruction = req.getEditInstruction();
 
         if (type == ContentType.CAROUSEL) {
             String[] roles = {"HOOK", "CONTENT", "CTA"};
             for (int i = 0; i < roles.length; i++) {
                 String prompt = ContentPrompts.forVisual(brandDna, reportContent, "CAROUSEL", i, roles[i],
-                        req.isIncludeTextInVisual());
+                        req.isIncludeTextInVisual(), editInstruction);
                 String url = generateAndUpload(req, prompt, i);
                 if (url != null) urls.add(url);
             }
             return new VisualResult(urls, roles.length);
         } else if (type == ContentType.REEL) {
-            String prompt = ContentPrompts.forVideo(brandDna, reportContent);
-            String url = generateAndUploadVideo(req, prompt);
+            String prompt = ContentPrompts.forVideo(brandDna, reportContent, editInstruction);
+            String url = generateAndUploadVideo(req, prompt, editInstruction);
             if (url != null) urls.add(url);
             return new VisualResult(urls, 1);
         } else {
             String prompt = ContentPrompts.forVisual(brandDna, reportContent, type.name(), 0, null,
-                    req.isIncludeTextInVisual());
+                    req.isIncludeTextInVisual(), editInstruction);
             String url = generateAndUpload(req, prompt, 0);
             if (url != null) urls.add(url);
             return new VisualResult(urls, 1);
         }
     }
 
-    private String generateAndUploadVideo(ContentRequest req, String prompt) {
+    private String generateAndUploadVideo(ContentRequest req, String prompt, String editInstruction) {
         byte[] videoBytes = veoVideoService.generateVideo(prompt, req.getProductImageUrl());
         if (videoBytes == null) {
             // Veo pasifse Gemini ile statik görsel fallback
             if (!veoVideoService.isActive()) {
                 log.info("Veo pasif; REEL için Gemini görsel fallback: contentRequestId={}", req.getContentRequestId());
-                String imagePrompt = ContentPrompts.forVisual(null, null, "REEL", 0, null, false);
+                String imagePrompt = ContentPrompts.forVisual(null, null, "REEL", 0, null, false, editInstruction);
                 return generateAndUpload(req, imagePrompt, 0);
             }
             log.warn("Veo video üretilemedi: contentRequestId={}", req.getContentRequestId());

@@ -28,9 +28,9 @@ import com.api.mapper.NotificationMapper;
 
 /**
  * NotificationService için Spring'siz birim testi (DB/SMTP gerektirmez).
- * JdbcTemplate + repository + mapper + sender'lar mock'lanır.
+ * JdbcTemplate + repository + mapper + pushSender mock'lanır.
  * Doğrulanan davranışlar:
- *  - notifyReportCompleted: tamamlanmış rapor varsa notification insert + mail + push.
+ *  - notifyReportCompleted: tamamlanmış rapor varsa notification insert + push (mail gönderilmez).
  *  - notifyReportCompleted: tamamlanmış rapor yoksa hiçbir şey yapılmaz.
  *  - markAsRead: ownership korumalı UPDATE etkilenen satır sayısını döner.
  *  - unreadCount: okunmamış sayısı (null -> 0).
@@ -41,7 +41,6 @@ class NotificationServiceTest {
     private JdbcTemplate jdbcTemplate;
     private NotificationRepository notificationRepository;
     private NotificationMapper notificationMapper;
-    private AppMailSender mailSender;
     private PushSender pushSender;
     private NotificationService service;
 
@@ -54,41 +53,35 @@ class NotificationServiceTest {
         jdbcTemplate = org.mockito.Mockito.mock(JdbcTemplate.class);
         notificationRepository = org.mockito.Mockito.mock(NotificationRepository.class);
         notificationMapper = org.mockito.Mockito.mock(NotificationMapper.class);
-        mailSender = org.mockito.Mockito.mock(AppMailSender.class);
         pushSender = org.mockito.Mockito.mock(PushSender.class);
-        service = new NotificationService(jdbcTemplate, notificationRepository, notificationMapper,
-                mailSender, pushSender, null);
+        service = new NotificationService(jdbcTemplate, notificationRepository, notificationMapper, pushSender);
     }
 
     @SuppressWarnings("unchecked")
     @Test
-    void tamamlanmisRaporVarsaBildirimVeMailPushUretilir() {
+    void tamamlanmisRaporVarsaPushBildirimiUretilir() {
         // loadCompletedReportTarget -> query(sql, mapper, requestId): tek UUID vararg
         NotificationService.ReportTarget target =
-                new NotificationService.ReportTarget(reportId, userId, "BOTH", "user@example.com", null);
+                new NotificationService.ReportTarget(reportId, userId, "BOTH");
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(UUID.class)))
                 .thenReturn(List.of(target));
-        when(mailSender.send(anyString(), anyString(), anyString(), any(), anyString())).thenReturn(SendResult.ok());
+        // idempotency kontrolü -> queryForObject -> 0L (daha önce gönderilmemiş)
+        when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(UUID.class))).thenReturn(0L);
         when(pushSender.send(any(), anyString(), anyString())).thenReturn(SendResult.ok());
 
         service.notifyReportCompleted(requestId);
 
-        // Her rapor için kanal başına 1 satır = toplam 2 notification (MAIL + PUSH_NOTIFICATION)
+        // Sadece 1 notification satırı (PUSH_NOTIFICATION)
         ArgumentCaptor<Notification> captor = ArgumentCaptor.forClass(Notification.class);
-        verify(notificationRepository, times(2)).save(captor.capture());
-        List<Notification> saved = captor.getAllValues();
-        for (Notification n : saved) {
-            assertEquals(userId, n.getUserId());
-            assertEquals(reportId, n.getReferenceId());
-            assertEquals(ReferenceType.REPORT.name(), n.getReferenceType());
-            assertEquals(Integer.valueOf(0), n.getIsRead());
-            assertTrue(n.getMessage().contains("BOTH"));
-        }
-        List<String> channels = saved.stream().map(Notification::getChannel).toList();
-        assertTrue(channels.contains(NotificationChannel.MAIL.name()));
-        assertTrue(channels.contains(NotificationChannel.PUSH_NOTIFICATION.name()));
+        verify(notificationRepository, times(1)).save(captor.capture());
+        Notification saved = captor.getValue();
+        assertEquals(userId, saved.getUserId());
+        assertEquals(reportId, saved.getReferenceId());
+        assertEquals(ReferenceType.REPORT.name(), saved.getReferenceType());
+        assertEquals(NotificationChannel.PUSH_NOTIFICATION.name(), saved.getChannel());
+        assertEquals(Integer.valueOf(0), saved.getIsRead());
+        assertTrue(saved.getMessage().contains("BOTH"));
 
-        verify(mailSender, times(1)).send(eq("user@example.com"), anyString(), anyString(), any(), anyString());
         verify(pushSender, times(1)).send(eq(userId), anyString(), anyString());
     }
 
@@ -102,7 +95,6 @@ class NotificationServiceTest {
         service.notifyReportCompleted(requestId);
 
         verify(notificationRepository, never()).save(any());
-        verify(mailSender, never()).send(anyString(), anyString(), anyString(), any(), anyString());
         verify(pushSender, never()).send(any(), anyString(), anyString());
     }
 

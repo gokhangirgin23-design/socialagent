@@ -11,66 +11,95 @@ public final class ContentPrompts {
 
     /**
      * Brand DNA üretimi için OpenAI prompt'u.
-     * Son N posttaki metrikleri + rapor içeriğini alır; markanın kişiliğini JSON olarak çıkarır.
+     * Son N posttaki metrikleri + rapor içeriğini + görsel analiz verilerini alır;
+     * markanın kişiliğini ve görsel kimliğini JSON olarak çıkarır.
      *
-     * @param postsContext son 10 postun caption + metrik özeti
-     * @param reportContent rapor Markdown içeriği
+     * @param postsContext   son 10 postun caption özeti
+     * @param reportContent  rapor Markdown içeriği
+     * @param visualPatterns görsel analizden çıkarılan ürün/stil özeti (null olabilir)
      */
-    public static String forBrandDna(String postsContext, String reportContent) {
+    public static String forBrandDna(String postsContext, String reportContent, String visualPatterns) {
         String posts = (postsContext != null && !postsContext.isBlank())
-                ? "Kullanıcının son paylaşımları:\n" + postsContext + "\n\n"
+                ? "Kullanıcının son paylaşım caption'ları:\n" + postsContext + "\n\n"
+                : "";
+        String visuals = (visualPatterns != null && !visualPatterns.isBlank())
+                ? "Görsellerin analiz verisi (ürün kategorisi, atmosfer, renkler, çekim stili):\n" + visualPatterns + "\n\n"
                 : "";
         return """
-                %sBu analiz raporunu incele:
+                %s%sBu analiz raporunu incele:
 
                 %s
 
-                Bu markanın Brand DNA'sını çıkar ve JSON formatında üret.
+                Yukarıdaki tüm verilerden yola çıkarak bu markanın Brand DNA'sını çıkar ve JSON formatında üret.
 
                 Aşağıdaki alanları oluştur:
-                - brandPersonality: Markanın kişilik özellikleri
+                - mainProductOrService: Markanın SATIŞ YAPTIĞI ANA ürün veya hizmet (spesifik olmalı; ör: "Adana kebap, döner ve ızgara yemekleri" veya "kadın spor ayakkabısı"). Görsel analizden ve rapordan çıkar. Bu alan görsel üretimde kritik öneme sahiptir.
+                - brandPersonality: Markanın kişilik özellikleri (3-5 madde)
                 - toneOfVoice: Ses tonu ve iletişim stili
-                - visualStyle: Görsel kimlik özellikleri
-                - designStyle: Tasarım yaklaşımı
-                - colorPalette: Ana renkler
-                - compositionRules: Kompozisyon kuralları
+                - visualStyle: Görsel kimlik — renk, ışık, atmosfer, çekim stili (görsel analizden çıkar; detaylı olmalı)
+                - typicalBackground: Markaya özgü arka plan tercihleri (ör: ahşap masa, beyaz fon, dış mekan — görselden çıkar)
+                - typicalAtmosphere: Markaya özgü atmosfer (ör: sıcak ve rustik, modern ve minimal, canlı ve renkli)
+                - colorPalette: Ana marka renkleri (3-5 renk, isimleriyle)
+                - compositionRules: Kompozisyon kuralları (close-up mu, flat-lay mi, lifestyle mı?)
+                - propsAndDecorStyle: Sıkça kullanılan aksesuar/dekor (ör: tahta kesme tahtası, çiçek, kumaş)
                 - designRules: Tasarım kuralları
                 - preferredContentTypes: Tercih edilen içerik türleri
-                - strengths: Güçlü yönler
-                - weaknesses: Zayıf yönler
-                - avoid: Kaçınılması gerekenler
+                - avoid: Kesinlikle KAÇINILMASI GEREKENLER — yanlış ürün, yanlış renk, yanlış ortam gibi
                 - improvementGoals: Gelişim hedefleri
 
-                Eksik bilgi varsa analiz raporundan çıkarım yap.
+                ÖNEMLI: mainProductOrService ve visualStyle alanları görsel üretim için kullanılacak; mümkün olduğunca spesifik ve detaylı doldur.
+                Eksik bilgi varsa analiz raporundan ve görsel verilerden çıkarım yap.
                 JSON dışında açıklama yazma.
-                """.formatted(posts, reportContent);
+                """.formatted(posts, visuals, reportContent);
     }
 
     /**
-     * Görsel üretimi için Gemini prompt'u.
+     * Görsel üretimi için prompt.
+     * Brand DNA'daki mainProductOrService ve visualStyle alanları ürün tutarlılığını sağlar.
+     * editInstruction varsa görsel üretimde en yüksek öncelikle uygulanır.
      *
-     * @param brandDnaJson   Brand DNA JSON (null ise markalamadan bağımsız üretilir)
-     * @param reportContent  rapor içeriği (gelişim önerileri alınır)
-     * @param contentType    POST|STORY|CAROUSEL|REEL|ALL
-     * @param slideIndex     carousel için slayt numarası (0 = tek görsel)
-     * @param slideRole      carousel için slayt rolü (HOOK|CONTENT|CTA)
-     * @param includeText    görselde metin olsun mu
+     * @param brandDnaJson     Brand DNA JSON (null ise markalamadan bağımsız üretilir)
+     * @param reportContent    rapor içeriği (gelişim önerileri alınır)
+     * @param contentType      POST|STORY|CAROUSEL|REEL|ALL
+     * @param slideIndex       carousel için slayt numarası (0 = tek görsel)
+     * @param slideRole        carousel için slayt rolü (HOOK|CONTENT|CTA)
+     * @param includeText      görselde metin olsun mu
+     * @param editInstruction  kullanıcının düzenleme talimatı (null ise ilk üretim)
      */
     public static String forVisual(String brandDnaJson, String reportContent,
                                    String contentType, int slideIndex, String slideRole,
-                                   boolean includeText) {
+                                   boolean includeText, String editInstruction) {
         StringBuilder sb = new StringBuilder();
 
-        if (brandDnaJson != null && !brandDnaJson.isBlank()) {
-            sb.append("Bu markanın Brand DNA'sına sadık kal:\n").append(brandDnaJson).append("\n\n");
+        // Düzenleme talimatı varsa en üste ve en güçlü biçimde yaz — AI bunu görmezden gelemez
+        if (editInstruction != null && !editInstruction.isBlank()) {
+            sb.append("=== ZORUNLU DEĞİŞİKLİK TALİMATI (EN YÜKSEK ÖNCELİK) ===\n");
+            sb.append("Kullanıcı şu değişikliği kesinlikle istiyor:\n");
+            sb.append(editInstruction).append("\n");
+            sb.append("Bu talimatı tam olarak uygula. Bir önceki görselin bu yönü KABUL EDİLMEDİ.\n");
+            sb.append("=== ZORUNLU DEĞİŞİKLİK SONU ===\n\n");
         }
 
-        sb.append("Gelişim raporundaki önerileri uygula. Rapor özeti:\n");
-        // Rapor uzunsa sadece ilk 1500 karakteri al
-        String reportSnippet = reportContent != null && reportContent.length() > 1500
-                ? reportContent.substring(0, 1500) + "..."
-                : reportContent;
-        sb.append(reportSnippet).append("\n\n");
+        if (brandDnaJson != null && !brandDnaJson.isBlank()) {
+            sb.append("=== MARKA DNA'SI (SADIK KAL) ===\n");
+            sb.append(brandDnaJson).append("\n\n");
+            // mainProductOrService'i JSON'dan parse etmeden regex ile çek ve güçlendir
+            String mainProduct = extractJsonField(brandDnaJson, "mainProductOrService");
+            if (mainProduct != null && !mainProduct.isBlank()) {
+                sb.append("KRİTİK — ÜRÜN TUTARLILIĞI:\n");
+                sb.append("Bu marka '").append(mainProduct).append("' satar/sunar.\n");
+                sb.append("Görselde SADECE bu markanın ürünlerini göster. ");
+                sb.append("Asla başka ürün, yiyecek veya kategori gösterme.\n");
+                sb.append("Ürün görseli verilmemiş olsa bile sadece bu ürün kategorisini yansıt.\n\n");
+            }
+        }
+
+        if (reportContent != null && !reportContent.isBlank()) {
+            String reportSnippet = reportContent.length() > 1000
+                    ? reportContent.substring(0, 1000) + "..."
+                    : reportContent;
+            sb.append("Gelişim raporundan uygulanacak öneriler:\n").append(reportSnippet).append("\n\n");
+        }
 
         // Format bazlı talimat
         String formatLabel = switch (contentType.toUpperCase()) {
@@ -79,29 +108,66 @@ public final class ContentPrompts {
             case "REEL" -> "Instagram Reel kapak görseli (9:16 dikey format — portrait)";
             default -> "Instagram Post (kare veya 4:5 format)";
         };
-        sb.append("Instagram için premium bir ").append(formatLabel).append(" oluştur.\n\n");
-        sb.append("Modern ve estetik görünüm oluştur.\n");
-        sb.append("Ürünü değiştirme.\n");
+        sb.append("Instagram için premium, yüksek kaliteli bir ").append(formatLabel).append(" oluştur.\n\n");
+        sb.append("Modern ve estetik görünüm oluştur. Marka DNA'sındaki renk, atmosfer ve stil tercihlerine uy.\n");
         if (!includeText) {
             sb.append("Görselde metin, yazı veya slogan OLMAYACAK.\n");
         }
-        sb.append("Görsellerde rapordaki ifadelerin (reels, video, paylaşım takvimi, story, spectiqs gibi) hiçbiri olmayacak.\n");
+        sb.append("Görselde platform adları (reels, story, spectiqs, instagram gibi) OLMAYACAK.\n");
 
         return sb.toString();
     }
 
     /**
-     * Sora ile Instagram Reel video üretimi için prompt.
-     * Statik görsel değil, video sahnesini tanımlar.
-     *
-     * @param brandDnaJson Brand DNA JSON (null olabilir)
-     * @param reportContent rapor içeriği (gelişim önerileri alınır)
+     * Brand DNA JSON'undan belirtilen alanı basit string eşleşmesiyle çeker.
+     * Parse bağımlılığı olmadan hızlı alan okuma için.
      */
-    public static String forVideo(String brandDnaJson, String reportContent) {
+    private static String extractJsonField(String json, String fieldName) {
+        if (json == null || json.isBlank()) return null;
+        String key = "\"" + fieldName + "\"";
+        int idx = json.indexOf(key);
+        if (idx < 0) return null;
+        int colon = json.indexOf(':', idx + key.length());
+        if (colon < 0) return null;
+        int valueStart = colon + 1;
+        while (valueStart < json.length() && Character.isWhitespace(json.charAt(valueStart))) valueStart++;
+        if (valueStart >= json.length()) return null;
+        char first = json.charAt(valueStart);
+        if (first == '"') {
+            int end = json.indexOf('"', valueStart + 1);
+            return end > valueStart ? json.substring(valueStart + 1, end) : null;
+        }
+        // Array veya nesne ise ilk 100 karakteri al
+        int end = Math.min(valueStart + 100, json.length());
+        return json.substring(valueStart, end).replaceAll("[\\n\\r]", " ").trim();
+    }
+
+    /**
+     * Instagram Reel / video üretimi için prompt.
+     * editInstruction varsa en yüksek öncelikle uygulanır.
+     *
+     * @param brandDnaJson    Brand DNA JSON (null olabilir)
+     * @param reportContent   rapor içeriği (gelişim önerileri alınır)
+     * @param editInstruction kullanıcının düzenleme talimatı (null ise ilk üretim)
+     */
+    public static String forVideo(String brandDnaJson, String reportContent, String editInstruction) {
         StringBuilder sb = new StringBuilder();
+
+        // Düzenleme talimatı varsa en üste ve en güçlü biçimde yaz
+        if (editInstruction != null && !editInstruction.isBlank()) {
+            sb.append("=== ZORUNLU DEĞİŞİKLİK TALİMATI (EN YÜKSEK ÖNCELİK) ===\n");
+            sb.append("Kullanıcı şu değişikliği kesinlikle istiyor:\n");
+            sb.append(editInstruction).append("\n");
+            sb.append("Bu talimatı tam olarak uygula.\n");
+            sb.append("=== ZORUNLU DEĞİŞİKLİK SONU ===\n\n");
+        }
 
         if (brandDnaJson != null && !brandDnaJson.isBlank()) {
             sb.append("Bu markanın Brand DNA'sına sadık kal:\n").append(brandDnaJson).append("\n\n");
+            String mainProduct = extractJsonField(brandDnaJson, "mainProductOrService");
+            if (mainProduct != null && !mainProduct.isBlank()) {
+                sb.append("Bu marka '").append(mainProduct).append("' satar. Videoda sadece bu ürünü göster.\n\n");
+            }
         }
 
         if (reportContent != null && !reportContent.isBlank()) {

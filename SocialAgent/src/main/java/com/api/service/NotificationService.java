@@ -1,7 +1,6 @@
 package com.api.service;
 
 import java.sql.Timestamp;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -26,7 +25,7 @@ import lombok.extern.slf4j.Slf4j;
  * Service interface yok (CLAUDE.md Madde 1); concrete @Service.
  *
  * Sorumluluklar:
- *   1) notifyReportCompleted: rapor COMPLETED olunca DB'ye notification yaz + mail + push.
+ *   1) notifyReportCompleted: rapor COMPLETED olunca DB'ye notification yaz + push.
  *   2) listNotifications: kullanıcının bildirimlerini sayfalı listele (dashboard).
  *   3) markAsRead: bir bildirimi okundu işaretle (yalnızca sahibi).
  *   4) unreadCount: okunmamış bildirim sayısı (dashboard rozeti).
@@ -45,14 +44,8 @@ public class NotificationService {
     // Notification entity -> DTO dönüştürücü
     private final NotificationMapper notificationMapper;
 
-    // E-posta gönderim adaptörü (AppMailSender: "mailSender" bean adı çakışması nedeniyle yeniden adlandırıldı)
-    private final AppMailSender mailSender;
-
     // Push gönderim adaptörü
     private final PushSender pushSender;
-
-    // Markdown → PDF dönüştürücü (mail eki)
-    private final ReportPdfService reportPdfService;
 
     /**
      * Bir rapor isteğinin raporu COMPLETED olduğunda kullanıcıya bildirim üretir.
@@ -62,20 +55,20 @@ public class NotificationService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void notifyReportCompleted(UUID requestId) {
-        // Tamamlanmış raporu, sahibini ve e-postasını native join ile çek.
-        // report ⋈ report_request ⋈ user_info — eski stil "=" (CLAUDE.md Madde 6).
+        // Tamamlanmış raporu ve sahibini native join ile çek.
+        // report ⋈ report_request — eski stil "=" (CLAUDE.md Madde 6).
         ReportTarget target = loadCompletedReportTarget(requestId);
         if (target == null) {
             log.info("Bildirim için tamamlanmış rapor bulunamadı: requestId={}", requestId);
             return;
         }
 
-        // Idempotency: pipeline tekrar çalışırsa (requeue vb.) çift mail gitmesin.
-        Long existingMail = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM notification WHERE reference_id = ? AND channel = 'MAIL' AND success = 1",
+        // Idempotency: pipeline tekrar çalışırsa çift push gönderilmesin.
+        Long existingPush = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM notification WHERE reference_id = ? AND channel = 'PUSH_NOTIFICATION' AND success = 1",
                 Long.class, target.reportId());
-        if (existingMail != null && existingMail > 0) {
-            log.info("Mail bildirimi zaten gönderilmiş, atlandı: reportId={}", target.reportId());
+        if (existingPush != null && existingPush > 0) {
+            log.info("Push bildirimi zaten gönderilmiş, atlandı: reportId={}", target.reportId());
             return;
         }
 
@@ -85,22 +78,7 @@ public class NotificationService {
         String modeText = (target.reportType() != null) ? target.reportType() : "Analiz";
         String plainMessage = modeText + " raporunuz oluşturuldu. Detay için panele göz atın.";
 
-        // PDF eki üret (hata olursa null → ek olmadan devam edilir)
-        byte[] pdfBytes = null;
-        try {
-            pdfBytes = reportPdfService.generatePdf(target.reportContent(), modeText + " Raporu");
-        } catch (Exception ex) {
-            log.warn("PDF üretimi başarısız (mail eki olmadan devam): requestId={}, hata={}", requestId, ex.getMessage());
-        }
-
-        // HTML mail gövdesi + Spectiqs logosu
-        String htmlBody = buildMailHtml(target, modeText, plainMessage);
-        String pdfFileName = "spectiqs-rapor-" + LocalDate.now() + ".pdf";
-
-        // Her kanalı ayrı ayrı gönder; sonucu ayrı notification satırına yaz.
-        SendResult mailRes = mailSender.send(target.email(), title, htmlBody, pdfBytes, pdfFileName);
-        saveChannelNotification(target, title, plainMessage, NotificationChannel.MAIL, mailRes, now);
-
+        // Push bildirimi gönder; sonucu notification satırına yaz.
         SendResult pushRes = pushSender.send(target.userId(), title, plainMessage);
         saveChannelNotification(target, title, plainMessage, NotificationChannel.PUSH_NOTIFICATION, pushRes, now);
     }
@@ -198,16 +176,14 @@ public class NotificationService {
     // ============================================================
 
     /**
-     * Rapor isteği için tamamlanmış raporu, sahibini ve e-postasını native join ile çeker.
-     * report ⋈ report_request ⋈ user_info — eski stil "=" inner join (CLAUDE.md Madde 6).
+     * Rapor isteği için tamamlanmış raporu ve sahibini native join ile çeker.
+     * report ⋈ report_request — eski stil "=" inner join (CLAUDE.md Madde 6).
      */
     private ReportTarget loadCompletedReportTarget(UUID requestId) {
-        // report_content de çekiliyor: PDF eki ve mail gövdesi için
         String sql = """
-                SELECT r.report_id, rr.user_id, rr.report_type, u.email, r.report_content
-                FROM report r, report_request rr, user_info u
+                SELECT r.report_id, rr.user_id, rr.report_type
+                FROM report r, report_request rr
                 WHERE r.request_id = rr.request_id
-                  AND rr.user_id = u.user_id
                   AND r.request_id = ?
                   AND r.status = 'COMPLETED'
                 ORDER BY r.created_date DESC
@@ -215,9 +191,7 @@ public class NotificationService {
         List<ReportTarget> rows = jdbcTemplate.query(sql, (rs, rowNum) -> new ReportTarget(
                 rs.getObject("report_id", UUID.class),
                 rs.getObject("user_id", UUID.class),
-                rs.getString("report_type"),
-                rs.getString("email"),
-                rs.getString("report_content")),
+                rs.getString("report_type")),
                 requestId);
         return rows.isEmpty() ? null : rows.get(0);
     }
@@ -246,90 +220,8 @@ public class NotificationService {
             };
 
     /**
-     * Bildirim için iç projeksiyon: rapor + sahip + e-posta + Markdown içerik.
+     * Bildirim için iç projeksiyon: rapor + sahip.
      */
-    record ReportTarget(UUID reportId, UUID userId, String reportType, String email, String reportContent) {
-    }
-
-    /**
-     * Spectiqs markalı HTML mail gövdesi üretir.
-     * Logo: gradient arka planlı köşeli kare + "S" harfi (SVG yoksa metin simgesi).
-     */
-    private String buildMailHtml(ReportTarget target, String modeText, String plainMessage) {
-        String dateStr = LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("dd MMMM yyyy",
-                new java.util.Locale("tr", "TR")));
-        return """
-                <!DOCTYPE html>
-                <html lang="tr">
-                <head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
-                <body style="margin:0;padding:0;background:#F5F7FC;font-family:Arial,Helvetica,sans-serif;">
-                  <table width="100%%" cellpadding="0" cellspacing="0" style="background:#F5F7FC;padding:32px 0;">
-                    <tr><td align="center">
-                      <table width="580" cellpadding="0" cellspacing="0"
-                             style="background:#FFFFFF;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(15,23,42,0.08);">
-                        <!-- Başlık -->
-                        <tr>
-                          <td style="background:linear-gradient(135deg,#111A2B 0%%,#1E2B47 100%%);padding:28px 32px;">
-                            <table cellpadding="0" cellspacing="0">
-                              <tr>
-                                <td style="width:44px;height:44px;border-radius:12px;background:linear-gradient(150deg,#FFB224,#E8890C);
-                                           text-align:center;vertical-align:middle;font-size:22px;font-weight:900;
-                                           color:#080D18;line-height:44px;margin-right:12px;">S</td>
-                                <td style="padding-left:12px;">
-                                  <div style="font-size:22px;font-weight:700;color:#EAF0FB;letter-spacing:-0.02em;">Spectiqs</div>
-                                  <div style="font-size:11px;color:#94A2BF;margin-top:2px;">See What Others Miss.</div>
-                                </td>
-                              </tr>
-                            </table>
-                          </td>
-                        </tr>
-                        <!-- İçerik -->
-                        <tr>
-                          <td style="padding:32px 32px 24px;">
-                            <div style="font-size:11px;color:#8593AC;letter-spacing:0.08em;text-transform:uppercase;
-                                        border-left:3px solid #FFB224;padding-left:10px;margin-bottom:20px;">
-                              Rapor Hazır &nbsp;·&nbsp; %s
-                            </div>
-                            <h2 style="font-size:22px;font-weight:700;color:#0F1729;margin:0 0 12px;line-height:1.3;">
-                              Raporunuz oluşturuldu 🎉
-                            </h2>
-                            <p style="font-size:14px;color:#51607A;line-height:1.7;margin:0 0 20px;">
-                              <strong>%s</strong> analiziniz tamamlandı.
-                              Detaylı sonuçlara Spectiqs panelinizden ulaşabilirsiniz.
-                              Raporun PDF versiyonunu bu e-postanın ekinde bulabilirsiniz.
-                            </p>
-                            <!-- CTA -->
-                            <table cellpadding="0" cellspacing="0" style="margin:24px 0;">
-                              <tr>
-                                <td style="background:#FFB224;border-radius:10px;">
-                                  <a href="https://www.spectiqs.com/app/dashboard"
-                                     style="display:inline-block;padding:13px 28px;font-size:14px;
-                                            font-weight:700;color:#080D18;text-decoration:none;">
-                                    Paneli Aç →
-                                  </a>
-                                </td>
-                              </tr>
-                            </table>
-                            <p style="font-size:13px;color:#8593AC;line-height:1.6;margin:0;">
-                              Bu e-posta %s tarihinde otomatik olarak gönderilmiştir.
-                              Herhangi bir sorunuz için destek ekibimize ulaşabilirsiniz.
-                            </p>
-                          </td>
-                        </tr>
-                        <!-- Alt bilgi -->
-                        <tr>
-                          <td style="background:#F5F7FC;padding:16px 32px;border-top:1px solid #E0E7F0;">
-                            <p style="font-size:11px;color:#8593AC;margin:0;text-align:center;">
-                              © Spectiqs Analytics &nbsp;·&nbsp; spectiqs.com<br/>
-                              Bu bildirimi almak istemiyorsanız hesap ayarlarınızdan devre dışı bırakabilirsiniz.
-                            </p>
-                          </td>
-                        </tr>
-                      </table>
-                    </td></tr>
-                  </table>
-                </body>
-                </html>
-                """.formatted(modeText, modeText, dateStr);
+    record ReportTarget(UUID reportId, UUID userId, String reportType) {
     }
 }
