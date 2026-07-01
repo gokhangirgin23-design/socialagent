@@ -108,10 +108,14 @@ public final class ContentPrompts {
             String idealBackground = extractJsonField(productContext, "idealBackground");
             String avoidBackground = extractJsonField(productContext, "avoidBackground");
             sb.append("=== YÜKLENEN ÜRÜN GÖRSELİ ANALİZİ ===\n");
-            if (productType != null)       sb.append("Ürün: ").append(productType).append("\n");
-            if (idealBackground != null)   sb.append("Bu ürün için İDEAL arka plan: ").append(idealBackground).append("\n");
-            if (avoidBackground != null)   sb.append("ASLA kullanma (ürüne uygunsuz): ").append(avoidBackground).append("\n");
-            sb.append("Referans görseldeki ürünü bu arka plan kurallarıyla sun.\n");
+            if (productType != null)     sb.append("Ürün: ").append(productType).append("\n");
+            if (idealBackground != null) {
+                // Listedeki seçeneklerden rastgele biri alınır — her üretimde farklı arka plan
+                String selected = pickRandom(idealBackground);
+                sb.append("Bu üretim için arka plan: ").append(selected).append("\n");
+            }
+            if (avoidBackground != null) sb.append("ASLA kullanma: ").append(avoidBackground).append("\n");
+            sb.append("Referans görseldeki ürünü bu arka plan ile sun.\n");
             sb.append("=== ÜRÜN GÖRSELİ ANALİZİ SONU ===\n\n");
         }
 
@@ -151,6 +155,18 @@ public final class ContentPrompts {
         sb.append("Görselde platform adları (reels, story, spectiqs, instagram gibi) OLMAYACAK.\n");
 
         return sb.toString();
+    }
+
+    /**
+     * Virgülle ayrılmış listeden rastgele bir seçenek döner.
+     * Her üretim çağrısında farklı arka plan / ortam seçilmesini sağlar.
+     */
+    private static String pickRandom(String commaSeparated) {
+        if (commaSeparated == null || commaSeparated.isBlank()) return commaSeparated;
+        String[] options = commaSeparated.split(",");
+        if (options.length == 1) return commaSeparated.trim();
+        int idx = (int) (Math.random() * options.length);
+        return options[idx].trim();
     }
 
     /**
@@ -216,9 +232,12 @@ public final class ContentPrompts {
             String idealBackground = extractJsonField(productContext, "idealBackground");
             String avoidBackground = extractJsonField(productContext, "avoidBackground");
             sb.append("=== YÜKLENEN ÜRÜN GÖRSELİ ANALİZİ ===\n");
-            if (productType != null)       sb.append("Ürün: ").append(productType).append("\n");
-            if (idealBackground != null)   sb.append("Bu ürün için İDEAL ortam/arka plan: ").append(idealBackground).append("\n");
-            if (avoidBackground != null)   sb.append("ASLA kullanma: ").append(avoidBackground).append("\n");
+            if (productType != null)     sb.append("Ürün: ").append(productType).append("\n");
+            if (idealBackground != null) {
+                String selected = pickRandom(idealBackground);
+                sb.append("Bu üretim için ortam/arka plan: ").append(selected).append("\n");
+            }
+            if (avoidBackground != null) sb.append("ASLA kullanma: ").append(avoidBackground).append("\n");
             sb.append("=== ÜRÜN GÖRSELİ ANALİZİ SONU ===\n\n");
         }
 
