@@ -184,15 +184,24 @@ public class AiAnalysisService {
 		if (imageUrlOrBase64 == null || imageUrlOrBase64.isBlank()) return null;
 		try {
 			String prompt = """
-					Bu görseldeki ürünü analiz et. Şunları belirle:
-					1) Ürün tipi ve adı (mümkün olduğunca spesifik)
-					2) Bu ürün için Instagram fotoğraf çekiminde en uygun arka plan ve ortam
-					3) Kesinlikle kaçınılması gereken arka plan türleri
+					Bu görseldeki ürünü analiz et.
 
-					Şu JSON formatında yanıt ver:
+					1) productType: Ürünün tam adı ve tipi (spesifik ol — "spor kıyafeti" değil "karate elbisesi").
+
+					2) idealBackground: Bu ÜRÜNE ÖZGÜ, profesyonel ürün fotoğrafçılığında kullanılan
+					   2-3 arka plan seçeneği. Kurallar:
+					   - Ürünün sergilendiği veya satıldığı bağlama uygun olmalı.
+					   - Genel spor/açık hava ortamları (koşu pisti, stadyum, spor salonu genel alanı)
+					     KABUL EDİLMEZ — yalnızca bu ürünün doğal kullandığı alan.
+					   - Örnekler: karate elbisesi → "tatami zemin, beyaz stüdyo, Japon minimalist dojo" |
+					     futbol topu → "yeşil çim yakın çekim, beton zemin, stüdyo beyaz fon" |
+					     mutfak bıçağı → "ahşap kesme tahtası, mermer tezgah, koyu stüdyo fonu"
+					   - Her seçenek virgülle ayrılmış, kısa ve net olmalı.
+
+					3) avoidBackground: Bu ürünle açıkça uyumsuz arka planlar (virgülle ayrılmış).
+
+					Yanıt formatı (JSON dışında hiçbir şey yazma):
 					{"productType": "...", "idealBackground": "...", "avoidBackground": "..."}
-
-					JSON dışında açıklama yazma.
 					""";
 
 			ImageContent imgContent;

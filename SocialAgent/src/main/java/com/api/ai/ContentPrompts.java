@@ -122,11 +122,11 @@ public final class ContentPrompts {
             sb.append("=== YÜKLENEN ÜRÜN GÖRSELİ ANALİZİ ===\n");
             if (productType != null)     sb.append("Ürün: ").append(productType).append("\n");
             if (idealBackground != null) {
-                // Listedeki seçeneklerden rastgele biri alınır — her üretimde farklı arka plan
-                String selected = pickRandom(idealBackground);
+                // avoidBackground listedeki yasak kelimeler ayıklanarak rastgele seçilir
+                String selected = pickRandom(idealBackground, avoidBackground);
                 sb.append("Bu üretim için arka plan: ").append(selected).append("\n");
             }
-            if (avoidBackground != null) sb.append("ASLA kullanma: ").append(avoidBackground).append("\n");
+            if (avoidBackground != null) sb.append("KESINLIKLE KULLANMA: ").append(avoidBackground).append("\n");
             sb.append("Referans görseldeki ürünü bu arka plan ile sun.\n");
             sb.append("=== ÜRÜN GÖRSELİ ANALİZİ SONU ===\n\n");
         }
@@ -175,14 +175,31 @@ public final class ContentPrompts {
 
     /**
      * Virgülle ayrılmış listeden rastgele bir seçenek döner.
+     * avoidList verilirse o listedeki kelimelerden herhangi birini içeren seçenekler elenir.
      * Her üretim çağrısında farklı arka plan / ortam seçilmesini sağlar.
      */
-    private static String pickRandom(String commaSeparated) {
+    private static String pickRandom(String commaSeparated, String avoidList) {
         if (commaSeparated == null || commaSeparated.isBlank()) return commaSeparated;
         String[] options = commaSeparated.split(",");
-        if (options.length == 1) return commaSeparated.trim();
-        int idx = (int) (Math.random() * options.length);
-        return options[idx].trim();
+
+        // avoidList'teki anahtar kelimeleri içeren seçenekleri elenmiş liste dışında bırak
+        String[] avoidTokens = (avoidList != null && !avoidList.isBlank())
+                ? avoidList.toLowerCase().split(",") : new String[0];
+
+        java.util.List<String> valid = new java.util.ArrayList<>();
+        for (String opt : options) {
+            String lower = opt.toLowerCase();
+            boolean blocked = false;
+            for (String avoid : avoidTokens) {
+                String token = avoid.trim();
+                if (!token.isBlank() && lower.contains(token)) { blocked = true; break; }
+            }
+            if (!blocked) valid.add(opt.trim());
+        }
+
+        // Geçerli seçenek yoksa filtreden bağımsız rastgele seç
+        String[] pool = valid.isEmpty() ? options : valid.toArray(new String[0]);
+        return pool[(int) (Math.random() * pool.length)].trim();
     }
 
     /**
@@ -261,10 +278,11 @@ public final class ContentPrompts {
             sb.append("=== YÜKLENEN ÜRÜN GÖRSELİ ANALİZİ ===\n");
             if (productType != null)     sb.append("Ürün: ").append(productType).append("\n");
             if (idealBackground != null) {
-                String selected = pickRandom(idealBackground);
+                // avoidBackground listedeki yasak kelimeler ayıklanarak rastgele seçilir
+                String selected = pickRandom(idealBackground, avoidBackground);
                 sb.append("Bu üretim için ortam/arka plan: ").append(selected).append("\n");
             }
-            if (avoidBackground != null) sb.append("ASLA kullanma: ").append(avoidBackground).append("\n");
+            if (avoidBackground != null) sb.append("KESİNLİKLE KULLANMA: ").append(avoidBackground).append("\n");
             sb.append("=== ÜRÜN GÖRSELİ ANALİZİ SONU ===\n\n");
         }
 
