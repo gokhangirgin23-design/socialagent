@@ -70,10 +70,6 @@ public class ContentPipelineService {
         markProcessing(req);
 
         try {
-            // ==== GEÇİCİ TEST — bakiye koruma doğrulama — deploy sonrası SİL ====
-            if (Boolean.TRUE) throw new RuntimeException("[GEÇİCİ TEST] İçerik pipeline kasıtlı hata: bakiye düşmemeli.");
-            // ==== GEÇİCİ TEST SONU ====
-
             String reportContent = loadReportContent(req.getReportId());
             if (reportContent == null || reportContent.isBlank()) {
                 log.warn("Rapor içeriği bulunamadı: reportId={}", req.getReportId());

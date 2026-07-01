@@ -27,8 +27,7 @@ spring:
     schemas: test_schema
     default-schema: test_schema
 
-# ==== GEÇİCİ TEST — bakiye koruma doğrulama — deploy sonrası false'a al ====
+# Test ortamında ödeme kapısı varsayılan olarak kapalı
 app:
   payment:
-    enabled: ${PAYMENT_ENABLED:true}
-  # ==== GEÇİCİ TEST SONU ====
+    enabled: ${PAYMENT_ENABLED:false}

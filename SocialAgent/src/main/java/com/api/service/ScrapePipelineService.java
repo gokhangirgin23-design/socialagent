@@ -93,10 +93,6 @@ public class ScrapePipelineService {
         // İşleme başladı (PENDING -> PROCESSING)
         markProcessing(requestId);
         try {
-            // ==== GEÇİCİ TEST — bakiye koruma doğrulama — deploy sonrası SİL ====
-            if (Boolean.TRUE) throw new RuntimeException("[GEÇİCİ TEST] Rapor pipeline kasıtlı hata: bakiye düşmemeli.");
-            // ==== GEÇİCİ TEST SONU ====
-
             // 2) Moda göre hedefleri çöz
             List<ScrapeTarget> targets = targetResolver.resolve(request);
             if (targets.isEmpty()) {
