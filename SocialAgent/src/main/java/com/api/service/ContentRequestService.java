@@ -3,6 +3,7 @@ package com.api.service;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -113,7 +114,8 @@ public class ContentRequestService {
         entity.setUserId(userId);
         entity.setReportId(request.getReportId());
         entity.setContentType(contentType);
-        entity.setProductImageUrl(request.getProductImageUrl());
+        // base64 data URL ise S3'e yükle; DB'de sadece S3 URL saklansın (base64 asla yazılmaz)
+        entity.setProductImageUrl(uploadProductImageIfPresent(request.getProductImageUrl(), userId, entity.getContentRequestId()));
         entity.setIncludeTextInVisual(request.isIncludeTextInVisual());
         entity.setStatus(ContentRequestStatus.PENDING);
         entity.setEditCount(0);
@@ -289,6 +291,31 @@ public class ContentRequestService {
         dto.setSuggestedPostTime(rs.getString("suggested_post_time"));
         dto.setVisualUrls(parseVisualUrls(rs.getString("visual_urls")));
         return dto;
+    }
+
+    /**
+     * Ürün görseli base64 data URL ise S3'e yükleyip URL döner.
+     * S3 kapalıysa veya dönüştürme başarısızsa null döner — base64 asla DB'ye yazılmaz.
+     */
+    private String uploadProductImageIfPresent(String rawUrl, UUID userId, UUID contentRequestId) {
+        if (rawUrl == null || rawUrl.isBlank()) return null;
+        if (!rawUrl.startsWith("data:")) {
+            // Zaten HTTP URL ise direkt kullan (tekrar yükleme yok)
+            return rawUrl;
+        }
+        try {
+            int comma = rawUrl.indexOf(',');
+            if (comma < 0) return null;
+            byte[] imgBytes = Base64.getDecoder().decode(rawUrl.substring(comma + 1));
+            String s3Url = s3UploadService.uploadProductImage(imgBytes, userId, contentRequestId);
+            if (s3Url == null) {
+                log.info("Ürün görseli S3'e yüklenemedi; product_image_url null bırakıldı: contentRequestId={}", contentRequestId);
+            }
+            return s3Url;
+        } catch (Exception ex) {
+            log.warn("Ürün görseli dönüştürme hatası; product_image_url null: hata={}", ex.getMessage());
+            return null;
+        }
     }
 
     private List<String> parseVisualUrls(String json) {

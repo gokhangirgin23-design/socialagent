@@ -91,8 +91,22 @@ public class ContentPipelineService {
                 }
             }
 
+            // Ürün görseli varsa Gemini Vision ile ürün tipi + ideal arka plan analizi yap
+            String productContext = null;
+            if (req.getProductImageUrl() != null && !req.getProductImageUrl().isBlank()) {
+                productContext = aiAnalysisService.analyzeProductImage(req.getProductImageUrl());
+                log.info("Ürün görseli analizi: contentRequestId={}, ürünContext={}",
+                        contentRequestId, productContext != null ? "OK" : "atlandı");
+            }
+
             // Görsel üretim + S3 yükleme
-            VisualResult visual = generateAndUploadVisuals(req, brandDna, reportContent, sectorContext);
+            VisualResult visual = generateAndUploadVisuals(req, brandDna, reportContent, sectorContext, productContext);
+
+            // Ürün görseli kullanıldı; DB'den temizle (S3'teki geçici dosya referansı artık gerekmez)
+            if (req.getProductImageUrl() != null) {
+                req.setProductImageUrl(null);
+                saveQuiet(req);
+            }
 
             // Görsel/video üretim servisi aktifken üretim başarısızsa FAILED — bakiye düşülmez
             boolean imageServiceActive = req.getContentType() == ContentType.REEL
@@ -306,7 +320,7 @@ public class ContentPipelineService {
     }
 
     private VisualResult generateAndUploadVisuals(ContentRequest req, String brandDna,
-            String reportContent, String sectorContext) {
+            String reportContent, String sectorContext, String productContext) {
         ContentType type = req.getContentType();
         List<String> urls = new ArrayList<>();
         String editInstruction = req.getEditInstruction();
@@ -315,19 +329,19 @@ public class ContentPipelineService {
             String[] roles = {"HOOK", "CONTENT", "CTA"};
             for (int i = 0; i < roles.length; i++) {
                 String prompt = ContentPrompts.forVisual(brandDna, reportContent, "CAROUSEL", i, roles[i],
-                        req.isIncludeTextInVisual(), editInstruction, sectorContext);
+                        req.isIncludeTextInVisual(), editInstruction, sectorContext, productContext);
                 String url = generateAndUpload(req, prompt, i);
                 if (url != null) urls.add(url);
             }
             return new VisualResult(urls, roles.length);
         } else if (type == ContentType.REEL) {
-            String prompt = ContentPrompts.forVideo(brandDna, reportContent, editInstruction, sectorContext);
+            String prompt = ContentPrompts.forVideo(brandDna, reportContent, editInstruction, sectorContext, productContext);
             String url = generateAndUploadVideo(req, prompt, editInstruction);
             if (url != null) urls.add(url);
             return new VisualResult(urls, 1);
         } else {
             String prompt = ContentPrompts.forVisual(brandDna, reportContent, type.name(), 0, null,
-                    req.isIncludeTextInVisual(), editInstruction, sectorContext);
+                    req.isIncludeTextInVisual(), editInstruction, sectorContext, productContext);
             String url = generateAndUpload(req, prompt, 0);
             if (url != null) urls.add(url);
             return new VisualResult(urls, 1);
@@ -340,7 +354,7 @@ public class ContentPipelineService {
             // Veo pasifse Gemini ile statik görsel fallback (sektorContext burada null — kısıt zaten prompt'ta)
             if (!veoVideoService.isActive()) {
                 log.info("Veo pasif; REEL için Gemini görsel fallback: contentRequestId={}", req.getContentRequestId());
-                String imagePrompt = ContentPrompts.forVisual(null, null, "REEL", 0, null, false, editInstruction, null);
+                String imagePrompt = ContentPrompts.forVisual(null, null, "REEL", 0, null, false, editInstruction, null, null);
                 return generateAndUpload(req, imagePrompt, 0);
             }
             log.warn("Veo video üretilemedi: contentRequestId={}", req.getContentRequestId());

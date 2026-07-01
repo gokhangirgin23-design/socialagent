@@ -76,10 +76,12 @@ public final class ContentPrompts {
      * @param includeText      görselde metin olsun mu
      * @param editInstruction  kullanıcının düzenleme talimatı (null ise ilk üretim)
      * @param sectorContext    kullanıcının sektör/alt sektörü (null olabilir)
+     * @param productContext   Gemini Vision'ın ürün görselinden çıkardığı JSON (productType, idealBackground, avoidBackground)
      */
     public static String forVisual(String brandDnaJson, String reportContent,
                                    String contentType, int slideIndex, String slideRole,
-                                   boolean includeText, String editInstruction, String sectorContext) {
+                                   boolean includeText, String editInstruction,
+                                   String sectorContext, String productContext) {
         StringBuilder sb = new StringBuilder();
 
         // Düzenleme talimatı varsa en üste ve en güçlü biçimde yaz — AI bunu görmezden gelemez
@@ -93,11 +95,24 @@ public final class ContentPrompts {
 
         // Kullanıcının gerçek sektörü — brand DNA'dan daha güvenilir; sert kısıt
         if (sectorContext != null && !sectorContext.isBlank()) {
-            sb.append("=== SEKTÖR KISITI (MUTLAK ÖNCELIK) ===\n");
+            sb.append("=== SEKTÖR KISITI (MUTLAK ÖNCELİK) ===\n");
             sb.append("Bu kullanıcının faaliyet gösterdiği sektör: ").append(sectorContext).append("\n");
             sb.append("Görselde SADECE bu sektöre uygun ürün, hizmet veya ortam göster.\n");
             sb.append("Başka sektörden ürün, yiyecek veya nesne ASLA yer almasın.\n");
             sb.append("=== SEKTÖR KISITI SONU ===\n\n");
+        }
+
+        // Ürün görseli analizi: Gemini Vision'ın belirlediği ürün tipi ve arka plan kısıtları
+        if (productContext != null && !productContext.isBlank()) {
+            String productType = extractJsonField(productContext, "productType");
+            String idealBackground = extractJsonField(productContext, "idealBackground");
+            String avoidBackground = extractJsonField(productContext, "avoidBackground");
+            sb.append("=== YÜKLENEN ÜRÜN GÖRSELİ ANALİZİ ===\n");
+            if (productType != null)       sb.append("Ürün: ").append(productType).append("\n");
+            if (idealBackground != null)   sb.append("Bu ürün için İDEAL arka plan: ").append(idealBackground).append("\n");
+            if (avoidBackground != null)   sb.append("ASLA kullanma (ürüne uygunsuz): ").append(avoidBackground).append("\n");
+            sb.append("Referans görseldeki ürünü bu arka plan kurallarıyla sun.\n");
+            sb.append("=== ÜRÜN GÖRSELİ ANALİZİ SONU ===\n\n");
         }
 
         if (brandDnaJson != null && !brandDnaJson.isBlank()) {
@@ -171,9 +186,10 @@ public final class ContentPrompts {
      * @param reportContent   rapor içeriği (gelişim önerileri alınır)
      * @param editInstruction kullanıcının düzenleme talimatı (null ise ilk üretim)
      * @param sectorContext   kullanıcının sektör/alt sektörü (null olabilir)
+     * @param productContext  Gemini Vision'ın ürün görselinden çıkardığı JSON (null olabilir)
      */
     public static String forVideo(String brandDnaJson, String reportContent,
-                                  String editInstruction, String sectorContext) {
+                                  String editInstruction, String sectorContext, String productContext) {
         StringBuilder sb = new StringBuilder();
 
         // Düzenleme talimatı varsa en üste ve en güçlü biçimde yaz
@@ -187,11 +203,23 @@ public final class ContentPrompts {
 
         // Kullanıcının gerçek sektörü — brand DNA'dan daha güvenilir; sert kısıt
         if (sectorContext != null && !sectorContext.isBlank()) {
-            sb.append("=== SEKTÖR KISITI (MUTLAK ÖNCELIK) ===\n");
+            sb.append("=== SEKTÖR KISITI (MUTLAK ÖNCELİK) ===\n");
             sb.append("Bu kullanıcının faaliyet gösterdiği sektör: ").append(sectorContext).append("\n");
             sb.append("Videoda SADECE bu sektöre uygun ürün, hizmet veya ortam göster.\n");
             sb.append("Başka sektörden ürün veya nesne ASLA yer almasın.\n");
             sb.append("=== SEKTÖR KISITI SONU ===\n\n");
+        }
+
+        // Ürün görseli analizi: ürün tipine göre arka plan kısıtı
+        if (productContext != null && !productContext.isBlank()) {
+            String productType = extractJsonField(productContext, "productType");
+            String idealBackground = extractJsonField(productContext, "idealBackground");
+            String avoidBackground = extractJsonField(productContext, "avoidBackground");
+            sb.append("=== YÜKLENEN ÜRÜN GÖRSELİ ANALİZİ ===\n");
+            if (productType != null)       sb.append("Ürün: ").append(productType).append("\n");
+            if (idealBackground != null)   sb.append("Bu ürün için İDEAL ortam/arka plan: ").append(idealBackground).append("\n");
+            if (avoidBackground != null)   sb.append("ASLA kullanma: ").append(avoidBackground).append("\n");
+            sb.append("=== ÜRÜN GÖRSELİ ANALİZİ SONU ===\n\n");
         }
 
         if (brandDnaJson != null && !brandDnaJson.isBlank()) {

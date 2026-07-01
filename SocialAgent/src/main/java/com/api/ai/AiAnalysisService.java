@@ -169,6 +169,58 @@ public class AiAnalysisService {
 	}
 
 	/**
+	 * Kullanıcının yüklediği ürün görselini Gemini Vision ile analiz eder.
+	 * Ürün tipi, ideal arka plan ve kaçınılması gerekenler JSON olarak döner.
+	 * İçerik üretiminde görsel prompt'a arka plan kısıtı olarak enjekte edilir.
+	 * Model yoksa veya analiz başarısız olursa null döner — pipeline çalışmaya devam eder.
+	 *
+	 * @param imageUrlOrBase64 S3 URL'i veya data:image/... base64 formatı
+	 */
+	public String analyzeProductImage(String imageUrlOrBase64) {
+		if (geminiModel == null) {
+			log.debug("Gemini modeli yok; ürün görseli analizi atlandı.");
+			return null;
+		}
+		if (imageUrlOrBase64 == null || imageUrlOrBase64.isBlank()) return null;
+		try {
+			String prompt = """
+					Bu görseldeki ürünü analiz et. Şunları belirle:
+					1) Ürün tipi ve adı (mümkün olduğunca spesifik)
+					2) Bu ürün için Instagram fotoğraf çekiminde en uygun arka plan ve ortam
+					3) Kesinlikle kaçınılması gereken arka plan türleri
+
+					Şu JSON formatında yanıt ver:
+					{"productType": "...", "idealBackground": "...", "avoidBackground": "..."}
+
+					JSON dışında açıklama yazma.
+					""";
+
+			ImageContent imgContent;
+			if (imageUrlOrBase64.startsWith("data:")) {
+				// data:image/jpeg;base64,... → base64 datayı ve mime type'ı ayır
+				int semicolon = imageUrlOrBase64.indexOf(';');
+				int comma = imageUrlOrBase64.indexOf(',');
+				String mimeType = (semicolon > 5) ? imageUrlOrBase64.substring(5, semicolon) : "image/jpeg";
+				String base64Data = (comma >= 0) ? imageUrlOrBase64.substring(comma + 1) : imageUrlOrBase64;
+				// TODO(uyum): ImageContent.from(base64, mimeType) imzasını LangChain4j sürümüne göre doğrula
+				imgContent = ImageContent.from(base64Data, mimeType);
+			} else {
+				imgContent = ImageContent.from(imageUrlOrBase64);
+			}
+
+			UserMessage message = UserMessage.from(TextContent.from(prompt), imgContent);
+			ChatResponse response = geminiModel.chat(message);
+			String raw = response.aiMessage().text();
+			String result = cleanJson(raw);
+			log.info("Ürün görseli analizi tamamlandı: sonuç={}", result);
+			return result;
+		} catch (Exception ex) {
+			log.warn("Ürün görseli analizi başarısız (görsel üretim devam eder): hata={}", ex.getMessage());
+			return null;
+		}
+	}
+
+	/**
 	 * Brand DNA JSON üretir (içerik üretimi için).
 	 * generateInsightJson ile aynı OpenAI modelini kullanır.
 	 * Model yoksa null döner → pipeline atlar.

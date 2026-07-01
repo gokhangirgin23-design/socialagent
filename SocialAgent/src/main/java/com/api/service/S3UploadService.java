@@ -124,6 +124,32 @@ public class S3UploadService {
         }
     }
 
+    /**
+     * Kullanıcının yüklediği ürün görselini S3'e kaydeder (geçici; pipeline bittikten sonra silinir).
+     * S3 kapalıysa null döner — base64 asla DB'ye yazılmaz.
+     */
+    public String uploadProductImage(byte[] imageBytes, UUID userId, UUID contentRequestId) {
+        if (imageBytes == null) return null;
+        if (s3Client == null) {
+            log.warn("S3 kapalı; ürün görseli yüklenemedi: contentRequestId={}", contentRequestId);
+            return null;
+        }
+        String mimeType = detectMimeType(imageBytes);
+        String ext = mimeType.equals("image/jpeg") ? "jpg" : mimeType.equals("image/webp") ? "webp" : "png";
+        String key = "product/%s/%s/product.%s".formatted(userId, contentRequestId, ext);
+        try {
+            s3Client.putObject(
+                    PutObjectRequest.builder().bucket(bucket).key(key).contentType(mimeType).build(),
+                    RequestBody.fromBytes(imageBytes));
+            String s3Url = "https://%s.s3.%s.amazonaws.com/%s".formatted(bucket, region, key);
+            log.info("Ürün görseli S3'e yüklendi: key={}", key);
+            return s3Url;
+        } catch (Exception ex) {
+            log.warn("Ürün görseli S3 yükleme başarısız: hata={}", ex.getMessage());
+            return null;
+        }
+    }
+
     /** S3 URL'ini 1 saatlik pre-signed URL'e çevirir. data: URL ise dokunmaz. */
     public String presign(String s3Url) {
         if (s3Presigner == null || s3Url == null || s3Url.startsWith("data:")) return s3Url;
