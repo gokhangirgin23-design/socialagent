@@ -91,18 +91,26 @@ public class ContentPipelineService {
                 }
             }
 
-            // Ürün görseli varsa Gemini Vision ile ürün tipi + ideal arka plan analizi yap
+            // Ürün görseli: private S3 URL → pre-signed URL (1 saat geçerli)
+            // Hem OpenAI (kendi HTTP fetch'i) hem Gemini Vision (Google sunucusundan fetch) kabul eder.
+            // Byte indirip base64'e çevirmeye gerek yok.
+            String productImageData = s3UploadService.presign(req.getProductImageUrl());
+            if (req.getProductImageUrl() != null && productImageData == null) {
+                log.warn("Ürün görseli pre-sign başarısız; referanssız devam ediliyor: contentRequestId={}", contentRequestId);
+            }
+
+            // Gemini Vision ile ürün tipi + ideal arka plan analizi
             String productContext = null;
-            if (req.getProductImageUrl() != null && !req.getProductImageUrl().isBlank()) {
-                productContext = aiAnalysisService.analyzeProductImage(req.getProductImageUrl());
+            if (productImageData != null) {
+                productContext = aiAnalysisService.analyzeProductImage(productImageData);
                 log.info("Ürün görseli analizi: contentRequestId={}, ürünContext={}",
                         contentRequestId, productContext != null ? "OK" : "atlandı");
             }
 
-            // Görsel üretim + S3 yükleme
-            VisualResult visual = generateAndUploadVisuals(req, brandDna, reportContent, sectorContext, productContext);
+            // Görsel üretim + S3 yükleme (productImageData ile — S3 URL değil)
+            VisualResult visual = generateAndUploadVisuals(req, brandDna, reportContent, sectorContext, productContext, productImageData);
 
-            // Ürün görseli kullanıldı; DB'den temizle (S3'teki geçici dosya referansı artık gerekmez)
+            // Ürün görseli kullanıldı; DB'den temizle
             if (req.getProductImageUrl() != null) {
                 req.setProductImageUrl(null);
                 saveQuiet(req);
@@ -320,7 +328,7 @@ public class ContentPipelineService {
     }
 
     private VisualResult generateAndUploadVisuals(ContentRequest req, String brandDna,
-            String reportContent, String sectorContext, String productContext) {
+            String reportContent, String sectorContext, String productContext, String productImageData) {
         ContentType type = req.getContentType();
         List<String> urls = new ArrayList<>();
         String editInstruction = req.getEditInstruction();
@@ -330,32 +338,31 @@ public class ContentPipelineService {
             for (int i = 0; i < roles.length; i++) {
                 String prompt = ContentPrompts.forVisual(brandDna, reportContent, "CAROUSEL", i, roles[i],
                         req.isIncludeTextInVisual(), editInstruction, sectorContext, productContext);
-                String url = generateAndUpload(req, prompt, i);
+                String url = generateAndUpload(req, prompt, i, productImageData);
                 if (url != null) urls.add(url);
             }
             return new VisualResult(urls, roles.length);
         } else if (type == ContentType.REEL) {
             String prompt = ContentPrompts.forVideo(brandDna, reportContent, editInstruction, sectorContext, productContext);
-            String url = generateAndUploadVideo(req, prompt, editInstruction);
+            String url = generateAndUploadVideo(req, prompt, editInstruction, productImageData);
             if (url != null) urls.add(url);
             return new VisualResult(urls, 1);
         } else {
             String prompt = ContentPrompts.forVisual(brandDna, reportContent, type.name(), 0, null,
                     req.isIncludeTextInVisual(), editInstruction, sectorContext, productContext);
-            String url = generateAndUpload(req, prompt, 0);
+            String url = generateAndUpload(req, prompt, 0, productImageData);
             if (url != null) urls.add(url);
             return new VisualResult(urls, 1);
         }
     }
 
-    private String generateAndUploadVideo(ContentRequest req, String prompt, String editInstruction) {
-        byte[] videoBytes = veoVideoService.generateVideo(prompt, req.getProductImageUrl());
+    private String generateAndUploadVideo(ContentRequest req, String prompt, String editInstruction, String productImageData) {
+        byte[] videoBytes = veoVideoService.generateVideo(prompt, productImageData);
         if (videoBytes == null) {
-            // Veo pasifse Gemini ile statik görsel fallback (sektorContext burada null — kısıt zaten prompt'ta)
             if (!veoVideoService.isActive()) {
                 log.info("Veo pasif; REEL için Gemini görsel fallback: contentRequestId={}", req.getContentRequestId());
                 String imagePrompt = ContentPrompts.forVisual(null, null, "REEL", 0, null, false, editInstruction, null, null);
-                return generateAndUpload(req, imagePrompt, 0);
+                return generateAndUpload(req, imagePrompt, 0, null);
             }
             log.warn("Veo video üretilemedi: contentRequestId={}", req.getContentRequestId());
             return null;
@@ -363,14 +370,15 @@ public class ContentPipelineService {
         return s3UploadService.uploadVideo(videoBytes, req.getUserId(), req.getContentRequestId());
     }
 
-    private String generateAndUpload(ContentRequest req, String prompt, int index) {
+    private String generateAndUpload(ContentRequest req, String prompt, int index, String productImageData) {
         String size = sizeForType(req.getContentType());
-        byte[] imageBytes = openAiImageService.generateImage(prompt, req.getProductImageUrl(), size);
+        // productImageData: S3'ten SDK ile indirilen base64 data URL (HTTP ile çekilemez; private bucket)
+        byte[] imageBytes = openAiImageService.generateImage(prompt, productImageData, size);
 
         if (imageBytes == null && geminiImageService.isActive()) {
             log.warn("OpenAI görsel başarısız; Gemini fallback deneniyor: contentRequestId={}, index={}",
                     req.getContentRequestId(), index);
-            imageBytes = geminiImageService.generateImage(prompt, req.getProductImageUrl());
+            imageBytes = geminiImageService.generateImage(prompt, productImageData);
         }
 
         if (imageBytes == null) {
