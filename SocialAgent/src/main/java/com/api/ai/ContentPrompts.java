@@ -93,6 +93,18 @@ public final class ContentPrompts {
             sb.append("=== ZORUNLU DEĞİŞİKLİK SONU ===\n\n");
         }
 
+        // Ürün görseli yüklendiyse: ürünü koru, yalnızca arka planı değiştir
+        if (productContext != null && !productContext.isBlank()) {
+            sb.append("=== REFERANS ÜRÜN KORUMA TALİMATI ===\n");
+            sb.append("Kullanıcı kendi ürününün fotoğrafını referans olarak yükledi.\n");
+            sb.append("ZORUNLU KURALLAR:\n");
+            sb.append("1. Referans görseldeki ÜRÜNÜN KENDİSİ (şekil, renk, model, marka) AYNEN korunacak.\n");
+            sb.append("2. YALNIZCA arka plan / ortam değiştirilecek — ürüne dokunulmayacak.\n");
+            sb.append("3. Referans görseldeki üründen FARKLI başka hiçbir ürün, nesne veya öğe eklenmeyecek.\n");
+            sb.append("4. Ürünü kaldırıp yerine başka bir şey koymak KESİNLİKLE YASAK.\n");
+            sb.append("=== REFERANS ÜRÜN KORUMA SONU ===\n\n");
+        }
+
         // Kullanıcının gerçek sektörü — brand DNA'dan daha güvenilir; sert kısıt
         if (sectorContext != null && !sectorContext.isBlank()) {
             sb.append("=== SEKTÖR KISITI (MUTLAK ÖNCELİK) ===\n");
@@ -122,14 +134,18 @@ public final class ContentPrompts {
         if (brandDnaJson != null && !brandDnaJson.isBlank()) {
             sb.append("=== MARKA DNA'SI (SADIK KAL) ===\n");
             sb.append(brandDnaJson).append("\n\n");
-            // mainProductOrService'i JSON'dan parse etmeden regex ile çek ve güçlendir
-            String mainProduct = extractJsonField(brandDnaJson, "mainProductOrService");
-            if (mainProduct != null && !mainProduct.isBlank()) {
-                sb.append("KRİTİK — ÜRÜN TUTARLILIĞI:\n");
-                sb.append("Bu marka '").append(mainProduct).append("' satar/sunar.\n");
-                sb.append("Görselde SADECE bu markanın ürünlerini göster. ");
-                sb.append("Asla başka ürün, yiyecek veya kategori gösterme.\n");
-                sb.append("Ürün görseli verilmemiş olsa bile sadece bu ürün kategorisini yansıt.\n\n");
+            // Ürün görseli yoksa brand DNA'daki ürün tanımıyla görsel yönlendirilir.
+            // Ürün görseli VARSA referans görsel otoritedir — mainProductOrService talimatı atlanır
+            // (aksi hâlde model brand DNA ürününü üretip referans ürünü görmezden gelebilir).
+            if (productContext == null || productContext.isBlank()) {
+                String mainProduct = extractJsonField(brandDnaJson, "mainProductOrService");
+                if (mainProduct != null && !mainProduct.isBlank()) {
+                    sb.append("KRİTİK — ÜRÜN TUTARLILIĞI:\n");
+                    sb.append("Bu marka '").append(mainProduct).append("' satar/sunar.\n");
+                    sb.append("Görselde SADECE bu markanın ürünlerini göster. ");
+                    sb.append("Asla başka ürün, yiyecek veya kategori gösterme.\n");
+                    sb.append("Ürün görseli verilmemiş olsa bile sadece bu ürün kategorisini yansıt.\n\n");
+                }
             }
         }
 
@@ -215,6 +231,17 @@ public final class ContentPrompts {
             sb.append(editInstruction).append("\n");
             sb.append("Bu talimatı tam olarak uygula.\n");
             sb.append("=== ZORUNLU DEĞİŞİKLİK SONU ===\n\n");
+        }
+
+        // Ürün görseli yüklendiyse: ürünü koru, yalnızca arka planı değiştir
+        if (productContext != null && !productContext.isBlank()) {
+            sb.append("=== REFERANS ÜRÜN KORUMA TALİMATI ===\n");
+            sb.append("Kullanıcı kendi ürününün fotoğrafını referans olarak yükledi.\n");
+            sb.append("ZORUNLU KURALLAR:\n");
+            sb.append("1. Referans görseldeki ÜRÜNÜN KENDİSİ (şekil, renk, model, marka) AYNEN korunacak.\n");
+            sb.append("2. YALNIZCA arka plan / ortam değiştirilecek — ürüne dokunulmayacak.\n");
+            sb.append("3. Referans görseldeki üründen FARKLI başka hiçbir ürün veya nesne eklenmeyecek.\n");
+            sb.append("=== REFERANS ÜRÜN KORUMA SONU ===\n\n");
         }
 
         // Kullanıcının gerçek sektörü — brand DNA'dan daha güvenilir; sert kısıt
