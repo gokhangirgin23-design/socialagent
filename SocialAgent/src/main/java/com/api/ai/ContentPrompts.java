@@ -17,8 +17,17 @@ public final class ContentPrompts {
      * @param postsContext   son 10 postun caption özeti
      * @param reportContent  rapor Markdown içeriği
      * @param visualPatterns görsel analizden çıkarılan ürün/stil özeti (null olabilir)
+     * @param sectorContext  kullanıcının güncel sektör/alt-sektör adı — mainProductOrService için sert kısıt
      */
-    public static String forBrandDna(String postsContext, String reportContent, String visualPatterns) {
+    public static String forBrandDna(String postsContext, String reportContent,
+                                     String visualPatterns, String sectorContext) {
+        // Sektör bilgisi varsa en başa mutlak kısıt olarak yaz
+        String sectorBlock = (sectorContext != null && !sectorContext.isBlank())
+                ? "!!! MUTLAK KISIT — SEKTÖR BİLGİSİ !!!\n"
+                  + "Bu kullanıcı şu sektörde faaliyet gösteriyor: " + sectorContext + "\n"
+                  + "mainProductOrService alanı bu sektöre uygun bir ürün/hizmet OLMAK ZORUNDA.\n"
+                  + "Görsellerde başka sektörden ürün ASLA gösterilmemelidir.\n\n"
+                : "";
         String posts = (postsContext != null && !postsContext.isBlank())
                 ? "Kullanıcının son paylaşım caption'ları:\n" + postsContext + "\n\n"
                 : "";
@@ -26,14 +35,14 @@ public final class ContentPrompts {
                 ? "Görsellerin analiz verisi (ürün kategorisi, atmosfer, renkler, çekim stili):\n" + visualPatterns + "\n\n"
                 : "";
         return """
-                %s%sBu analiz raporunu incele:
+                %s%s%sBu analiz raporunu incele:
 
                 %s
 
                 Yukarıdaki tüm verilerden yola çıkarak bu markanın Brand DNA'sını çıkar ve JSON formatında üret.
 
                 Aşağıdaki alanları oluştur:
-                - mainProductOrService: Markanın SATIŞ YAPTIĞI ANA ürün veya hizmet (spesifik olmalı; ör: "Adana kebap, döner ve ızgara yemekleri" veya "kadın spor ayakkabısı"). Görsel analizden ve rapordan çıkar. Bu alan görsel üretimde kritik öneme sahiptir.
+                - mainProductOrService: Markanın SATIŞ YAPTIĞI ANA ürün veya hizmet (spesifik olmalı; ör: "Adana kebap, döner ve ızgara yemekleri" veya "kadın spor ayakkabısı"). Sektör kısıtına uygun olmalı. Bu alan görsel üretimde kritik öneme sahiptir.
                 - brandPersonality: Markanın kişilik özellikleri (3-5 madde)
                 - toneOfVoice: Ses tonu ve iletişim stili
                 - visualStyle: Görsel kimlik — renk, ışık, atmosfer, çekim stili (görsel analizden çıkar; detaylı olmalı)
@@ -50,13 +59,14 @@ public final class ContentPrompts {
                 ÖNEMLI: mainProductOrService ve visualStyle alanları görsel üretim için kullanılacak; mümkün olduğunca spesifik ve detaylı doldur.
                 Eksik bilgi varsa analiz raporundan ve görsel verilerden çıkarım yap.
                 JSON dışında açıklama yazma.
-                """.formatted(posts, visuals, reportContent);
+                """.formatted(sectorBlock, posts, visuals, reportContent);
     }
 
     /**
      * Görsel üretimi için prompt.
      * Brand DNA'daki mainProductOrService ve visualStyle alanları ürün tutarlılığını sağlar.
      * editInstruction varsa görsel üretimde en yüksek öncelikle uygulanır.
+     * sectorContext varsa sektör kısıtı brand DNA'dan önce en güçlü biçimde enjekte edilir.
      *
      * @param brandDnaJson     Brand DNA JSON (null ise markalamadan bağımsız üretilir)
      * @param reportContent    rapor içeriği (gelişim önerileri alınır)
@@ -65,10 +75,11 @@ public final class ContentPrompts {
      * @param slideRole        carousel için slayt rolü (HOOK|CONTENT|CTA)
      * @param includeText      görselde metin olsun mu
      * @param editInstruction  kullanıcının düzenleme talimatı (null ise ilk üretim)
+     * @param sectorContext    kullanıcının sektör/alt sektörü (null olabilir)
      */
     public static String forVisual(String brandDnaJson, String reportContent,
                                    String contentType, int slideIndex, String slideRole,
-                                   boolean includeText, String editInstruction) {
+                                   boolean includeText, String editInstruction, String sectorContext) {
         StringBuilder sb = new StringBuilder();
 
         // Düzenleme talimatı varsa en üste ve en güçlü biçimde yaz — AI bunu görmezden gelemez
@@ -78,6 +89,15 @@ public final class ContentPrompts {
             sb.append(editInstruction).append("\n");
             sb.append("Bu talimatı tam olarak uygula. Bir önceki görselin bu yönü KABUL EDİLMEDİ.\n");
             sb.append("=== ZORUNLU DEĞİŞİKLİK SONU ===\n\n");
+        }
+
+        // Kullanıcının gerçek sektörü — brand DNA'dan daha güvenilir; sert kısıt
+        if (sectorContext != null && !sectorContext.isBlank()) {
+            sb.append("=== SEKTÖR KISITI (MUTLAK ÖNCELIK) ===\n");
+            sb.append("Bu kullanıcının faaliyet gösterdiği sektör: ").append(sectorContext).append("\n");
+            sb.append("Görselde SADECE bu sektöre uygun ürün, hizmet veya ortam göster.\n");
+            sb.append("Başka sektörden ürün, yiyecek veya nesne ASLA yer almasın.\n");
+            sb.append("=== SEKTÖR KISITI SONU ===\n\n");
         }
 
         if (brandDnaJson != null && !brandDnaJson.isBlank()) {
@@ -145,12 +165,15 @@ public final class ContentPrompts {
     /**
      * Instagram Reel / video üretimi için prompt.
      * editInstruction varsa en yüksek öncelikle uygulanır.
+     * sectorContext varsa sektör kısıtı brand DNA'dan önce enjekte edilir.
      *
      * @param brandDnaJson    Brand DNA JSON (null olabilir)
      * @param reportContent   rapor içeriği (gelişim önerileri alınır)
      * @param editInstruction kullanıcının düzenleme talimatı (null ise ilk üretim)
+     * @param sectorContext   kullanıcının sektör/alt sektörü (null olabilir)
      */
-    public static String forVideo(String brandDnaJson, String reportContent, String editInstruction) {
+    public static String forVideo(String brandDnaJson, String reportContent,
+                                  String editInstruction, String sectorContext) {
         StringBuilder sb = new StringBuilder();
 
         // Düzenleme talimatı varsa en üste ve en güçlü biçimde yaz
@@ -160,6 +183,15 @@ public final class ContentPrompts {
             sb.append(editInstruction).append("\n");
             sb.append("Bu talimatı tam olarak uygula.\n");
             sb.append("=== ZORUNLU DEĞİŞİKLİK SONU ===\n\n");
+        }
+
+        // Kullanıcının gerçek sektörü — brand DNA'dan daha güvenilir; sert kısıt
+        if (sectorContext != null && !sectorContext.isBlank()) {
+            sb.append("=== SEKTÖR KISITI (MUTLAK ÖNCELIK) ===\n");
+            sb.append("Bu kullanıcının faaliyet gösterdiği sektör: ").append(sectorContext).append("\n");
+            sb.append("Videoda SADECE bu sektöre uygun ürün, hizmet veya ortam göster.\n");
+            sb.append("Başka sektörden ürün veya nesne ASLA yer almasın.\n");
+            sb.append("=== SEKTÖR KISITI SONU ===\n\n");
         }
 
         if (brandDnaJson != null && !brandDnaJson.isBlank()) {

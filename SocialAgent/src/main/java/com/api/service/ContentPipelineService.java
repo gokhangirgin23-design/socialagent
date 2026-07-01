@@ -77,10 +77,14 @@ public class ContentPipelineService {
                 return;
             }
 
+            // Kullanıcının güncel sektör/alt sektörünü DB'den çek (görsel üretimde sert kısıt)
+            String sectorContext = loadUserSectorContext(req.getUserId());
+            log.info("Sektör bağlamı yüklendi: contentRequestId={}, sektör={}", contentRequestId, sectorContext);
+
             // Brand DNA: önbellekte varsa kullan, yoksa üret
             String brandDna = req.getBrandDnaJson();
             if (brandDna == null || brandDna.isBlank()) {
-                brandDna = generateBrandDna(req, reportContent);
+                brandDna = generateBrandDna(req, reportContent, sectorContext);
                 if (brandDna != null) {
                     req.setBrandDnaJson(brandDna);
                     saveQuiet(req);
@@ -88,7 +92,7 @@ public class ContentPipelineService {
             }
 
             // Görsel üretim + S3 yükleme
-            VisualResult visual = generateAndUploadVisuals(req, brandDna, reportContent);
+            VisualResult visual = generateAndUploadVisuals(req, brandDna, reportContent, sectorContext);
 
             // Görsel/video üretim servisi aktifken üretim başarısızsa FAILED — bakiye düşülmez
             boolean imageServiceActive = req.getContentType() == ContentType.REEL
@@ -130,12 +134,12 @@ public class ContentPipelineService {
     // Brand DNA
     // ============================================================
 
-    private String generateBrandDna(ContentRequest req, String reportContent) {
+    private String generateBrandDna(ContentRequest req, String reportContent, String sectorContext) {
         // Kullanıcının kendi hesabına ait son 10 post caption'ını al
         String postsContext = loadOwnPostsCaptions(req.getReportId());
         // Görsel analiz verilerini al (ürün kategorisi, atmosfer, renkler, çekim stili)
         String visualPatterns = loadVisualPatterns(req.getReportId());
-        String prompt = ContentPrompts.forBrandDna(postsContext, reportContent, visualPatterns);
+        String prompt = ContentPrompts.forBrandDna(postsContext, reportContent, visualPatterns, sectorContext);
         String dna = aiAnalysisService.generateBrandDna(prompt);
         if (dna != null) {
             log.info("Brand DNA üretildi: contentRequestId={}", req.getContentRequestId());
@@ -144,6 +148,48 @@ public class ContentPipelineService {
                     req.getContentRequestId());
         }
         return dna;
+    }
+
+    /**
+     * Kullanıcının DB'deki güncel sektör ve alt sektör adını yükler.
+     * Görsel üretimde ürün kategorisini garantilemek için sert kısıt olarak kullanılır.
+     * user_info ⋈ sector ⋈ subsector — eski stil "=" (CLAUDE.md Madde 6).
+     */
+    private String loadUserSectorContext(UUID userId) {
+        // Alt sektörü de olan kullanıcı için tam bağlam
+        String sqlFull = """
+                SELECT s.name AS sector_name, ss.name AS subsector_name
+                FROM user_info ui, sector s, subsector ss
+                WHERE ui.sector_id = s.sector_id
+                  AND ui.subsector_id = ss.subsector_id
+                  AND ui.user_id = ?
+                """;
+        try {
+            List<String[]> rows = jdbcTemplate.query(sqlFull, (rs, rowNum) ->
+                    new String[]{rs.getString("sector_name"), rs.getString("subsector_name")}, userId);
+            if (!rows.isEmpty()) {
+                return "Sektör: " + rows.get(0)[0] + ", Alt Sektör: " + rows.get(0)[1];
+            }
+        } catch (Exception ex) {
+            log.warn("Sektör bağlamı (full) yüklenemedi: hata={}", ex.getMessage());
+        }
+
+        // Alt sektörü yoksa yalnız sektör
+        String sqlSector = """
+                SELECT s.name AS sector_name
+                FROM user_info ui, sector s
+                WHERE ui.sector_id = s.sector_id
+                  AND ui.user_id = ?
+                """;
+        try {
+            List<String> rows = jdbcTemplate.queryForList(sqlSector, String.class, userId);
+            if (!rows.isEmpty()) {
+                return "Sektör: " + rows.get(0);
+            }
+        } catch (Exception ex) {
+            log.warn("Sektör bağlamı yüklenemedi: hata={}", ex.getMessage());
+        }
+        return null;
     }
 
     private String loadOwnPostsCaptions(UUID reportId) {
@@ -259,7 +305,8 @@ public class ContentPipelineService {
         int failCount()     { return expected - urls.size(); }
     }
 
-    private VisualResult generateAndUploadVisuals(ContentRequest req, String brandDna, String reportContent) {
+    private VisualResult generateAndUploadVisuals(ContentRequest req, String brandDna,
+            String reportContent, String sectorContext) {
         ContentType type = req.getContentType();
         List<String> urls = new ArrayList<>();
         String editInstruction = req.getEditInstruction();
@@ -268,19 +315,19 @@ public class ContentPipelineService {
             String[] roles = {"HOOK", "CONTENT", "CTA"};
             for (int i = 0; i < roles.length; i++) {
                 String prompt = ContentPrompts.forVisual(brandDna, reportContent, "CAROUSEL", i, roles[i],
-                        req.isIncludeTextInVisual(), editInstruction);
+                        req.isIncludeTextInVisual(), editInstruction, sectorContext);
                 String url = generateAndUpload(req, prompt, i);
                 if (url != null) urls.add(url);
             }
             return new VisualResult(urls, roles.length);
         } else if (type == ContentType.REEL) {
-            String prompt = ContentPrompts.forVideo(brandDna, reportContent, editInstruction);
+            String prompt = ContentPrompts.forVideo(brandDna, reportContent, editInstruction, sectorContext);
             String url = generateAndUploadVideo(req, prompt, editInstruction);
             if (url != null) urls.add(url);
             return new VisualResult(urls, 1);
         } else {
             String prompt = ContentPrompts.forVisual(brandDna, reportContent, type.name(), 0, null,
-                    req.isIncludeTextInVisual(), editInstruction);
+                    req.isIncludeTextInVisual(), editInstruction, sectorContext);
             String url = generateAndUpload(req, prompt, 0);
             if (url != null) urls.add(url);
             return new VisualResult(urls, 1);
@@ -290,10 +337,10 @@ public class ContentPipelineService {
     private String generateAndUploadVideo(ContentRequest req, String prompt, String editInstruction) {
         byte[] videoBytes = veoVideoService.generateVideo(prompt, req.getProductImageUrl());
         if (videoBytes == null) {
-            // Veo pasifse Gemini ile statik görsel fallback
+            // Veo pasifse Gemini ile statik görsel fallback (sektorContext burada null — kısıt zaten prompt'ta)
             if (!veoVideoService.isActive()) {
                 log.info("Veo pasif; REEL için Gemini görsel fallback: contentRequestId={}", req.getContentRequestId());
-                String imagePrompt = ContentPrompts.forVisual(null, null, "REEL", 0, null, false, editInstruction);
+                String imagePrompt = ContentPrompts.forVisual(null, null, "REEL", 0, null, false, editInstruction, null);
                 return generateAndUpload(req, imagePrompt, 0);
             }
             log.warn("Veo video üretilemedi: contentRequestId={}", req.getContentRequestId());
