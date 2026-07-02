@@ -88,6 +88,9 @@ app:
     # Sektör top-N (D1 -> 5) ve hesap başına son gönderi (-> 5)
     top-profiles-limit: ${APIFY_TOP_PROFILES:5}
     recent-posts-limit: ${APIFY_RECENT_POSTS:5}
+    # Hedef tipine göre post limiti: kendi hesabı 5, rakip hesap 2 (rapor süresini kısaltmak için)
+    own-posts-limit: ${APIFY_OWN_POSTS:5}
+    competitor-posts-limit: ${APIFY_COMPETITOR_POSTS:2}
     # run-sync okuma zaman aşımı (sn)
     timeout-seconds: ${APIFY_TIMEOUT_SECONDS:120}
   # ===== FAZ 5: Worker (RabbitMQ consumer) =====

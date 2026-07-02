@@ -89,9 +89,12 @@ public final class ContentPrompts {
         // Düzenleme talimatı varsa en üste ve en güçlü biçimde yaz — AI bunu görmezden gelemez
         if (editInstruction != null && !editInstruction.isBlank()) {
             sb.append("=== ZORUNLU DEĞİŞİKLİK TALİMATI (EN YÜKSEK ÖNCELİK) ===\n");
-            sb.append("Kullanıcı şu değişikliği kesinlikle istiyor:\n");
+            sb.append("Sana referans olarak bir önceki üretilen görsel verildi. Bu bir YENİDEN ÜRETİM değil, bir DÜZENLEMEDİR.\n");
+            sb.append("Kullanıcı SADECE şu değişikliği istiyor:\n");
             sb.append(editInstruction).append("\n");
-            sb.append("Bu talimatı tam olarak uygula. Bir önceki görselin bu yönü KABUL EDİLMEDİ.\n");
+            sb.append("KURAL: Yalnızca yukarıda belirtilen değişikliği uygula. Kompozisyon, ürün, arka plan, ");
+            sb.append("renkler, ışık, açı, çekim stili ve talimatta geçmeyen HER ŞEY referans görseldeki ile ");
+            sb.append("BİREBİR AYNI kalacak. Referans görseli sıfırdan yeniden hayal ETME.\n");
             sb.append("=== ZORUNLU DEĞİŞİKLİK SONU ===\n\n");
         }
 

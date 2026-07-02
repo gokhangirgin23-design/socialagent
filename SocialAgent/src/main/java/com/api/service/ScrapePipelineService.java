@@ -99,9 +99,6 @@ public class ScrapePipelineService {
                 log.info("Rapor isteği için hedef hesap çıkmadı: requestId={}, tip={}",
                         requestId, request.getReportType());
             } else {
-                // Çekilecek gönderi sayısı (config; URL başına)
-                int recentLimit = appProperties.getApify().getRecentPostsLimit();
-
                 int totalInserted = 0;
                 // 3) Her hedef için pipeline
                 for (ScrapeTarget target : targets) {
@@ -112,6 +109,9 @@ public class ScrapePipelineService {
                         socialPostService.relinkExistingPosts(requestId, target);
                         continue;
                     }
+                    // Çekilecek gönderi sayısı hedef tipine göre değişir (rapor süresini kısaltmak için:
+                    // rakip hesap 2, kendi hesabı 5, sektör hesabı config varsayılanı)
+                    int recentLimit = recentLimitFor(target.type());
                     // Apify'dan URL bazlı post çek
                     List<ApifyPost> posts = apifyClient.fetchPostsByUrls(
                             List.of(target.url()), recentLimit);
@@ -181,6 +181,20 @@ public class ScrapePipelineService {
             log.error("İşleme hatası (FAILED): requestId={}, hata={}", requestId, ex.getMessage(), ex);
             // JobWorker üst seviyede yine ack eder; gerçek retry admin POST /admin/requeue-stuck ile elle tetiklenir.
         }
+    }
+
+    /**
+     * Hedef tipine göre çekilecek son gönderi sayısını döndürür.
+     * OWN: own-posts-limit (-> 5), MONITORED: competitor-posts-limit (-> 2),
+     * SECTOR: recent-posts-limit (-> 5, mevcut genel ayar).
+     */
+    private int recentLimitFor(ScrapeTarget.TargetType type) {
+        AppProperties.Apify cfg = appProperties.getApify();
+        return switch (type) {
+            case OWN -> cfg.getOwnPostsLimit();
+            case MONITORED -> cfg.getCompetitorPostsLimit();
+            case SECTOR -> cfg.getRecentPostsLimit();
+        };
     }
 
     // ============================================================

@@ -116,8 +116,15 @@ public class ContentPipelineService {
                         contentRequestId, productContext != null ? "OK" : "atlandı");
             }
 
+            // Düzenleme ise: bir önceki üretilen görsel(ler) referans alınır (küçük bir talimatla
+            // tüm görselin yeniden üretilmesini engellemek için — visual_urls DB'de henüz
+            // ÜZERİNE YAZILMADAN önce okunmalı, aksi halde referans kaybolur).
+            List<String> previousVisualUrls = (req.getEditInstruction() != null && !req.getEditInstruction().isBlank())
+                    ? parseVisualUrlsRaw(req.getVisualUrls())
+                    : List.of();
+
             // Görsel üretim + S3 yükleme (productImageData ile — S3 URL değil)
-            VisualResult visual = generateAndUploadVisuals(req, brandDna, reportContent, sectorContext, productContext, productImageData);
+            VisualResult visual = generateAndUploadVisuals(req, brandDna, reportContent, sectorContext, productContext, productImageData, previousVisualUrls);
 
             // Ürün görseli kullanıldı; DB'den temizle
             if (req.getProductImageUrl() != null) {
@@ -388,7 +395,8 @@ public class ContentPipelineService {
     }
 
     private VisualResult generateAndUploadVisuals(ContentRequest req, String brandDna,
-            String reportContent, String sectorContext, String productContext, String productImageData) {
+            String reportContent, String sectorContext, String productContext, String productImageData,
+            List<String> previousVisualUrls) {
         ContentType type = req.getContentType();
         List<String> urls = new ArrayList<>();
         String editInstruction = req.getEditInstruction();
@@ -398,7 +406,8 @@ public class ContentPipelineService {
             for (int i = 0; i < roles.length; i++) {
                 String prompt = ContentPrompts.forVisual(brandDna, reportContent, "CAROUSEL", i, roles[i],
                         req.isIncludeTextInVisual(), editInstruction, sectorContext, productContext);
-                String url = generateAndUpload(req, prompt, i, productImageData);
+                String referenceImage = editReferenceFor(previousVisualUrls, i, productImageData);
+                String url = generateAndUpload(req, prompt, i, referenceImage);
                 if (url != null) urls.add(url);
             }
             return new VisualResult(urls, roles.length);
@@ -410,9 +419,41 @@ public class ContentPipelineService {
         } else {
             String prompt = ContentPrompts.forVisual(brandDna, reportContent, type.name(), 0, null,
                     req.isIncludeTextInVisual(), editInstruction, sectorContext, productContext);
-            String url = generateAndUpload(req, prompt, 0, productImageData);
+            String referenceImage = editReferenceFor(previousVisualUrls, 0, productImageData);
+            String url = generateAndUpload(req, prompt, 0, referenceImage);
             if (url != null) urls.add(url);
             return new VisualResult(urls, 1);
+        }
+    }
+
+    /**
+     * Bir görsel için kullanılacak referans görseli belirler.
+     * Düzenlemede (bir önceki görsel varsa) ONA sadık kalınır — küçük bir talimat
+     * tüm görseli yeniden üretmesin diye bir önceki üretim /images/edits referansı olur.
+     * Düzenleme değilse (ilk üretim) kullanıcının yüklediği ürün görseli referans olur.
+     */
+    private String editReferenceFor(List<String> previousVisualUrls, int index, String productImageData) {
+        if (previousVisualUrls != null && index < previousVisualUrls.size()) {
+            String previousUrl = previousVisualUrls.get(index);
+            if (previousUrl != null && !previousUrl.isBlank()) {
+                String presigned = s3UploadService.presign(previousUrl);
+                if (presigned != null) {
+                    return presigned;
+                }
+                log.warn("Önceki görsel presign edilemedi; ürün görseline/dolu üretime düşülüyor: index={}", index);
+            }
+        }
+        return productImageData;
+    }
+
+    /** visual_urls JSON kolonunu ham S3 URL listesine çevirir (presign YAPMAZ — çağıran gerektiğinde presign eder). */
+    private List<String> parseVisualUrlsRaw(String json) {
+        if (json == null || json.isBlank()) return List.of();
+        try {
+            return objectMapper.readValue(json, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+        } catch (Exception ex) {
+            log.warn("visual_urls ayrıştırılamadı: hata={}", ex.getMessage());
+            return List.of();
         }
     }
 
