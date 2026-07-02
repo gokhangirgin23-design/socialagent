@@ -81,13 +81,22 @@ public class ContentPipelineService {
             String sectorContext = loadUserSectorContext(req.getUserId());
             log.info("Sektör bağlamı yüklendi: contentRequestId={}, sektör={}", contentRequestId, sectorContext);
 
-            // Brand DNA: önbellekte varsa kullan, yoksa üret
+            // Brand DNA: kendi önbelleğinde varsa kullan; yoksa aynı rapora ait başka bir
+            // content_request'in DNA'sını ara (aynı raporun DNA'sı değişmez — yeniden üretim
+            // gereksiz maliyet); o da yoksa üret.
             String brandDna = req.getBrandDnaJson();
             if (brandDna == null || brandDna.isBlank()) {
-                brandDna = generateBrandDna(req, reportContent, sectorContext);
+                brandDna = loadCachedBrandDna(req.getReportId());
                 if (brandDna != null) {
+                    log.info("Rapor bazlı Brand DNA cache'ten kullanıldı (AI çağrısı atlandı): reportId={}", req.getReportId());
                     req.setBrandDnaJson(brandDna);
                     saveQuiet(req);
+                } else {
+                    brandDna = generateBrandDna(req, reportContent, sectorContext);
+                    if (brandDna != null) {
+                        req.setBrandDnaJson(brandDna);
+                        saveQuiet(req);
+                    }
                 }
             }
 
@@ -173,6 +182,30 @@ public class ContentPipelineService {
     }
 
     /**
+     * Aynı rapora ait, daha önce üretilmiş Brand DNA'yı arar (rapor bazlı yeniden kullanım — maliyet).
+     * Aynı rapordan açılan farklı içerik istekleri (POST/STORY/CAROUSEL vb.) DNA'yı paylaşabilir;
+     * bulunursa AI çağrısı hiç yapılmaz.
+     */
+    private String loadCachedBrandDna(UUID reportId) {
+        String sql = """
+                SELECT cr.brand_dna_json
+                FROM content_request cr
+                WHERE cr.report_id = ?
+                  AND cr.brand_dna_json IS NOT NULL
+                  AND cr.active = 1
+                ORDER BY cr.created_date DESC
+                LIMIT 1
+                """;
+        try {
+            List<String> rows = jdbcTemplate.queryForList(sql, String.class, reportId);
+            return rows.isEmpty() ? null : rows.get(0);
+        } catch (Exception ex) {
+            log.warn("Rapor bazlı Brand DNA cache sorgusu başarısız: reportId={}, hata={}", reportId, ex.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * Kullanıcının DB'deki güncel sektör ve alt sektör adını yükler.
      * Görsel üretimde ürün kategorisini garantilemek için sert kısıt olarak kullanılır.
      * user_info ⋈ sector ⋈ subsector — eski stil "=" (CLAUDE.md Madde 6).
@@ -240,15 +273,20 @@ public class ContentPipelineService {
         }
     }
 
+    // Görsel analiz sorgu satırı: analysis_json + kaynak (OWN|MONITORED|SECTOR)
+    private record VisualPatternRow(String analysisJson, String sourceType) {
+    }
+
     /**
      * Görsel analizden ürün kategorisi, atmosfer, renk ve çekim stili özetini çeker.
      * Brand DNA'nın mainProductOrService alanını beslemek için kullanılır.
-     * Hem OWN hem SECTOR + MONITORED post_analysis kayıtlarından çeker.
+     * Hem OWN hem SECTOR + MONITORED post_analysis kayıtlarından çeker; her satır
+     * KENDİ/RAKİP/SEKTÖR etiketiyle işaretlenir (Brand DNA yalnızca KENDİ'den kimlik alsın diye).
      */
     private String loadVisualPatterns(UUID reportId) {
-        // analysis_json içinden visual alt alanlarını çek (OWN + SECTOR + MONITORED)
+        // analysis_json + source_type çek (OWN + SECTOR + MONITORED)
         String sql = """
-                SELECT pa.analysis_json
+                SELECT pa.analysis_json, sp.source_type
                 FROM post_analysis pa, social_post sp, report r
                 WHERE pa.social_post_id = sp.social_post_id
                   AND sp.request_id = r.request_id
@@ -258,37 +296,47 @@ public class ContentPipelineService {
                 LIMIT 15
                 """;
         try {
-            List<String> analysisJsonList = jdbcTemplate.queryForList(sql, String.class, reportId);
-            if (analysisJsonList.isEmpty()) return null;
+            List<VisualPatternRow> rows = jdbcTemplate.query(sql,
+                    (rs, rowNum) -> new VisualPatternRow(rs.getString("analysis_json"), rs.getString("source_type")),
+                    reportId);
+            if (rows.isEmpty()) return null;
 
-            // Her analiz JSON'undan visual alanlarını basit string eşleşmesiyle çek
             StringBuilder sb = new StringBuilder();
             int count = 0;
-            for (String json : analysisJsonList) {
-                if (json == null || json.isBlank()) continue;
-                // visual alt objesini bul
-                int visualIdx = json.indexOf("\"visual\":");
-                if (visualIdx < 0) continue;
-                String visualSection = json.substring(visualIdx);
+            for (VisualPatternRow row : rows) {
+                if (row.analysisJson() == null || row.analysisJson().isBlank()) continue;
+                try {
+                    JsonNode visual = objectMapper.readTree(row.analysisJson()).path("visual");
+                    if (visual.isMissingNode() || visual.isNull()) continue;
 
-                String productCategory = extractSimpleField(visualSection, "productCategory");
-                String specificProduct = extractSimpleField(visualSection, "specificProduct");
-                String shootingStyle = extractSimpleField(visualSection, "shootingStyle");
-                String lightingStyle = extractSimpleField(visualSection, "lightingStyle");
-                String backgroundType = extractSimpleField(visualSection, "backgroundType");
-                String atmosphere = extractSimpleField(visualSection, "atmosphere");
+                    String specificProduct = textField(visual, "specificProduct");
+                    String productCategory = textField(visual, "productCategory");
+                    String atmosphere = textField(visual, "atmosphere");
+                    String shootingStyle = textField(visual, "shootingStyle");
+                    String lightingStyle = textField(visual, "lightingStyle");
+                    String backgroundType = textField(visual, "backgroundType");
+                    String composition = textField(visual, "composition");
+                    String colorPalette = arrayField(visual, "colorPalette");
+                    String propsAndDecor = arrayField(visual, "propsAndDecor");
 
-                // En az bir değer varsa ekle
-                if (productCategory != null || specificProduct != null || atmosphere != null) {
+                    // En az bir değer varsa ekle
+                    if (productCategory == null && specificProduct == null && atmosphere == null) continue;
+
                     count++;
-                    sb.append("Görsel ").append(count).append(": ");
+                    sb.append("Görsel ").append(count).append(" ").append(sourceLabel(row.sourceType())).append(": ");
                     if (specificProduct != null) sb.append("Ürün=").append(specificProduct).append(", ");
                     if (productCategory != null) sb.append("Kategori=").append(productCategory).append(", ");
                     if (atmosphere != null) sb.append("Atmosfer=").append(atmosphere).append(", ");
                     if (shootingStyle != null) sb.append("Çekim=").append(shootingStyle).append(", ");
                     if (lightingStyle != null) sb.append("Işık=").append(lightingStyle).append(", ");
-                    if (backgroundType != null) sb.append("Arka plan=").append(backgroundType);
+                    if (backgroundType != null) sb.append("Arka plan=").append(backgroundType).append(", ");
+                    if (colorPalette != null) sb.append("Renkler=").append(colorPalette).append(", ");
+                    if (propsAndDecor != null) sb.append("Dekor=").append(propsAndDecor).append(", ");
+                    if (composition != null) sb.append("Kompozisyon=").append(composition);
                     sb.append("\n");
+                } catch (Exception ex) {
+                    log.warn("Görsel analiz satırı ayrıştırılamadı; atlanıyor: hata={}", ex.getMessage());
+                    continue;
                 }
                 if (count >= 10) break;
             }
@@ -299,23 +347,35 @@ public class ContentPipelineService {
         }
     }
 
-    // JSON string değeri basitçe çeker (parse bağımlılığı yok)
-    private String extractSimpleField(String json, String fieldName) {
-        String key = "\"" + fieldName + "\":";
-        int idx = json.indexOf(key);
-        if (idx < 0) return null;
-        int valueStart = idx + key.length();
-        while (valueStart < json.length() && Character.isWhitespace(json.charAt(valueStart))) valueStart++;
-        if (valueStart >= json.length()) return null;
-        char first = json.charAt(valueStart);
-        if (first == '"') {
-            int end = json.indexOf('"', valueStart + 1);
-            if (end > valueStart) {
-                String val = json.substring(valueStart + 1, end);
-                return (val.isBlank() || val.equals("null")) ? null : val;
-            }
+    // social_post.source_type -> Brand DNA satırı etiketi (Madde 7)
+    private String sourceLabel(String sourceType) {
+        if (sourceType == null) return "";
+        return switch (sourceType) {
+            case "OWN" -> "[KENDİ]";
+            case "MONITORED" -> "[RAKİP]";
+            case "SECTOR" -> "[SEKTÖR]";
+            default -> "";
+        };
+    }
+
+    // JSON string alanı null-safe çeker
+    private String textField(JsonNode node, String fieldName) {
+        JsonNode value = node.path(fieldName);
+        if (value.isMissingNode() || value.isNull()) return null;
+        String text = value.asText(null);
+        return (text == null || text.isBlank() || text.equalsIgnoreCase("null")) ? null : text;
+    }
+
+    // JSON string dizisini virgülle birleştirir (colorPalette, propsAndDecor gibi array alanlar için)
+    private String arrayField(JsonNode node, String fieldName) {
+        JsonNode value = node.path(fieldName);
+        if (!value.isArray() || value.isEmpty()) return null;
+        List<String> items = new ArrayList<>();
+        for (JsonNode item : value) {
+            String text = item.asText(null);
+            if (text != null && !text.isBlank()) items.add(text);
         }
-        return null;
+        return items.isEmpty() ? null : String.join(", ", items);
     }
 
     // ============================================================
@@ -372,8 +432,10 @@ public class ContentPipelineService {
 
     private String generateAndUpload(ContentRequest req, String prompt, int index, String productImageData) {
         String size = sizeForType(req.getContentType());
+        // Görsel içi yazı istenmişse text rendering netliği için high; aksi hâlde config'teki ekonomik tier (maliyet)
+        String quality = req.isIncludeTextInVisual() ? "high" : appProperties.getContent().getImageQuality();
         // productImageData: S3'ten SDK ile indirilen base64 data URL (HTTP ile çekilemez; private bucket)
-        byte[] imageBytes = openAiImageService.generateImage(prompt, productImageData, size);
+        byte[] imageBytes = openAiImageService.generateImage(prompt, productImageData, size, quality);
 
         if (imageBytes == null && geminiImageService.isActive()) {
             log.warn("OpenAI görsel başarısız; Gemini fallback deneniyor: contentRequestId={}, index={}",

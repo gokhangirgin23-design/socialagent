@@ -1,5 +1,7 @@
 package com.api.ai;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -108,7 +110,56 @@ class AiAnalysisServiceTest {
 		assertNull(json);
 	}
 
+	@Test
+	void trimResultJsonWhitelistAlanlariniKorurGurultuyuAtar() throws Exception {
+		String raw = """
+				{"type":"Image","productType":"Post","url":"https://x.com/p/1","caption":"merhaba",
+				"hashtags":["a","b"],"likesCount":120,"commentsCount":8,"videoViewCount":null,
+				"videoPlayCount":null,"ownerFollowersCount":5000,"ownerUsername":"marka",
+				"timestamp":"2026-01-01T00:00:00.000Z","locationName":"İstanbul","isSponsored":false,
+				"taggedUsers":[{"username":"x"}],"childPosts":[{"id":"c1"}],
+				"latestComments":[{"text":"harika bir gönderi olmuş, çok beğendim"},{"text":"süper"},
+				{"text":"bayıldım"},{"text":"bu satırlar 3 sınırını aştığı için görünmemeli"}]}
+				""";
+
+		String trimmed = invokeTrimResultJson(raw);
+
+		assertTrue(trimmed.contains("\"ownerUsername\":\"marka\""));
+		assertTrue(trimmed.contains("\"likesCount\":120"));
+		assertFalse(trimmed.contains("taggedUsers"));
+		assertFalse(trimmed.contains("childPosts"));
+		assertTrue(trimmed.contains("\"comments\""));
+		assertTrue(trimmed.contains("harika bir gönderi olmuş, çok beğendim"));
+		assertFalse(trimmed.contains("bu satırlar 3 sınırını aştığı için görünmemeli"));
+	}
+
+	@Test
+	void trimResultJsonYorumlari100KaraktereKirpar() throws Exception {
+		String uzunYorum = "a".repeat(150);
+		String raw = "{\"type\":\"Image\",\"latestComments\":[{\"text\":\"" + uzunYorum + "\"}]}";
+
+		String trimmed = invokeTrimResultJson(raw);
+
+		assertTrue(trimmed.contains("a".repeat(100)));
+		assertFalse(trimmed.contains("a".repeat(101)));
+	}
+
+	@Test
+	void trimResultJsonBozukJsondaHamVeriAynenDoner() throws Exception {
+		String bozukJson = "{bu gecerli json degil";
+
+		String result = invokeTrimResultJson(bozukJson);
+
+		assertEquals(bozukJson, result);
+	}
+
 	// ---- yardımcılar ----
+
+	private String invokeTrimResultJson(String rawJson) throws Exception {
+		java.lang.reflect.Method m = AiAnalysisService.class.getDeclaredMethod("trimResultJson", String.class);
+		m.setAccessible(true);
+		return (String) m.invoke(service, rawJson);
+	}
 
 	private SocialPost postWithMedia() {
 		SocialPost sp = new SocialPost();

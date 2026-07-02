@@ -49,7 +49,8 @@ public class GeminiImageService {
     @PostConstruct
     void init() {
         this.apiKey = appProperties.getAi().getGemini().getApiKey();
-        this.imageModel = appProperties.getContent().getImageModel();
+        // Bug fix: OpenAI ile AYNI property paylaşılıyordu (gpt-image-1.5 -> 404); artık kendi property'si var
+        this.imageModel = appProperties.getContent().getGeminiImageModel();
 
         if (apiKey == null || apiKey.isBlank()) {
             log.warn("Gemini API key tanımsız; görsel üretim devre dışı.");

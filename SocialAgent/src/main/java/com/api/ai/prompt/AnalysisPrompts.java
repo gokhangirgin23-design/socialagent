@@ -107,12 +107,14 @@ public final class AnalysisPrompts {
 
 	/**
 	 * OpenAI için result_json bazlı metrik analiz promptu.
-	 * Ham Apify JSON'u (result_json) direkt prompt'a eklenir.
+	 * Ham Apify JSON'u yerine (maliyet optimizasyonu — AiAnalysisService.trimResultJson)
+	 * ÖNCEDEN whitelist ile trim edilmiş JSON prompt'a eklenir.
 	 *
-	 * @param post analiz edilecek gönderi (result_json + temel alanlar)
+	 * @param post              analiz edilecek gönderi (temel alanlar için)
+	 * @param trimmedResultJson trim edilmiş Apify JSON verisi (bkz. AiAnalysisService.trimResultJson)
 	 * @return OpenAI'ya gönderilecek prompt
 	 */
-	public static String forMetrics(SocialPost post) {
+	public static String forMetrics(SocialPost post, String trimmedResultJson) {
 		return """
 				%s
 
@@ -123,7 +125,7 @@ public final class AnalysisPrompts {
 				Şimdi şemaya uygun JSON üret.
 				""".formatted(
 				OPENAI_SYSTEM_RULE,
-				safe(post.getResultJson()),
+				safe(trimmedResultJson),
 				safe(post.getPostUrl()));
 	}
 

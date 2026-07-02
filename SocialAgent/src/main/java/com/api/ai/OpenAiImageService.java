@@ -28,7 +28,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * OpenAI gpt-image-1 ile görsel üretimi.
+ * OpenAI gpt-image-1.5 ile görsel üretimi.
  * Ürün görseli varsa /images/edits (multipart) kullanır; yoksa /images/generations (JSON).
  * Yanıt her zaman data[0].b64_json formatındadır.
  */
@@ -71,15 +71,19 @@ public class OpenAiImageService {
     public boolean isActive() { return restClient != null; }
 
     /**
-     * @param size "1024x1024" | "1024x1536" | "1536x1024"
+     * @param size    "1024x1024" | "1024x1536" | "1536x1024"
+     * @param quality "low" | "medium" | "high" — null/boş gelirse config default'u (app.content.image-quality) kullanılır
      */
-    public byte[] generateImage(String prompt, String productImageUrl, String size) {
+    public byte[] generateImage(String prompt, String productImageUrl, String size, String quality) {
         if (restClient == null) return null;
+        String resolvedQuality = (quality == null || quality.isBlank())
+                ? appProperties.getContent().getImageQuality()
+                : quality;
         try {
             if (productImageUrl != null && !productImageUrl.isBlank()) {
-                return generateWithReference(prompt, productImageUrl, size);
+                return generateWithReference(prompt, productImageUrl, size, resolvedQuality);
             }
-            return generateTextToImage(prompt, size);
+            return generateTextToImage(prompt, size, resolvedQuality);
         } catch (RestClientResponseException ex) {
             log.error("OpenAI image API hatası: status={}, body={}", ex.getStatusCode(), ex.getResponseBodyAsString());
             return null;
@@ -93,13 +97,13 @@ public class OpenAiImageService {
     // Text-to-image
     // ============================================================
 
-    private byte[] generateTextToImage(String prompt, String size) throws Exception {
+    private byte[] generateTextToImage(String prompt, String size, String quality) throws Exception {
         Map<String, Object> body = Map.of(
                 "model",   imageModel,
                 "prompt",  prompt,
                 "n",       1,
                 "size",    size,
-                "quality", "high"
+                "quality", quality
         );
 
         String json = restClient.post()
@@ -116,11 +120,11 @@ public class OpenAiImageService {
     // Image edit (ürün görseli referans)
     // ============================================================
 
-    private byte[] generateWithReference(String prompt, String productImageUrl, String size) throws Exception {
+    private byte[] generateWithReference(String prompt, String productImageUrl, String size, String quality) throws Exception {
         byte[] imgBytes = loadImageBytes(productImageUrl);
         if (imgBytes == null) {
             log.warn("OpenAI: ürün görseli yüklenemedi; text-to-image ile devam ediliyor");
-            return generateTextToImage(prompt, size);
+            return generateTextToImage(prompt, size, quality);
         }
 
         ByteArrayResource imgResource = new ByteArrayResource(imgBytes) {
@@ -134,7 +138,7 @@ public class OpenAiImageService {
         form.add("prompt",  prompt);
         form.add("n",       "1");
         form.add("size",    size);
-        form.add("quality", "high");
+        form.add("quality", quality);
         form.add("image",   new HttpEntity<>(imgResource, imgHeaders));
 
         String json = restClient.post()

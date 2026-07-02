@@ -7,6 +7,10 @@ import org.springframework.stereotype.Service;
 import com.api.ai.prompt.AnalysisPrompts;
 import com.api.config.AppProperties;
 import com.api.entity.SocialPost;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import dev.langchain4j.data.message.ImageContent;
 import dev.langchain4j.data.message.TextContent;
@@ -44,6 +48,15 @@ public class AiAnalysisService {
 
 	// AI ayarları (api key'ler, model adları, sıcaklık, timeout)
 	private final AppProperties appProperties;
+
+	private final ObjectMapper objectMapper = new ObjectMapper();
+
+	// result_json trim whitelist'i — metrik şemasının (OPENAI_SCHEMA) beslendiği alanlar (maliyet optimizasyonu)
+	private static final String[] RESULT_JSON_WHITELIST = {
+			"type", "productType", "url", "caption", "hashtags",
+			"likesCount", "commentsCount", "videoViewCount", "videoPlayCount",
+			"ownerFollowersCount", "ownerUsername", "timestamp", "locationName", "isSponsored"
+	};
 
 	// OpenAI metin modeli (key yoksa null -> TEXT analizi atlanır)
 	private ChatLanguageModel openAiModel;
@@ -130,12 +143,58 @@ public class AiAnalysisService {
 			return null;
 		}
 		try {
-			String prompt = AnalysisPrompts.forMetrics(post);
+			String trimmedResultJson = trimResultJson(post.getResultJson());
+			String prompt = AnalysisPrompts.forMetrics(post, trimmedResultJson);
 			String raw = openAiModel.chat(prompt);
 			return cleanJson(raw);
 		} catch (Exception ex) {
 			log.error("OpenAI metrik analizi başarısız: postId={}, hata={}", post.getSocialPostId(), ex.getMessage());
 			return null;
+		}
+	}
+
+	/**
+	 * Ham Apify result_json'unu whitelist ile trim eder (maliyet optimizasyonu).
+	 * latestComments, taggedUsers, childPosts gibi metrik şemasında hiç kullanılmayan gürültü alanları
+	 * atılır; token'ın büyük kısmı bu şekilde tasarruf edilir. Sadece OPENAI_SCHEMA'nın beslendiği
+	 * alanlar + ilk 3 yorumun kırpılmış metni (themes/tone sinyali için) korunur.
+	 * Parse hatası olursa ham JSON aynen döner — analiz asla trim yüzünden bozulmaz.
+	 *
+	 * @param rawJson ham Apify JSON metni
+	 * @return trim edilmiş JSON metni (parse edilemezse ham JSON)
+	 */
+	private String trimResultJson(String rawJson) {
+		if (rawJson == null || rawJson.isBlank()) return rawJson;
+		try {
+			JsonNode root = objectMapper.readTree(rawJson);
+			ObjectNode trimmed = objectMapper.createObjectNode();
+
+			for (String field : RESULT_JSON_WHITELIST) {
+				if (root.hasNonNull(field)) {
+					trimmed.set(field, root.get(field));
+				}
+			}
+
+			// İlk 3 yorumun yalnızca metni, 100 karaktere kırpılmış (themes/tone sinyali için sigorta)
+			JsonNode latestComments = root.path("latestComments");
+			if (latestComments.isArray() && !latestComments.isEmpty()) {
+				ArrayNode comments = objectMapper.createArrayNode();
+				int limit = Math.min(3, latestComments.size());
+				for (int i = 0; i < limit; i++) {
+					String text = latestComments.get(i).path("text").asText(null);
+					if (text != null && !text.isBlank()) {
+						comments.add(text.length() > 100 ? text.substring(0, 100) : text);
+					}
+				}
+				if (!comments.isEmpty()) {
+					trimmed.set("comments", comments);
+				}
+			}
+
+			return trimmed.toString();
+		} catch (Exception ex) {
+			log.warn("result_json trim edilemedi; ham veri kullanılıyor: hata={}", ex.getMessage());
+			return rawJson;
 		}
 	}
 

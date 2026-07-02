@@ -219,7 +219,11 @@ public class AppProperties {
 		// Maksimum düzenleme hakkı
 		private int editLimit = 3;
 		// Görsel üretim için OpenAI modeli
-		private String imageModel = "gpt-image-1";
+		private String imageModel = "gpt-image-1.5";
+		// Gemini fallback görsel üretim modeli (OpenAI'dan bağımsız — bug fix: eskiden imageModel paylaşılıyordu)
+		private String geminiImageModel = "gemini-2.5-flash-image";
+		// OpenAI görsel kalite tier'ı — low|medium|high (maliyet: high, medium'un ~4 katı)
+		private String imageQuality = "medium";
 		// Reel video üretimi için Veo modeli
 		private String videoModel = "veo-3.1-generate-preview";
 		// Tarife (TL) — PAYMENT_ENABLED=true olduğunda uygulanır

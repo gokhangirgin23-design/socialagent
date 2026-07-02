@@ -32,7 +32,9 @@ public final class ContentPrompts {
                 ? "Kullanıcının son paylaşım caption'ları:\n" + postsContext + "\n\n"
                 : "";
         String visuals = (visualPatterns != null && !visualPatterns.isBlank())
-                ? "Görsellerin analiz verisi (ürün kategorisi, atmosfer, renkler, çekim stili):\n" + visualPatterns + "\n\n"
+                ? "Görsellerin analiz verisi (ürün kategorisi, atmosfer, renkler, çekim stili):\n" + visualPatterns
+                  + "\n[KENDİ] etiketli görseller markanın kendi kimliğidir ve DNA'nın ana kaynağıdır; "
+                  + "[RAKİP]/[SEKTÖR] etiketliler yalnızca sektör bağlamı ve ilham içindir, markanın kimliği olarak KOPYALANMAZ.\n\n"
                 : "";
         return """
                 %s%s%sBu analiz raporunu incele:
@@ -146,6 +148,20 @@ public final class ContentPrompts {
                     sb.append("Asla başka ürün, yiyecek veya kategori gösterme.\n");
                     sb.append("Ürün görseli verilmemiş olsa bile sadece bu ürün kategorisini yansıt.\n\n");
                 }
+            }
+
+            // GÖRSEL KİMLİK: DNA'dan görsel stil alanlarını çıkar (productContext olsa da olmasa da)
+            String visualStyle = extractJsonField(brandDnaJson, "visualStyle");
+            String colorPalette = extractJsonField(brandDnaJson, "colorPalette");
+            String typicalBackground = extractJsonField(brandDnaJson, "typicalBackground");
+            String typicalAtmosphere = extractJsonField(brandDnaJson, "typicalAtmosphere");
+            if (visualStyle != null || colorPalette != null || typicalBackground != null || typicalAtmosphere != null) {
+                sb.append("=== GÖRSEL KİMLİK ===\n");
+                if (visualStyle != null) sb.append("Görsel stil: ").append(visualStyle).append("\n");
+                if (colorPalette != null) sb.append("Renk paleti: ").append(colorPalette).append("\n");
+                if (typicalBackground != null) sb.append("Tipik arka plan: ").append(typicalBackground).append("\n");
+                if (typicalAtmosphere != null) sb.append("Tipik atmosfer: ").append(typicalAtmosphere).append("\n");
+                sb.append("=== GÖRSEL KİMLİK SONU ===\n\n");
             }
         }
 
