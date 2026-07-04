@@ -1,31 +1,26 @@
 package com.api.dto;
 
-import java.math.BigDecimal;
-
 import lombok.Getter;
 import lombok.Setter;
 
 /**
  * Bakiye kontrol yanıtı (POST /payment/balance-check).
- * Frontend bu bilgiyle "bakiyeniz yetersiz" uyarısını ve eksik tutarı gösterir;
- * kullanıcı yüklemek istediği miktarı topupAmount olarak /report-request/create'e iletir.
+ * Frontend bu bilgiyle "krediniz yetersiz" uyarısını ve eksik kredi miktarını gösterir;
+ * kullanıcı yetersizse /payment/packages üzerinden paket satın almaya yönlendirilir.
  */
 @Getter
 @Setter
 public class BalanceCheckResponse {
 
-    // Kullanıcının mevcut bakiyesi (TL)
-    private BigDecimal balance;
+    // Kullanıcının mevcut kredi bakiyesi
+    private long creditBalance;
 
-    // Seçilen rapor tipi için gerekli ücret (TL)
-    private BigDecimal price;
+    // Seçilen rapor tipi için gereken kredi
+    private int requiredCredits;
 
-    // Bakiye yeterli mi?
+    // Kredi yeterli mi?
     private boolean sufficient;
 
-    // Yetersizse minimum yüklenmesi gereken tutar (price - balance); yeterliyse 0
-    private BigDecimal deficit;
-
-    // Para birimi (TL)
-    private String currency;
+    // Yetersizse eksik kredi (requiredCredits - creditBalance); yeterliyse 0
+    private long missingCredits;
 }

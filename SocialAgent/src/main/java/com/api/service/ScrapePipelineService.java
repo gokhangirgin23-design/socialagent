@@ -1,6 +1,5 @@
 package com.api.service;
 
-import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -256,19 +255,19 @@ public class ScrapePipelineService {
     private void debitOnCompleted(UUID requestId, ReportRequest request) {
         try {
             AnalysisMode mode = AnalysisMode.valueOf(request.getReportType());
-            BigDecimal price = reportPriceResolver.priceFor(mode);
-            boolean debited = paymentService.tryDebit(request.getUserId(), price, requestId);
+            int creditCost = reportPriceResolver.creditCostFor(mode);
+            boolean debited = paymentService.tryDebitCredits(request.getUserId(), creditCost, "REPORT", requestId);
             if (debited) {
                 paymentService.linkLatestDebitToRequest(request.getUserId(), requestId);
-                log.info("COMPLETED — bakiye düşüldü: requestId={}, userId={}, tutar={}",
-                        requestId, request.getUserId(), price);
+                log.info("COMPLETED — kredi düşüldü: requestId={}, userId={}, creditCost={}",
+                        requestId, request.getUserId(), creditCost);
             } else {
-                // Bakiye yetersiz (edge case: iki eş zamanlı istek, manuel düşüm vb.)
-                log.warn("COMPLETED — bakiye düşümü başarısız (yetersiz bakiye): requestId={}, userId={}",
+                // Kredi yetersiz (edge case: iki eş zamanlı istek, manuel düşüm vb.)
+                log.warn("COMPLETED — kredi düşümü başarısız (yetersiz kredi): requestId={}, userId={}",
                         requestId, request.getUserId());
             }
         } catch (Exception ex) {
-            log.warn("COMPLETED — bakiye düşümü sırasında hata (rapor durumu etkilenmez): requestId={}, hata={}",
+            log.warn("COMPLETED — kredi düşümü sırasında hata (rapor durumu etkilenmez): requestId={}, hata={}",
                     requestId, ex.getMessage());
         }
     }

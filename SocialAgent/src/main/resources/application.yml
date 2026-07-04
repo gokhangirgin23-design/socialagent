@@ -122,11 +122,6 @@ app:
     gemini-image-model: ${CONTENT_GEMINI_IMAGE_MODEL:gemini-2.5-flash-image}
     image-quality: ${CONTENT_IMAGE_QUALITY:medium}
     video-model: ${CONTENT_VIDEO_MODEL:veo-3.1-generate-preview}
-    price-post: ${CONTENT_PRICE_POST:100}
-    price-story: ${CONTENT_PRICE_STORY:100}
-    price-carousel: ${CONTENT_PRICE_CAROUSEL:120}
-    price-reel: ${CONTENT_PRICE_REEL:150}
-    price-all: ${CONTENT_PRICE_ALL:300}
   # ===== AWS S3: üretilen görsellerin depolanması =====
   aws:
     region: ${AWS_REGION:eu-north-1}
@@ -153,12 +148,6 @@ app:
     push-enabled: ${PUSH_ENABLED:false}
     # Giden e-posta "from" adresi (boşsa SMTP varsayılanı)
     from-address: ${MAIL_FROM:}
-  # ===== FAZ PAYMENT: Rapor fiyatları (TL) =====
-  report:
-    price:
-      none: 200
-      own-only: 300
-      competitor-only: 300
   # ===== FAZ PAYMENT: PayTR Direkt API =====
   # GİZLİ değerler (merchant-key/salt) env'den gelir; repo'ya/loga ASLA yazılmaz.
   paytr:

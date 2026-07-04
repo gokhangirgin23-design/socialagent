@@ -63,6 +63,28 @@ public class UserPaymentLog {
     @Column(name = "balance_after")
     private BigDecimal balanceAfter;
 
+    // Kredi hareketi (FAZ CREDIT) — TOPUP: paket kredisi, DEBIT: harcanan kredi, REFUND: iade edilen kredi
+    @Column(name = "credit_amount")
+    private Long creditAmount;
+
+    @Column(name = "credit_balance_before")
+    private Long creditBalanceBefore;
+
+    @Column(name = "credit_balance_after")
+    private Long creditBalanceAfter;
+
+    // DEBIT satırlarında dolu: REPORT | POST | STORY | CAROUSEL
+    @Column(name = "product_type")
+    private String productType;
+
+    // TOPUP satırlarında dolu: STARTER | STANDARD | PRO | AGENCY
+    @Column(name = "package_code")
+    private String packageCode;
+
+    // Satın alma anındaki paket adı (snapshot)
+    @Column(name = "package_name")
+    private String packageName;
+
     // PayTR sipariş no — idempotensi anahtarı (UNIQUE)
     @Column(name = "merchant_oid")
     private String merchantOid;

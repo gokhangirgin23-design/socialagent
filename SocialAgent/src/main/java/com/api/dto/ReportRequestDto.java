@@ -51,13 +51,13 @@ public class ReportRequestDto {
     // İstek tamamlandıysa oluşturulan raporun id'si (LEFT JOIN report ile gelir; henüz yoksa null)
     private UUID reportId;
 
-    // ===== FAZ PAYMENT: ödeme kapısı alanları =====
-    // Bakiye yetersizse true; bu durumda requestId null'dır ve paytr alanı doldurulur
-    private Boolean paymentRequired;
+    // ===== FAZ CREDIT: kredi kapısı alanları =====
+    // Kredi yetersizse true; bu durumda requestId null'dır — kullanıcı önce paket satın almalıdır
+    private Boolean insufficientCredits;
 
-    // Tahsil edilecek eksik tutar (deficit), ör. "123.50"
-    private String amountToPay;
+    // Yetersizse: rapor için gereken kredi
+    private Integer requiredCredits;
 
-    // PayTR (ya da local sahte) ödeme formu verisi; frontend bu formu postUrl'e gönderir
-    private PaytrFormPayload paytr;
+    // Yetersizse: kullanıcının mevcut kredi bakiyesi
+    private Long creditBalance;
 }

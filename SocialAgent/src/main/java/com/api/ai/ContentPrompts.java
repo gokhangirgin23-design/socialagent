@@ -72,7 +72,7 @@ public final class ContentPrompts {
      *
      * @param brandDnaJson     Brand DNA JSON (null ise markalamadan bağımsız üretilir)
      * @param reportContent    rapor içeriği (gelişim önerileri alınır)
-     * @param contentType      POST|STORY|CAROUSEL|REEL|ALL
+     * @param contentType      POST|STORY|CAROUSEL|REEL
      * @param slideIndex       carousel için slayt numarası (0 = tek görsel)
      * @param slideRole        carousel için slayt rolü (HOOK|CONTENT|CTA)
      * @param includeText      görselde metin olsun mu

@@ -4,6 +4,5 @@ public enum ContentType {
     POST,
     STORY,
     CAROUSEL,
-    REEL,
-    ALL
+    REEL
 }

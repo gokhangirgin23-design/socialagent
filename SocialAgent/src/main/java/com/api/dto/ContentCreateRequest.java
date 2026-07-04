@@ -14,7 +14,7 @@ public class ContentCreateRequest {
     @NotNull(message = "reportId boş olamaz")
     private UUID reportId;
 
-    // POST|STORY|CAROUSEL|REEL|ALL
+    // POST|STORY|CAROUSEL|REEL
     @NotBlank(message = "contentType boş olamaz")
     private String contentType;
 

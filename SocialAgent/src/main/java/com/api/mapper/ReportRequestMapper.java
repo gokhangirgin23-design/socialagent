@@ -11,15 +11,15 @@ import com.api.entity.ReportRequest;
 /**
  * ReportRequest entity <-> ReportRequestDto dönüşümü için MapStruct mapper'ı.
  * Alan adları entity ve DTO'da aynı olduğundan ek @Mapping gerekmez.
- * FAZ PAYMENT: paymentRequired/amountToPay/paytr alanları entity'de yok; servis manuel doldurur → ignore.
+ * FAZ CREDIT: insufficientCredits/requiredCredits/creditBalance alanları entity'de yok; servis manuel doldurur → ignore.
  */
 @Mapper(componentModel = "spring")
 public interface ReportRequestMapper {
 
-    // Tekil entity -> DTO dönüşümü (ödeme ve rapor bağlantısı alanları entity'de olmadığından ignore edilir)
-    @Mapping(target = "paymentRequired", ignore = true)
-    @Mapping(target = "amountToPay", ignore = true)
-    @Mapping(target = "paytr", ignore = true)
+    // Tekil entity -> DTO dönüşümü (kredi kapısı ve rapor bağlantısı alanları entity'de olmadığından ignore edilir)
+    @Mapping(target = "insufficientCredits", ignore = true)
+    @Mapping(target = "requiredCredits", ignore = true)
+    @Mapping(target = "creditBalance", ignore = true)
     @Mapping(target = "reportId", ignore = true)
     ReportRequestDto toDto(ReportRequest request);
 

@@ -8,14 +8,13 @@ import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
-import java.math.BigDecimal;
-
 import com.api.ai.AiAnalysisService;
 import com.api.ai.ContentPrompts;
 import com.api.ai.GeminiImageService;
 import com.api.ai.OpenAiImageService;
 import com.api.ai.VeoVideoService;
 import com.api.config.AppProperties;
+import com.api.config.CreditCatalog;
 import com.api.dto.repository.ContentRequestRepository;
 import com.api.entity.ContentRequest;
 import com.api.entity.ContentRequestStatus;
@@ -51,7 +50,6 @@ public class ContentPipelineService {
     private final GeminiImageService geminiImageService;
     private final VeoVideoService veoVideoService;
     private final S3UploadService s3UploadService;
-    private final ContentRequestService contentRequestService;
     private final PaymentService paymentService;
     private final AppProperties appProperties;
 
@@ -151,13 +149,14 @@ public class ContentPipelineService {
             markFinished(req, ContentRequestStatus.COMPLETED, null);
             log.info("İçerik üretimi tamamlandı: contentRequestId={}", contentRequestId);
 
-            // Ödeme: yalnızca COMPLETED olunca bakiyeyi düş (hata pipeline'ı bozmaz)
+            // Ödeme: yalnızca COMPLETED olunca krediyi düş (hata pipeline'ı bozmaz)
             if (appProperties.getPayment().isEnabled()) {
                 try {
-                    BigDecimal price = contentRequestService.priceFor(req.getContentType());
-                    paymentService.tryDebit(req.getUserId(), price, req.getContentRequestId());
+                    int creditCost = CreditCatalog.creditCostFor(req.getContentType());
+                    paymentService.tryDebitCredits(req.getUserId(), creditCost, req.getContentType().name(),
+                            req.getContentRequestId());
                 } catch (Exception ex) {
-                    log.warn("İçerik ödeme düşümü başarısız (üretim etkilenmez): id={}, hata={}",
+                    log.warn("İçerik kredi düşümü başarısız (üretim etkilenmez): id={}, hata={}",
                             contentRequestId, ex.getMessage());
                 }
             }

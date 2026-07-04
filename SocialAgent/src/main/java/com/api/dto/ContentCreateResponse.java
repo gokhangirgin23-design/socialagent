@@ -1,6 +1,5 @@
 package com.api.dto;
 
-import java.math.BigDecimal;
 import java.util.UUID;
 
 import lombok.Getter;
@@ -9,7 +8,7 @@ import lombok.Setter;
 /**
  * /content/create yanıtı.
  * status = QUEUED  → contentRequestId dolu, üretim kuyruğa alındı.
- * status = INSUFFICIENT → bakiye yetersiz; price ve deficit dolu.
+ * status = INSUFFICIENT → kredi yetersiz; creditCost, creditBalance ve missingCredits dolu.
  */
 @Getter
 @Setter
@@ -17,22 +16,24 @@ public class ContentCreateResponse {
 
     private String status;           // QUEUED | INSUFFICIENT
     private UUID contentRequestId;
-    private BigDecimal price;
-    private BigDecimal deficit;
+    private Integer creditCost;
+    private Long creditBalance;
+    private Long missingCredits;
 
-    public static ContentCreateResponse queued(UUID id, BigDecimal price) {
+    public static ContentCreateResponse queued(UUID id, int creditCost) {
         ContentCreateResponse r = new ContentCreateResponse();
         r.status = "QUEUED";
         r.contentRequestId = id;
-        r.price = price;
+        r.creditCost = creditCost;
         return r;
     }
 
-    public static ContentCreateResponse insufficient(BigDecimal price, BigDecimal balance) {
+    public static ContentCreateResponse insufficient(int creditCost, long creditBalance) {
         ContentCreateResponse r = new ContentCreateResponse();
         r.status = "INSUFFICIENT";
-        r.price = price;
-        r.deficit = price.subtract(balance);
+        r.creditCost = creditCost;
+        r.creditBalance = creditBalance;
+        r.missingCredits = (long) creditCost - creditBalance;
         return r;
     }
 }

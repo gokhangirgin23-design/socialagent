@@ -230,12 +230,6 @@ public class AppProperties {
 		private String imageQuality = "medium";
 		// Reel video üretimi için Veo modeli
 		private String videoModel = "veo-3.1-generate-preview";
-		// Tarife (TL) — PAYMENT_ENABLED=true olduğunda uygulanır
-		private int pricePost = 100;
-		private int priceStory = 100;
-		private int priceCarousel = 120;
-		private int priceReel = 150;
-		private int priceAll = 300;
 	}
 
 	/**

@@ -19,7 +19,6 @@ import com.api.dto.ReportRequestListRequest;
 import com.api.security.SecurityUtil;
 import com.api.service.ReportRequestService;
 
-import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 
@@ -28,7 +27,7 @@ import lombok.RequiredArgsConstructor;
  * Tüm uçlar JWT gerektiren güvenli uçlardır.
  * userId daima JWT'den SecurityUtil ile alınır; istekten okunmaz (CLAUDE.md Madde 4).
  */
-@Tag(name = "Rapor İsteği", description = "On-demand rapor talebi ve PayTR bakiye/ödeme kapısı")
+@Tag(name = "Rapor İsteği", description = "On-demand rapor talebi ve kredi kapısı")
 @RestController
 @RequestMapping("/report-request")
 @RequiredArgsConstructor
@@ -38,29 +37,18 @@ public class ReportRequestController {
     private final ReportRequestService reportRequestService;
 
     /**
-     * Yeni rapor isteği oluşturur (FAZ PAYMENT — bakiye kapısı).
-     * Bakiye yeterliyse ücret düşülüp istek kuyruğa basılır (data.paymentRequired=false).
-     * Yetersizse data.paymentRequired=true + data.paytr ile PayTR ödeme formu döner.
+     * Yeni rapor isteği oluşturur (FAZ CREDIT — kredi kapısı).
+     * Kredi yeterliyse istek kuyruğa basılır (data.insufficientCredits=false).
+     * Yetersizse data.insufficientCredits=true + data.requiredCredits + data.creditBalance döner;
+     * kullanıcı /payment/packages üzerinden paket satın almaya yönlendirilir.
      * reportType kullanıcı tarafından açıkça seçilir.
      */
-    @Operation(summary = "Rapor isteği oluştur (ödeme kapılı)", description = "Bakiye yeterliyse ücreti düşüp isteği kuyruğa basar (data.paymentRequired=false); yetersizse eksik tutar için PayTR ödeme formu döner (data.paymentRequired=true, data.paytr).")
+    @Operation(summary = "Rapor isteği oluştur (kredi kapılı)", description = "Kredi yeterliyse isteği kuyruğa basar (data.insufficientCredits=false); yetersizse data.insufficientCredits=true + data.requiredCredits + data.creditBalance döner.")
     @PostMapping("/create")
-    public DataResponse<ReportRequestDto> createRequest(@Valid @RequestBody CreateReportRequestDto request,
-            HttpServletRequest httpRequest) {
+    public DataResponse<ReportRequestDto> createRequest(@Valid @RequestBody CreateReportRequestDto request) {
         UUID userId = SecurityUtil.getCurrentUserId();
-        // PayTR STEP 1 token'ı user_ip ister (proxy arkasında X-Forwarded-For)
-        String clientIp = resolveClientIp(httpRequest);
-        ReportRequestDto result = reportRequestService.createRequest(userId, request, clientIp);
+        ReportRequestDto result = reportRequestService.createRequest(userId, request);
         return DataResponse.success(result);
-    }
-
-    /** Dış IP'yi çöz (proxy arkasında X-Forwarded-For; yoksa remote addr). */
-    private String resolveClientIp(HttpServletRequest req) {
-        String xff = req.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isBlank()) {
-            return xff.split(",")[0].trim();
-        }
-        return req.getRemoteAddr();
     }
 
     /**
@@ -81,7 +69,7 @@ public class ReportRequestController {
      * Kullanıcının hangi analiz türlerini seçebileceğini döndürür (frontend için).
      * Frontend bu bilgiyle seçilemeyen seçenekleri devre dışı bırakır.
      */
-    @Operation(summary = "Seçilebilir analiz tipleri", description = "Kullanıcının hesap durumuna göre seçilebilen analiz tiplerini fiyat ve cüzdan bakiyesiyle döndürür.")
+    @Operation(summary = "Seçilebilir analiz tipleri", description = "Kullanıcının hesap durumuna göre seçilebilen analiz tiplerini kredi maliyeti ve kredi bakiyesiyle döndürür.")
     @PostMapping("/available-types")
     public DataResponse<AvailableTypesResponseDto> availableTypes() {
         UUID userId = SecurityUtil.getCurrentUserId();

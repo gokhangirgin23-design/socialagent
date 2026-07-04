@@ -90,11 +90,12 @@ public class DashboardService {
     private WalletInfo buildWalletInfo(UUID userId) {
         UserPayment w = paymentService.findWallet(userId);
         if (w == null) {
-            return new WalletInfo(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP), "TL");
+            return new WalletInfo(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP), "TL", 0L);
         }
         return new WalletInfo(
                 w.getBalance().setScale(2, RoundingMode.HALF_UP),
-                w.getCurrency() != null ? w.getCurrency() : "TL");
+                w.getCurrency() != null ? w.getCurrency() : "TL",
+                w.getCreditBalance() == null ? 0L : w.getCreditBalance());
     }
 
     // ── İzlenen hesap sayısı ────────────────────────────────────────────────

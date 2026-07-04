@@ -20,8 +20,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import com.api.common.ApiException;
 import com.api.common.ResponseCode;
 import com.api.config.AppProperties;
+import com.api.config.CreditCatalog;
 import com.api.dto.AvailableTypesResponseDto;
-import com.api.dto.TopupResponse;
+import com.api.dto.PackageDto;
+import com.api.dto.PackagesResponse;
+import com.api.dto.PurchaseResponse;
 import com.api.dto.WalletDto;
 import com.api.dto.BalanceCheckResponse;
 import com.api.dto.CreateReportRequestDto;
@@ -71,33 +74,30 @@ public class ReportRequestService {
     // Kuyruğa basan producer
     private final JobQueueProducer jobQueueProducer;
 
-    // ===== FAZ PAYMENT: bakiye kapısı bağımlılıkları =====
-    // Cüzdan/bakiye işlemleri + PayTR ödeme kaydı
+    // ===== FAZ CREDIT: kredi kapısı bağımlılıkları =====
+    // Cüzdan/kredi işlemleri + PayTR ödeme kaydı
     private final PaymentService paymentService;
     // PayTR form üretimi (local'de LocalPaytrGateway enjekte edilir)
     private final PaytrGateway paytrGateway;
-    // report_type → fiyat çözümleyici
+    // report_type → kredi maliyeti çözümleyici
     private final ReportPriceResolver reportPriceResolver;
-    // Ödeme kapısı bayrak (app.payment.enabled = false → bakiye/PayTR atlanır)
+    // Ödeme kapısı bayrak (app.payment.enabled = false → kredi kontrolü atlanır)
     private final AppProperties appProperties;
 
     /**
-     * Yeni rapor isteği oluşturur (FAZ PAYMENT — bakiye kapısı).
+     * Yeni rapor isteği oluşturur (FAZ CREDIT — kredi kapısı).
      * reportType istekten gelir; hesap doluluk durumuna göre OTOMATİK BELİRLENMEZ.
      *
      * Akış:
      *   1) Validasyon (mod, hesap, sektör) — eskisiyle aynı.
-     *   2) Fiyat belirle. Bakiye YETERLİ ise: atomik DEBIT → rapor isteği oluştur + kuyruğa bas (COMPLETED).
-     *   3) Bakiye YETERSİZ ise: rapor isteği OLUŞTURULMAZ; niyet PayTR ödeme kaydına yazılır,
-     *      eksik tutar (deficit = price - balance) için PayTR form payload'ı döner (PAYMENT_REQUIRED).
-     *      Ödeme başarılı callback'inde rapor isteği oluşturulup kuyruğa basılır (deficit modeli).
+     *   2) Kredi YETERLİ ise: rapor isteği oluştur + kuyruğa bas (kredi düşümü COMPLETED'de yapılır, #40).
+     *   3) Kredi YETERSİZ ise: rapor isteği OLUŞTURULMAZ; insufficientCredits=true + requiredCredits
+     *      + creditBalance döner (kullanıcı /payment/packages üzerinden paket satın almalıdır).
      *
      * Endpoint: POST /report-request/create
-     *
-     * @param clientIp PayTR STEP 1 token'ı user_ip ister (controller'dan gelir; local'de kullanılmaz)
      */
     @Transactional
-    public ReportRequestDto createRequest(UUID userId, CreateReportRequestDto req, String clientIp) {
+    public ReportRequestDto createRequest(UUID userId, CreateReportRequestDto req) {
 
         // 1) Validasyon (mod, hesap, sektör)
         AnalysisMode mode = parseAnalysisMode(req.getReportType());
@@ -122,69 +122,34 @@ public class ReportRequestService {
                     "Sektör araştırması için önce sektör seçilmelidir.");
         }
 
-        // 2) Ödeme kapısı kapalıysa bakiye/PayTR atlanır; doğrudan istek oluşturulur (PAYMENT_ENABLED=false)
+        // 2) Ödeme kapısı kapalıysa kredi kontrolü atlanır; doğrudan istek oluşturulur (PAYMENT_ENABLED=false)
         if (!appProperties.getPayment().isEnabled()) {
             log.info("Ödeme kapısı kapalı; rapor isteği ücretsiz oluşturuldu: userId={}, tip={}", userId, mode);
             ReportRequestDto freeDto = persistAndQueue(userId, mode, ownAccountId);
-            freeDto.setPaymentRequired(false);
+            freeDto.setInsufficientCredits(false);
             return freeDto;
         }
 
-        // 3) Fiyat + bakiye kapısı
-        BigDecimal price = reportPriceResolver.priceFor(mode);
-        BigDecimal balance = paymentService.getBalance(userId);
+        // 3) Kredi kapısı
+        int requiredCredits = reportPriceResolver.creditCostFor(mode);
+        long creditBalance = paymentService.getCreditBalance(userId);
 
-        if (balance.compareTo(price) >= 0) {
-            // Bakiye yeterli → rapor isteğini oluştur; bakiye düşümü pipeline COMPLETED olduğunda yapılır (#40)
-            ReportRequestDto dto = persistAndQueue(userId, mode, ownAccountId);
-            dto.setPaymentRequired(false);
+        if (creditBalance < requiredCredits) {
+            // Kredi yetersiz → rapor isteği OLUŞTURULMAZ; kullanıcı paket satın almaya yönlendirilir
+            ReportRequestDto dto = new ReportRequestDto();
+            dto.setUserId(userId);
+            dto.setReportType(mode.name());
+            dto.setQueuePushed(0);
+            dto.setInsufficientCredits(true);
+            dto.setRequiredCredits(requiredCredits);
+            dto.setCreditBalance(creditBalance);
             return dto;
         }
 
-        // 4) Bakiye yetersiz → PayTR ödemesi başlat (rapor isteği henüz OLUŞTURULMAZ)
-        BigDecimal deficit = price.subtract(balance);
-        if (deficit.compareTo(BigDecimal.ZERO) <= 0) {
-            deficit = price; // güvenlik
-        }
-        // Kullanıcı daha fazla yüklemek isteyebilir (topupAmount > deficit); fazlası bakiyede kalır
-        BigDecimal payAmount = (req.getTopupAmount() != null
-                && req.getTopupAmount().compareTo(deficit) > 0)
-                        ? req.getTopupAmount()
-                        : deficit;
-        String merchantOid = generateMerchantOid();
-        LocalDateTime exp = LocalDateTime.now().plusMinutes(30); // PayTR varsayılanı 30 dk
-        // Niyet (reportType + seçilen hesap) ödeme kaydına yazılır; callback'te rapor isteği oluşturulur
-        paymentService.createInitiatedPayment(userId, payAmount, merchantOid, exp, mode.name(), ownAccountId);
-
-        String email = lookupEmail(userId);
-        PaytrFormPayload payload = paytrGateway.buildPaymentForm(merchantOid, clientIp, email, payAmount);
-
-        // PAYMENT_REQUIRED yanıtı (rapor isteği henüz yok → requestId null)
-        ReportRequestDto dto = new ReportRequestDto();
-        dto.setUserId(userId);
-        dto.setReportType(mode.name());
-        dto.setQueuePushed(0);
-        dto.setPaymentRequired(true);
-        dto.setAmountToPay(payAmount.setScale(2, RoundingMode.HALF_UP).toPlainString());
-        dto.setPaytr(payload);
+        // Kredi yeterli → rapor isteğini oluştur; kredi düşümü pipeline COMPLETED olduğunda yapılır (#40)
+        ReportRequestDto dto = persistAndQueue(userId, mode, ownAccountId);
+        dto.setInsufficientCredits(false);
         return dto;
-    }
-
-    /**
-     * PayTR success callback'inden sonra çağrılır (PaymentCallbackController).
-     * Bakiye zaten yüklendi; burada DEBIT(price) + rapor isteği oluşturma + kuyruğa basma yapılır.
-     * İdempotensi callback tarafında (processed) sağlanır; burada bakiye yetersizse sessizce çıkılır.
-     */
-    @Transactional
-    public void fulfillPaidRequest(UUID userId, String reportType, UUID selectedAccountId, String merchantOid) {
-        AnalysisMode mode = parseAnalysisMode(reportType);
-        BigDecimal price = reportPriceResolver.priceFor(mode);
-
-        // Bakiye PayTR ile zaten yüklendi; ücret düşümü pipeline COMPLETED olduğunda yapılır (#40)
-        ReportRequestDto dto = persistAndQueue(userId, mode, selectedAccountId);
-        paymentService.linkReportRequest(merchantOid, dto.getRequestId()); // TOPUP log bağlantısı
-        log.info("Ödeme tamamlandı, rapor isteği oluşturuldu: requestId={}, merchant_oid={}",
-                dto.getRequestId(), merchantOid);
     }
 
     /**
@@ -254,25 +219,21 @@ public class ReportRequestService {
     }
 
     /**
-     * Seçilen rapor tipine göre bakiye yeterlilik kontrolü döner.
-     * Frontend bu bilgiyle "bakiyeniz yetersiz" uyarısını ve minimum yükleme tutarını gösterir.
+     * Seçilen rapor tipine göre kredi yeterlilik kontrolü döner.
+     * Frontend bu bilgiyle "krediniz yetersiz" uyarısını ve eksik kredi miktarını gösterir.
      * Endpoint: POST /payment/balance-check
      */
     @Transactional(readOnly = true)
     public BalanceCheckResponse checkBalance(UUID userId, String reportType) {
         AnalysisMode mode = parseAnalysisMode(reportType);
-        BigDecimal price = reportPriceResolver.priceFor(mode);
-        BigDecimal balance = paymentService.getBalance(userId);
-        boolean sufficient = balance.compareTo(price) >= 0;
-        BigDecimal deficit = sufficient
-                ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
-                : price.subtract(balance).setScale(2, RoundingMode.HALF_UP);
+        int requiredCredits = reportPriceResolver.creditCostFor(mode);
+        long creditBalance = paymentService.getCreditBalance(userId);
+        boolean sufficient = creditBalance >= requiredCredits;
         BalanceCheckResponse resp = new BalanceCheckResponse();
-        resp.setBalance(balance.setScale(2, RoundingMode.HALF_UP));
-        resp.setPrice(price.setScale(2, RoundingMode.HALF_UP));
+        resp.setCreditBalance(creditBalance);
+        resp.setRequiredCredits(requiredCredits);
         resp.setSufficient(sufficient);
-        resp.setDeficit(deficit);
-        resp.setCurrency("TL");
+        resp.setMissingCredits(sufficient ? 0 : requiredCredits - creditBalance);
         return resp;
     }
 
@@ -340,45 +301,59 @@ public class ReportRequestService {
     public AvailableTypesResponseDto getAnalysisSelectability(UUID userId) {
         boolean hasOwn = findOwnAccountId(userId) != null;
         boolean hasMonitored = hasMonitoredAccounts(userId);
-        BigDecimal balance = paymentService.getBalance(userId);
+        long creditBalance = paymentService.getCreditBalance(userId);
 
         List<AvailableTypesResponseDto.ReportTypeOption> types = new ArrayList<>();
         // NONE: sektör analizi — her zaman seçilebilir
         types.add(new AvailableTypesResponseDto.ReportTypeOption(
-                "NONE", "Sektör analizi", reportPriceResolver.priceFor(AnalysisMode.NONE)));
+                "NONE", "Sektör analizi", reportPriceResolver.creditCostFor(AnalysisMode.NONE)));
         // OWN_ONLY: kendi hesabı varsa seçilebilir
         if (hasOwn) {
             types.add(new AvailableTypesResponseDto.ReportTypeOption(
-                    "OWN_ONLY", "Kendi Hesabım ile Sektör Analizi", reportPriceResolver.priceFor(AnalysisMode.OWN_ONLY)));
+                    "OWN_ONLY", "Kendi Hesabım ile Sektör Analizi", reportPriceResolver.creditCostFor(AnalysisMode.OWN_ONLY)));
         }
         // COMPETITOR_ONLY: en az 1 rakip hesabı varsa seçilebilir
         if (hasMonitored) {
             types.add(new AvailableTypesResponseDto.ReportTypeOption(
                     "COMPETITOR_ONLY", "Rakip hesap analizi",
-                    reportPriceResolver.priceFor(AnalysisMode.COMPETITOR_ONLY)));
+                    reportPriceResolver.creditCostFor(AnalysisMode.COMPETITOR_ONLY)));
         }
 
         return AvailableTypesResponseDto.builder()
-                .currency("TL")
-                .balance(balance.setScale(2, RoundingMode.HALF_UP))
+                .creditBalance(creditBalance)
                 .types(types)
                 .build();
     }
 
     /**
-     * Rapordan bağımsız bakiye yükleme (standalone topup).
-     * Mevcut deficit akışının PayTR init mantığını paylaşır; rapor niyeti null'dır.
-     * Endpoint: POST /payment/topup
+     * Kredi paketi satın alma başlatır (FAZ CREDIT).
+     * PayTR tarafında hiçbir şey değişmez — TL tutarlı ödeme alır; kredi eşlemesi callback SONRASI yapılır.
+     * Endpoint: POST /payment/purchase
      */
     @Transactional
-    public TopupResponse initiateTopup(UUID userId, BigDecimal amount, String clientIp) {
+    public PurchaseResponse initiatePurchase(UUID userId, String packageCode, String clientIp) {
+        CreditCatalog.CreditPackage pkg = CreditCatalog.findPackage(packageCode);
+        if (pkg == null) {
+            throw new ApiException(ResponseCode.VALIDATION_ERROR, "Geçersiz packageCode: " + packageCode);
+        }
         String merchantOid = generateMerchantOid();
         LocalDateTime exp = LocalDateTime.now().plusMinutes(30);
-        // Standalone topup: pendingReportType + pendingSelectedAccountId null (rapor niyeti yok)
-        paymentService.createInitiatedPayment(userId, amount, merchantOid, exp, null, null);
+        paymentService.createInitiatedPurchase(userId, pkg, merchantOid, exp);
         String email = lookupEmail(userId);
-        PaytrFormPayload payload = paytrGateway.buildPaymentForm(merchantOid, clientIp, email, amount);
-        return new TopupResponse(merchantOid, payload);
+        PaytrFormPayload payload = paytrGateway.buildPaymentForm(merchantOid, clientIp, email, pkg.priceTl());
+        return new PurchaseResponse(merchantOid, payload);
+    }
+
+    /**
+     * Satın alınabilir kredi paketlerini + kullanıcının güncel kredi bakiyesini döndürür.
+     * Endpoint: POST /payment/packages
+     */
+    @Transactional(readOnly = true)
+    public PackagesResponse getPackagesResponse(UUID userId) {
+        List<PackageDto> packages = CreditCatalog.packages().stream()
+                .map(p -> new PackageDto(p.code(), p.name(), p.priceTl(), p.credits(), p.featured()))
+                .toList();
+        return new PackagesResponse(packages, paymentService.getCreditBalance(userId));
     }
 
     /**
@@ -393,13 +368,14 @@ public class ReportRequestService {
             return new WalletDto(
                     BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP), "TL",
                     BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
-                    BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
+                    BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP), 0L);
         }
         return new WalletDto(
                 w.getBalance().setScale(2, RoundingMode.HALF_UP),
                 w.getCurrency() != null ? w.getCurrency() : "TL",
                 w.getTotalTopup().setScale(2, RoundingMode.HALF_UP),
-                w.getTotalSpent().setScale(2, RoundingMode.HALF_UP));
+                w.getTotalSpent().setScale(2, RoundingMode.HALF_UP),
+                w.getCreditBalance() == null ? 0L : w.getCreditBalance());
     }
 
     // ============================================================

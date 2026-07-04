@@ -1,6 +1,5 @@
 package com.api.service;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -16,6 +15,7 @@ import org.springframework.stereotype.Service;
 import com.api.common.ApiException;
 import com.api.common.ResponseCode;
 import com.api.config.AppProperties;
+import com.api.config.CreditCatalog;
 import com.api.dto.ContentCreateRequest;
 import com.api.dto.ContentCreateResponse;
 import com.api.dto.ContentEditRequest;
@@ -55,37 +55,34 @@ public class ContentRequestService {
     // ============================================================
 
     /**
-     * Kullanılabilir içerik tiplerini, fiyatlarını ve kullanıcının bakiyesini döner.
+     * Kullanılabilir içerik tiplerini, kredi maliyetlerini ve kullanıcının kredi bakiyesini döner.
      * Endpoint: POST /content/available-types
      */
     public Map<String, Object> availableTypes(UUID userId) {
-        BigDecimal balance = paymentService.getBalance(userId);
-        AppProperties.Content cfg = appProperties.getContent();
+        long creditBalance = paymentService.getCreditBalance(userId);
         List<Map<String, Object>> types = List.of(
-                typeEntry("POST",     "Post",          cfg.getPricePost()),
-                typeEntry("STORY",    "Story",         cfg.getPriceStory()),
-                typeEntry("CAROUSEL", "Carousel",      cfg.getPriceCarousel()),
-                typeEntry("REEL",     "Reel",          cfg.getPriceReel()),
-                typeEntry("ALL",      "Tüm Formatlar", cfg.getPriceAll())
+                typeEntry("POST",     "Post",      CreditCatalog.POST_CREDIT_COST),
+                typeEntry("STORY",    "Story",     CreditCatalog.STORY_CREDIT_COST),
+                typeEntry("CAROUSEL", "Carousel",  CreditCatalog.CAROUSEL_CREDIT_COST),
+                typeEntry("REEL",     "Reel",      null)
         );
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("currency", "TL");
-        result.put("balance", balance);
+        result.put("creditBalance", creditBalance);
         result.put("types", types);
         return result;
     }
 
-    private Map<String, Object> typeEntry(String value, String label, int priceTl) {
+    private Map<String, Object> typeEntry(String value, String label, Integer creditCost) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("type", value);
         m.put("label", label);
-        m.put("price", new BigDecimal(priceTl));
+        m.put("creditCost", creditCost);
         return m;
     }
 
     /**
      * Yeni içerik üretim isteği oluşturur ve kuyruğa basar.
-     * Ödeme aktifse bakiye kontrolü yapılır.
+     * Ödeme aktifse kredi bakiyesi kontrolü yapılır.
      *
      * @return ContentCreateResponse (QUEUED veya INSUFFICIENT)
      */
@@ -95,14 +92,20 @@ public class ContentRequestService {
         if (contentType == ContentType.REEL) {
             throw new ApiException(ResponseCode.VALIDATION_ERROR, "REEL içerik üretimi şu an kullanılamıyor.");
         }
+        // Yazılı görsel üretimi şimdilik kapalı (maliyet stratejisi) — ileride tek satır silinerek açılır
+        if (request.isIncludeTextInVisual()) {
+            throw new ApiException(ResponseCode.VALIDATION_ERROR,
+                    "Görsel üzerine yazı ekleme özelliği şu an kullanılamıyor.");
+        }
 
-        // Bakiye kontrolü (PAYMENT_ENABLED = true ise)
-        BigDecimal price = priceFor(contentType);
+        // Kredi bakiyesi kontrolü (PAYMENT_ENABLED = true ise)
+        int creditCost = CreditCatalog.creditCostFor(contentType);
         if (appProperties.getPayment().isEnabled()) {
-            BigDecimal balance = paymentService.getBalance(userId);
-            if (balance.compareTo(price) < 0) {
-                log.info("Yetersiz bakiye: userId={}, contentType={}, price={}, balance={}", userId, contentType, price, balance);
-                return ContentCreateResponse.insufficient(price, balance);
+            long creditBalance = paymentService.getCreditBalance(userId);
+            if (creditBalance < creditCost) {
+                log.info("Yetersiz kredi: userId={}, contentType={}, creditCost={}, creditBalance={}",
+                        userId, contentType, creditCost, creditBalance);
+                return ContentCreateResponse.insufficient(creditCost, creditBalance);
             }
         }
 
@@ -128,22 +131,10 @@ public class ContentRequestService {
         contentRequestRepository.save(entity);
         contentQueueProducer.publish(entity.getContentRequestId());
 
-        log.info("İçerik isteği oluşturuldu: id={}, userId={}, reportId={}, type={}, price={}",
-                entity.getContentRequestId(), userId, request.getReportId(), contentType, price);
+        log.info("İçerik isteği oluşturuldu: id={}, userId={}, reportId={}, type={}, creditCost={}",
+                entity.getContentRequestId(), userId, request.getReportId(), contentType, creditCost);
 
-        return ContentCreateResponse.queued(entity.getContentRequestId(), price);
-    }
-
-    /** İçerik tipine göre TL fiyat. */
-    public BigDecimal priceFor(ContentType type) {
-        AppProperties.Content cfg = appProperties.getContent();
-        return switch (type) {
-            case STORY    -> new BigDecimal(cfg.getPriceStory());
-            case CAROUSEL -> new BigDecimal(cfg.getPriceCarousel());
-            case REEL     -> new BigDecimal(cfg.getPriceReel());
-            case ALL      -> new BigDecimal(cfg.getPriceAll());
-            default       -> new BigDecimal(cfg.getPricePost());
-        };
+        return ContentCreateResponse.queued(entity.getContentRequestId(), creditCost);
     }
 
     // ============================================================
@@ -257,7 +248,7 @@ public class ContentRequestService {
             return ContentType.valueOf(value.toUpperCase());
         } catch (IllegalArgumentException ex) {
             throw new ApiException(ResponseCode.VALIDATION_ERROR,
-                    "Geçersiz contentType. Kabul edilenler: POST, STORY, CAROUSEL, REEL, ALL");
+                    "Geçersiz contentType. Kabul edilenler: POST, STORY, CAROUSEL, REEL");
         }
     }
 

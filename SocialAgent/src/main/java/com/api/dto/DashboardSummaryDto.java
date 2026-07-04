@@ -92,5 +92,6 @@ public class DashboardSummaryDto {
     public static class WalletInfo {
         private BigDecimal balance;
         private String currency;
+        private long creditBalance;
     }
 }

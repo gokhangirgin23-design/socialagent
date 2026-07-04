@@ -4,12 +4,13 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 
 /**
- * POST /payment/topup yanıtı — PayTR ödeme formu + merchant_oid.
+ * POST /payment/purchase yanıtı — PayTR ödeme formu + merchant_oid.
  * Frontend, paytr.fields["paytr_token"] tokenını alıp PayTR'a yönlenir.
+ * Ödeme başarılı callback'inde satın alınan paketin kredisi bakiyeye işlenir.
  */
 @Getter
 @AllArgsConstructor
-public class TopupResponse {
+public class PurchaseResponse {
 
     // PayTR idempotency anahtarı (callback'te ödemeyi tanımlar)
     private String merchantOid;

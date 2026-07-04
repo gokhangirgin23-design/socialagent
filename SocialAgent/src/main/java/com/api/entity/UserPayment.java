@@ -49,6 +49,18 @@ public class UserPayment {
     @Column(name = "total_spent")
     private BigDecimal totalSpent;
 
+    // Güncel kredi bakiyesi (FAZ CREDIT)
+    @Column(name = "credit_balance")
+    private Long creditBalance;
+
+    // Toplam yüklenen kredi (istatistik)
+    @Column(name = "total_credit_topup")
+    private Long totalCreditTopup;
+
+    // Toplam harcanan kredi (istatistik)
+    @Column(name = "total_credit_spent")
+    private Long totalCreditSpent;
+
     // Optimistic lock için sürüm (şimdilik kullanılmıyor)
     @Column(name = "version")
     private Long version;

@@ -52,7 +52,6 @@ class ContentPipelineServiceTest {
 	private GeminiImageService geminiImageService;
 	private VeoVideoService veoVideoService;
 	private S3UploadService s3UploadService;
-	private ContentRequestService contentRequestService;
 	private PaymentService paymentService;
 	private AppProperties appProperties;
 	private ContentPipelineService service;
@@ -66,14 +65,13 @@ class ContentPipelineServiceTest {
 		geminiImageService = mock(GeminiImageService.class);
 		veoVideoService = mock(VeoVideoService.class);
 		s3UploadService = mock(S3UploadService.class);
-		contentRequestService = mock(ContentRequestService.class);
 		paymentService = mock(PaymentService.class);
 		appProperties = new AppProperties();
 		// Bu testlerin odağı Brand DNA / görsel kalite / visual pattern akışı; ödeme akışı devre dışı
 		appProperties.getPayment().setEnabled(false);
 		service = new ContentPipelineService(contentRequestRepository, jdbcTemplate, aiAnalysisService,
 				openAiImageService, geminiImageService, veoVideoService, s3UploadService,
-				contentRequestService, paymentService, appProperties);
+				paymentService, appProperties);
 	}
 
 	@Test
