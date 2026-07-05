@@ -313,8 +313,10 @@ public class ContentRequestService {
         if (json == null || json.isBlank()) return new ArrayList<>();
         try {
             List<String> urls = objectMapper.readValue(json, new TypeReference<List<String>>() {});
-            // S3 URL'lerini pre-signed URL'e çevir (private bucket erişimi için)
-            return urls.stream().map(s3UploadService::presign).collect(java.util.stream.Collectors.toList());
+            // S3 URL'lerini pre-signed URL'e çevir (private bucket erişimi için); frontend'e
+            // gittiği için presignForDownload kullanılır (indir butonu yeni sekme yerine dosyayı
+            // doğrudan indirsin diye Content-Disposition: attachment eklenir)
+            return urls.stream().map(s3UploadService::presignForDownload).collect(java.util.stream.Collectors.toList());
         } catch (Exception ex) {
             return new ArrayList<>();
         }

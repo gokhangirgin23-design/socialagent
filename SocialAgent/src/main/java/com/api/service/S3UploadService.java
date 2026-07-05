@@ -150,8 +150,26 @@ public class S3UploadService {
         }
     }
 
-    /** S3 URL'ini 1 saatlik pre-signed URL'e çevirir. data: URL ise dokunmaz. */
+    /**
+     * S3 URL'ini 1 saatlik pre-signed URL'e çevirir. data: URL ise dokunmaz.
+     * AI'a girdi olarak beslenen (server-side fetch edilen) görseller için kullanılır —
+     * tarayıcıya sunulan indirme URL'leri için {@link #presignForDownload(String)} kullanılmalı.
+     */
     public String presign(String s3Url) {
+        return presign(s3Url, null);
+    }
+
+    /**
+     * Frontend'e döndürülen görsel/video URL'lerini pre-signed'e çevirir; ayrıca
+     * `response-content-disposition=attachment` ekler ki tarayıcı bu URL'i (fetch/blob başarısız
+     * olup window.open fallback'ine düşse bile) YENİ SEKMEDE AÇMAK yerine doğrudan indirsin.
+     * S3 objesinin kendi metadata'sı değişmez; yalnızca bu presigned URL'in yanıt header'ı etkilenir.
+     */
+    public String presignForDownload(String s3Url) {
+        return presign(s3Url, "attachment");
+    }
+
+    private String presign(String s3Url, String contentDisposition) {
         if (s3Presigner == null || s3Url == null || s3Url.startsWith("data:")) return s3Url;
         String prefix = "https://" + bucket + ".s3." + region + ".amazonaws.com/";
         if (!s3Url.startsWith(prefix)) return s3Url;
@@ -159,7 +177,12 @@ public class S3UploadService {
         try {
             return s3Presigner.presignGetObject(GetObjectPresignRequest.builder()
                     .signatureDuration(Duration.ofHours(1))
-                    .getObjectRequest(r -> r.bucket(bucket).key(key))
+                    .getObjectRequest(r -> {
+                        r.bucket(bucket).key(key);
+                        if (contentDisposition != null) {
+                            r.responseContentDisposition(contentDisposition);
+                        }
+                    })
                     .build()).url().toString();
         } catch (Exception ex) {
             log.warn("Pre-signed URL oluşturulamadı: key={}, hata={}", key, ex.getMessage());
