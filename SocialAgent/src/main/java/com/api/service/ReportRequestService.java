@@ -198,9 +198,18 @@ public class ReportRequestService {
         try {
             saved = reportRequestRepository.saveAndFlush(request);
         } catch (DataIntegrityViolationException ex) {
-            log.info("Eşzamanlı duplicate rapor isteği DB seviyesinde engellendi: userId={}", userId);
-            throw new ApiException(ResponseCode.DUPLICATE,
-                    "Zaten işlenmekte olan bir rapor isteğiniz var. Lütfen tamamlanmasını bekleyin.");
+            // YALNIZCA active_lock_key çakışmasıysa DUPLICATE'e çevrilir. Aksi halde (ör. başka bir
+            // NOT NULL/constraint ihlali) gerçek hata MASKELENMEDEN fırlatılır — aksi halde tamamen
+            // farklı bir bug (ör. eksik Java-side default) yanlışlıkla "duplicate rapor" gibi
+            // görünüp teşhisi çok zorlaştırır (bu tam olarak canlıda yaşandı, bkz. credit_debited
+            // NOT NULL ihlali insidenti).
+            String rootMsg = rootCauseMessage(ex);
+            if (rootMsg != null && rootMsg.contains("uq_report_request_active_lock")) {
+                log.info("Eşzamanlı duplicate rapor isteği DB seviyesinde engellendi: userId={}", userId);
+                throw new ApiException(ResponseCode.DUPLICATE,
+                        "Zaten işlenmekte olan bir rapor isteğiniz var. Lütfen tamamlanmasını bekleyin.");
+            }
+            throw ex;
         }
         UUID finalRequestId = saved.getRequestId();
 
@@ -232,6 +241,15 @@ public class ReportRequestService {
         log.info("Rapor isteği oluşturuldu (TX commit bekleniyor): requestId={}, userId={}, tip={}",
                 finalRequestId, userId, mode);
         return reportRequestMapper.toDto(saved);
+    }
+
+    /** Bir exception zincirinin en köklü (root cause) mesajını döndürür; hiçbiri yoksa null. */
+    private String rootCauseMessage(Throwable ex) {
+        Throwable t = ex;
+        while (t.getCause() != null) {
+            t = t.getCause();
+        }
+        return t.getMessage();
     }
 
     /** Kullanıcının e-postası (PayTR formu için). */

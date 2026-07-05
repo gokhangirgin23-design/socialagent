@@ -87,16 +87,20 @@ public class ReportRequest {
     // ===== Kredi düşümü mutabakatı (reconciliation) — V6 migration =====
 
     // COMPLETED sonrası kredi başarıyla düşüldü mü? (0/1). Rapor teslim edilse bile bu 0 kalabilir.
+    // Java-side default ŞART: kolon NOT NULL, ama yeni ReportRequest() üreten servisler (ör.
+    // ReportRequestService.persistAndQueue) bu alanı hiç set etmiyor — set edilmezse Hibernate
+    // INSERT'e açıkça NULL yazar (DB DEFAULT yalnızca kolon INSERT listesinden TAMAMEN
+    // çıkarılırsa devreye girer) ve NOT NULL ihlali oluşur (üretim ortamında yaşandı).
     @Column(name = "credit_debited")
-    private Integer creditDebited;
+    private Integer creditDebited = 0;
 
     // Son düşüm denemesinin hatası (başarılıysa null; INSUFFICIENT_CREDITS veya istisna mesajı)
     @Column(name = "credit_debit_error")
     private String creditDebitError;
 
-    // Düşüm denemesi sayacı (reconciliation poison guard)
+    // Düşüm denemesi sayacı (reconciliation poison guard) — aynı NULL-INSERT riski için varsayılan
     @Column(name = "credit_debit_attempts")
-    private Integer creditDebitAttempts;
+    private Integer creditDebitAttempts = 0;
 
     // ===== Çift-tık/duplicate koruması (E7 fix) — V7 migration =====
 
