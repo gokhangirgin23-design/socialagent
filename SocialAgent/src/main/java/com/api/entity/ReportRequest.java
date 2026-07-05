@@ -97,4 +97,12 @@ public class ReportRequest {
     // Düşüm denemesi sayacı (reconciliation poison guard)
     @Column(name = "credit_debit_attempts")
     private Integer creditDebitAttempts;
+
+    // ===== Çift-tık/duplicate koruması (E7 fix) — V7 migration =====
+
+    // Yalnızca PENDING/PROCESSING iken userId taşır (terminal durumda NULL'a döner).
+    // UNIQUE(active_lock_key) — NULL'lar kısıttan muaf olduğundan "kullanıcı başına en fazla
+    // 1 aktif rapor isteği" kuralını DB seviyesinde, eşzamanlı istekler arasında bile uygular.
+    @Column(name = "active_lock_key")
+    private UUID activeLockKey;
 }

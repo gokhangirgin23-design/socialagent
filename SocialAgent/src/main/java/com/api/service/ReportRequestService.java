@@ -10,6 +10,7 @@ import java.util.UUID;
 
 import com.api.entity.UserPayment;
 
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Service;
@@ -154,9 +155,28 @@ public class ReportRequestService {
 
     /**
      * report_request kaydını oluşturur ve kuyruğa basar (eski adım 6-7; bakiye düşümünden SONRA çağrılır).
+     *
+     * E7 fix — çift-tık/duplicate koruması: önce dostane bir ön kontrol (SELECT) yapılır; ancak bu
+     * tek başına eşzamanlı iki isteği (~ms arayla, hatta 2 farklı app instance'ında) engelleyemez.
+     * Gerçek atomiklik active_lock_key üzerindeki DB UNIQUE constraint'i ile sağlanır (bkz.
+     * ReportRequest.activeLockKey javadoc'u) — saveAndFlush çakışırsa DataIntegrityViolationException
+     * yakalanıp kullanıcıya "zaten aktif bir isteğiniz var" hatası olarak döndürülür.
      */
     private ReportRequestDto persistAndQueue(UUID userId, AnalysisMode mode, UUID ownAccountId) {
         LocalDateTime now = LocalDateTime.now();
+
+        // Ön kontrol: kullanıcının zaten PENDING/PROCESSING bir isteği var mı? (dostane, hızlı yol)
+        String activeSql = """
+                SELECT request_id FROM report_request
+                WHERE user_id = ? AND active = 1 AND status IN ('PENDING', 'PROCESSING')
+                LIMIT 1
+                """;
+        List<UUID> activeRows = jdbcTemplate.query(activeSql,
+                (rs, rowNum) -> rs.getObject("request_id", UUID.class), userId);
+        if (!activeRows.isEmpty()) {
+            throw new ApiException(ResponseCode.DUPLICATE,
+                    "Zaten işlenmekte olan bir rapor isteğiniz var. Lütfen tamamlanmasını bekleyin.");
+        }
 
         ReportRequest request = new ReportRequest();
         request.setRequestId(UUID.randomUUID());
@@ -169,9 +189,19 @@ public class ReportRequestService {
         request.setActive(1);
         request.setCreatedDate(now);
         request.setUpdatedDate(now);
+        request.setActiveLockKey(userId); // V7: terminal duruma geçince NULL'a döner (markFinished)
 
-        // saveAndFlush: TX commit öncesi INSERT'i veritabanına gönderir (henüz commit değil)
-        ReportRequest saved = reportRequestRepository.saveAndFlush(request);
+        // saveAndFlush: TX commit öncesi INSERT'i veritabanına gönderir (henüz commit değil).
+        // Eşzamanlı iki istek buraya aynı anda ulaşırsa (ön kontrolü ikisi de geçmiş olabilir),
+        // active_lock_key UNIQUE constraint'i yalnızca birinin başarılı olmasını garanti eder.
+        ReportRequest saved;
+        try {
+            saved = reportRequestRepository.saveAndFlush(request);
+        } catch (DataIntegrityViolationException ex) {
+            log.info("Eşzamanlı duplicate rapor isteği DB seviyesinde engellendi: userId={}", userId);
+            throw new ApiException(ResponseCode.DUPLICATE,
+                    "Zaten işlenmekte olan bir rapor isteğiniz var. Lütfen tamamlanmasını bekleyin.");
+        }
         UUID finalRequestId = saved.getRequestId();
 
         // Race condition önlemi: RabbitMQ mesajını TX commit'ten SONRA gönder.
@@ -188,8 +218,11 @@ public class ReportRequestService {
                             finalRequestId, userId, mode);
                 } catch (Exception ex) {
                     String errorMsg = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
+                    // Kuyruğa hiç basılamadıysa worker bu isteği asla işlemeyecek — active_lock_key
+                    // kilidi de bırakılır (aksi halde kullanıcı yeni bir rapor isteği hiç oluşturamaz,
+                    // bu istek admin requeue-stuck ile elle kurtarılana kadar kalıcı olarak kilitlenir).
                     jdbcTemplate.update(
-                            "UPDATE report_request SET queue_error = ?, updated_date = ? WHERE request_id = ?",
+                            "UPDATE report_request SET queue_error = ?, active_lock_key = NULL, updated_date = ? WHERE request_id = ?",
                             errorMsg, Timestamp.valueOf(LocalDateTime.now()), finalRequestId);
                     log.warn("TX commit sonrası kuyruğa basılamadı: requestId={}, hata={}", finalRequestId, errorMsg);
                 }

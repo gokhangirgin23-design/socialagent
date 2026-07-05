@@ -215,12 +215,15 @@ public class ScrapePipelineService {
 
     /**
      * Terminal durum: COMPLETED | PARTIAL | FAILED + process_finished_date + (varsa) process_error.
+     * active_lock_key de NULL'a çekilir (E7 duplicate-koruması kilidi serbest bırakılır — bkz.
+     * ReportRequestService.persistAndQueue) ki kullanıcı yeni bir rapor isteği oluşturabilsin.
      */
     private void markFinished(UUID requestId, String status, String error) {
         Timestamp now = Timestamp.valueOf(LocalDateTime.now());
         jdbcTemplate.update("""
                 UPDATE report_request
-                   SET status = ?, process_error = ?, process_finished_date = ?, updated_date = ?
+                   SET status = ?, process_error = ?, process_finished_date = ?, updated_date = ?,
+                       active_lock_key = NULL
                  WHERE request_id = ?
                 """, status, error, now, now, requestId);
     }
