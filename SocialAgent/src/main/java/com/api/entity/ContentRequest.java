@@ -96,4 +96,18 @@ public class ContentRequest {
 
     @Column(name = "updated_date")
     private LocalDateTime updatedDate;
+
+    // ===== Kredi düşümü mutabakatı (reconciliation) — V6 migration =====
+
+    // COMPLETED sonrası kredi başarıyla düşüldü mü? (0/1). İçerik teslim edilse bile bu 0 kalabilir.
+    @Column(name = "credit_debited", nullable = false)
+    private short creditDebited = 0;
+
+    // Son düşüm denemesinin hatası (başarılıysa null; INSUFFICIENT_CREDITS veya istisna mesajı)
+    @Column(name = "credit_debit_error", columnDefinition = "TEXT")
+    private String creditDebitError;
+
+    // Düşüm denemesi sayacı (reconciliation poison guard)
+    @Column(name = "credit_debit_attempts", nullable = false)
+    private int creditDebitAttempts = 0;
 }

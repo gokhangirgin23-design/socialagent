@@ -83,4 +83,18 @@ public class ReportRequest {
     // Kaydın son güncellenme tarihi
     @Column(name = "updated_date")
     private LocalDateTime updatedDate;
+
+    // ===== Kredi düşümü mutabakatı (reconciliation) — V6 migration =====
+
+    // COMPLETED sonrası kredi başarıyla düşüldü mü? (0/1). Rapor teslim edilse bile bu 0 kalabilir.
+    @Column(name = "credit_debited")
+    private Integer creditDebited;
+
+    // Son düşüm denemesinin hatası (başarılıysa null; INSUFFICIENT_CREDITS veya istisna mesajı)
+    @Column(name = "credit_debit_error")
+    private String creditDebitError;
+
+    // Düşüm denemesi sayacı (reconciliation poison guard)
+    @Column(name = "credit_debit_attempts")
+    private Integer creditDebitAttempts;
 }

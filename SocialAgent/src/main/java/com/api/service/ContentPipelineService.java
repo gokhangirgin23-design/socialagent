@@ -149,16 +149,14 @@ public class ContentPipelineService {
             markFinished(req, ContentRequestStatus.COMPLETED, null);
             log.info("İçerik üretimi tamamlandı: contentRequestId={}", contentRequestId);
 
-            // Ödeme: yalnızca COMPLETED olunca krediyi düş (hata pipeline'ı bozmaz)
+            // Ödeme: yalnızca COMPLETED olunca krediyi düş. İçerik zaten teslim edilmiş olduğundan
+            // (görsel S3'e yüklendi, DB'ye yazıldı) bu farklı bir transaction'dır — gerçek atomiklik
+            // yoktur. Bu yüzden hata asla sessizce yutulmaz: sonuç content_request'e kalıcı olarak
+            // yazılır (credit_debited/credit_debit_error) ve ERROR seviyesinde loglanır; admin'in
+            // POST /admin/retry-failed-content-debits ile tetiklediği retryFailedDebits() bunu bulup
+            // tekrar dener.
             if (appProperties.getPayment().isEnabled()) {
-                try {
-                    int creditCost = CreditCatalog.creditCostFor(req.getContentType());
-                    paymentService.tryDebitCredits(req.getUserId(), creditCost, req.getContentType().name(),
-                            req.getContentRequestId());
-                } catch (Exception ex) {
-                    log.warn("İçerik kredi düşümü başarısız (üretim etkilenmez): id={}, hata={}",
-                            contentRequestId, ex.getMessage());
-                }
+                debitOnCompleted(req);
             }
 
         } catch (Exception ex) {
@@ -537,6 +535,89 @@ public class ContentPipelineService {
             log.error("Rapor içeriği yüklenemedi: reportId={}, hata={}", reportId, ex.getMessage());
             return null;
         }
+    }
+
+    // ============================================================
+    // Ödeme (kredi düşümü) — reconciliation
+    // ============================================================
+
+    // Reconciliation poison guard: aynı istek için en fazla bu kadar düşüm denemesi yapılır
+    private static final int MAX_DEBIT_ATTEMPTS = 5;
+
+    /**
+     * İçerik COMPLETED olduğunda bakiyeyi düşer. Hata durumunda sonucu kalıcı olarak
+     * content_request'e yazar (bkz. sınıf yorumu, process() içindeki çağrı noktası).
+     *
+     * @return true ise kredi bu çağrıda başarıyla düşüldü
+     */
+    private boolean debitOnCompleted(ContentRequest req) {
+        UUID contentRequestId = req.getContentRequestId();
+        try {
+            int creditCost = CreditCatalog.creditCostFor(req.getContentType());
+            boolean debited = paymentService.tryDebitCredits(req.getUserId(), creditCost,
+                    req.getContentType().name(), contentRequestId);
+            if (debited) {
+                markCreditDebitState(contentRequestId, true, null);
+                log.info("COMPLETED — içerik kredisi düşüldü: contentRequestId={}, creditCost={}",
+                        contentRequestId, creditCost);
+                return true;
+            }
+            // Kredi yetersiz — kullanıcı sonradan kredi yüklerse retryFailedDebits() tekrar dener.
+            markCreditDebitState(contentRequestId, false, "INSUFFICIENT_CREDITS");
+            log.warn("COMPLETED — içerik kredi düşümü başarısız (yetersiz kredi): contentRequestId={}, userId={}",
+                    contentRequestId, req.getUserId());
+            return false;
+        } catch (Exception ex) {
+            // SQL/altyapı hatası: içerik ZATEN teslim edilmiş durumda. Hata yutulmaz.
+            markCreditDebitState(contentRequestId, false, ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            log.error("COMPLETED — içerik kredi düşümü sırasında hata (içerik teslim edilmiş, kredi düşmedi; "
+                    + "reconciliation gerekiyor): contentRequestId={}, userId={}, hata={}",
+                    contentRequestId, req.getUserId(), ex.getMessage(), ex);
+            return false;
+        }
+    }
+
+    /** Kredi düşüm sonucunu content_request'e kalıcı olarak yazar (bağımsız auto-commit). */
+    private void markCreditDebitState(UUID contentRequestId, boolean debited, String error) {
+        jdbcTemplate.update("""
+                UPDATE content_request
+                SET credit_debited = ?, credit_debit_error = ?,
+                    credit_debit_attempts = credit_debit_attempts + 1, updated_date = ?
+                WHERE content_request_id = ?
+                """, debited ? 1 : 0, error, LocalDateTime.now(), contentRequestId);
+    }
+
+    /**
+     * Reconciliation: COMPLETED olup kredisi hâlâ düşmemiş içerik isteklerini bulur ve düşümü
+     * tekrar dener. Admin tarafından POST /admin/retry-failed-content-debits ile tetiklenir.
+     *
+     * @return bu çağrıda başarıyla düşümü tamamlanan kayıt sayısı
+     */
+    public int retryFailedDebits() {
+        String sql = """
+                SELECT content_request_id
+                FROM content_request
+                WHERE active = 1 AND status = 'COMPLETED' AND credit_debited = 0
+                  AND credit_debit_attempts < ?
+                """;
+        List<UUID> pendingIds = jdbcTemplate.queryForList(sql, UUID.class, MAX_DEBIT_ATTEMPTS);
+
+        if (pendingIds.isEmpty()) {
+            log.info("Tekrar denenecek düşmemiş içerik kredi kaydı bulunamadı.");
+            return 0;
+        }
+
+        int recovered = 0;
+        for (UUID id : pendingIds) {
+            ContentRequest req = contentRequestRepository.findById(id).orElse(null);
+            if (req == null) continue;
+            if (debitOnCompleted(req)) {
+                recovered++;
+            }
+        }
+        log.info("İçerik kredi düşümü reconciliation tamamlandı: toplam={}, kurtarılan={}",
+                pendingIds.size(), recovered);
+        return recovered;
     }
 
     // ============================================================

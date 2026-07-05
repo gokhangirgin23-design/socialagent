@@ -247,29 +247,110 @@ public class ScrapePipelineService {
     // #40 — Ödeme yardımcıları
     // ============================================================
 
+    // Reconciliation poison guard: aynı istek için en fazla bu kadar düşüm denemesi yapılır
+    private static final int MAX_DEBIT_ATTEMPTS = 5;
+
     /**
      * Rapor COMPLETED olduğunda bakiyeyi düşer.
      * İstek oluşturma sırasında bakiye rezerve edilmez; sadece başarılı raporlarda ücret alınır.
-     * Hata pipeline durumunu etkilemez; sadece log'a yazılır.
+     *
+     * KRİTİK: Rapor teslimi (markFinished COMPLETED) ile kredi düşümü ayrı transaction'lardadır
+     * (Apify/AI çağrıları uzun sürebildiği için tek transaction'da tutulamaz) — dolayısıyla
+     * gerçek bir DB-transaction atomikliği YOKTUR. Bu yüzden düşüm hatası asla sessizce
+     * yutulmaz: sonucu (başarılı/yetersiz-kredi/hata) her zaman report_request'e kalıcı olarak
+     * yazılır (credit_debited/credit_debit_error/credit_debit_attempts) ve hata ERROR seviyesinde
+     * loglanır. Bu durum admin'in POST /admin/retry-failed-debits ile tetiklediği
+     * {@link #retryFailedDebits()} tarafından bulunup tekrar denenir.
+     *
+     * @return true ise kredi bu çağrıda başarıyla düşüldü
      */
-    private void debitOnCompleted(UUID requestId, ReportRequest request) {
+    private boolean debitOnCompleted(UUID requestId, ReportRequest request) {
+        int creditCost;
         try {
             AnalysisMode mode = AnalysisMode.valueOf(request.getReportType());
-            int creditCost = reportPriceResolver.creditCostFor(mode);
+            creditCost = reportPriceResolver.creditCostFor(mode);
+        } catch (Exception ex) {
+            // reportType/creditCost çözülemiyorsa retry de aynı şekilde başarısız olur; yine de
+            // durum kalıcı olarak işaretlenir ki kayıp sessizce kaybolmasın.
+            markCreditDebitState(requestId, false, "creditCost çözümlenemedi: " + ex.getMessage());
+            log.error("COMPLETED — kredi maliyeti çözümlenemedi (rapor teslim edilmiş, kredi düşmedi): requestId={}, hata={}",
+                    requestId, ex.getMessage(), ex);
+            return false;
+        }
+        try {
             boolean debited = paymentService.tryDebitCredits(request.getUserId(), creditCost, "REPORT", requestId);
             if (debited) {
                 paymentService.linkLatestDebitToRequest(request.getUserId(), requestId);
+                markCreditDebitState(requestId, true, null);
                 log.info("COMPLETED — kredi düşüldü: requestId={}, userId={}, creditCost={}",
                         requestId, request.getUserId(), creditCost);
-            } else {
-                // Kredi yetersiz (edge case: iki eş zamanlı istek, manuel düşüm vb.)
-                log.warn("COMPLETED — kredi düşümü başarısız (yetersiz kredi): requestId={}, userId={}",
-                        requestId, request.getUserId());
+                return true;
             }
+            // Kredi yetersiz (edge case: iki eş zamanlı istek, manuel düşüm vb.) — kullanıcı sonradan
+            // kredi yüklerse retryFailedDebits() bu kaydı tekrar deneyip düşümü tamamlayabilir.
+            markCreditDebitState(requestId, false, "INSUFFICIENT_CREDITS");
+            log.warn("COMPLETED — kredi düşümü başarısız (yetersiz kredi): requestId={}, userId={}",
+                    requestId, request.getUserId());
+            return false;
         } catch (Exception ex) {
-            log.warn("COMPLETED — kredi düşümü sırasında hata (rapor durumu etkilenmez): requestId={}, hata={}",
-                    requestId, ex.getMessage());
+            // SQL/altyapı hatası: rapor ZATEN teslim edilmiş durumda. Hata yutulmaz — kalıcı
+            // olarak işaretlenir ve ERROR seviyesinde loglanır ki mali kayıp fark edilsin.
+            markCreditDebitState(requestId, false, ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            log.error("COMPLETED — kredi düşümü sırasında hata (rapor teslim edilmiş, kredi düşmedi; reconciliation gerekiyor): "
+                    + "requestId={}, userId={}, hata={}", requestId, request.getUserId(), ex.getMessage(), ex);
+            return false;
         }
+    }
+
+    /**
+     * Kredi düşüm sonucunu report_request'e kalıcı olarak yazar (bağımsız auto-commit).
+     * Bu satır olmadan düşüm hatası yalnızca log dosyasında kalır ve hiçbir mutabakat
+     * mekanizması onu bulamaz.
+     */
+    private void markCreditDebitState(UUID requestId, boolean debited, String error) {
+        jdbcTemplate.update("""
+                UPDATE report_request
+                SET credit_debited = ?, credit_debit_error = ?,
+                    credit_debit_attempts = credit_debit_attempts + 1, updated_date = ?
+                WHERE request_id = ?
+                """, debited ? 1 : 0, error, Timestamp.valueOf(LocalDateTime.now()), requestId);
+    }
+
+    /**
+     * Reconciliation: COMPLETED olup kredisi hâlâ düşmemiş (credit_debited=0) istekleri bulur ve
+     * düşümü tekrar dener. Admin tarafından POST /admin/retry-failed-debits ile elle tetiklenir
+     * (requeueStuck ile aynı felsefe — otomatik scheduler yok).
+     *
+     * @return bu çağrıda başarıyla düşümü tamamlanan kayıt sayısı
+     */
+    public int retryFailedDebits() {
+        String sql = """
+                SELECT request_id, user_id, report_type
+                FROM report_request
+                WHERE active = 1 AND status = 'COMPLETED' AND credit_debited = 0
+                  AND credit_debit_attempts < ?
+                """;
+        List<ReportRequest> pending = jdbcTemplate.query(sql, (rs, rowNum) -> {
+            ReportRequest r = new ReportRequest();
+            r.setRequestId(rs.getObject("request_id", UUID.class));
+            r.setUserId(rs.getObject("user_id", UUID.class));
+            r.setReportType(rs.getString("report_type"));
+            return r;
+        }, MAX_DEBIT_ATTEMPTS);
+
+        if (pending.isEmpty()) {
+            log.info("Tekrar denenecek düşmemiş kredi kaydı bulunamadı.");
+            return 0;
+        }
+
+        int recovered = 0;
+        for (ReportRequest r : pending) {
+            if (debitOnCompleted(r.getRequestId(), r)) {
+                recovered++;
+            }
+        }
+        log.info("Kredi düşümü reconciliation tamamlandı: toplam={}, kurtarılan={}", pending.size(), recovered);
+        return recovered;
     }
 
     /**
