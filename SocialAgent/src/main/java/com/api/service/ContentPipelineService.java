@@ -293,7 +293,11 @@ public class ContentPipelineService {
      * KENDİ/RAKİP/SEKTÖR etiketiyle işaretlenir (Brand DNA yalnızca KENDİ'den kimlik alsın diye).
      */
     private String loadVisualPatterns(UUID reportId) {
-        // analysis_json + source_type çek (OWN + SECTOR + MONITORED)
+        // analysis_json + source_type çek (OWN + SECTOR + MONITORED).
+        // KENDİ postları her zaman önce sıralanır (source_type = 'OWN' DESC), sonra tarih DESC —
+        // aksi halde çok sayıda rakip/sektör postu olan bir raporda, KENDİ'nin az sayıdaki postu
+        // sırf daha eski tarihli olduğu için LIMIT 15'in dışında kalabilirdi. KENDİ, DNA'nın ana
+        // kimlik kaynağı olduğundan (bkz. sınıf yorumu) asla rakip verisiyle dışarı itilmemeli.
         String sql = """
                 SELECT pa.analysis_json, sp.source_type
                 FROM post_analysis pa, social_post sp, report r
@@ -301,7 +305,7 @@ public class ContentPipelineService {
                   AND sp.request_id = r.request_id
                   AND r.report_id = ?
                   AND pa.analysis_json IS NOT NULL
-                ORDER BY sp.post_date DESC
+                ORDER BY (sp.source_type = 'OWN') DESC, sp.post_date DESC
                 LIMIT 15
                 """;
         try {
@@ -327,6 +331,13 @@ public class ContentPipelineService {
                     String composition = textField(visual, "composition");
                     String colorPalette = arrayField(visual, "colorPalette");
                     String propsAndDecor = arrayField(visual, "propsAndDecor");
+                    // sceneDescription/visualThemes daha önce hiç çıkarılmıyordu — backgroundType gibi
+                    // tek kelimelik alanların kaçırdığı ayırt edici detaylar (ör. "Boğaz manzaralı teras")
+                    // genelde bu iki alanda yer alır; DNA'nın "typicalBackground"ı çoğunluk deseninin
+                    // (ör. "restoran iç mekan") gölgesinde bırakabileceği azınlık ama marka-tanımlayıcı
+                    // sinyalleri kaybetmemek için eklendi.
+                    String visualThemes = arrayField(visual, "visualThemes");
+                    String sceneDescription = textField(visual, "sceneDescription");
 
                     // En az bir değer varsa ekle
                     if (productCategory == null && specificProduct == null && atmosphere == null) continue;
@@ -341,7 +352,9 @@ public class ContentPipelineService {
                     if (backgroundType != null) sb.append("Arka plan=").append(backgroundType).append(", ");
                     if (colorPalette != null) sb.append("Renkler=").append(colorPalette).append(", ");
                     if (propsAndDecor != null) sb.append("Dekor=").append(propsAndDecor).append(", ");
-                    if (composition != null) sb.append("Kompozisyon=").append(composition);
+                    if (visualThemes != null) sb.append("Temalar=").append(visualThemes).append(", ");
+                    if (composition != null) sb.append("Kompozisyon=").append(composition).append(", ");
+                    if (sceneDescription != null) sb.append("Sahne=").append(sceneDescription);
                     sb.append("\n");
                 } catch (Exception ex) {
                     log.warn("Görsel analiz satırı ayrıştırılamadı; atlanıyor: hata={}", ex.getMessage());

@@ -122,6 +122,8 @@ class ContentPipelineServiceTest {
 				{"visual":{"specificProduct":"Adana kebap","productCategory":"kebap","atmosphere":"sıcak",
 				"shootingStyle":"close-up","lightingStyle":"sıcak ışık","backgroundType":"ahşap",
 				"colorPalette":["kırmızı","turuncu","bej"],"propsAndDecor":["tahta kesme tahtası"],
+				"visualThemes":["sokak lezzeti","ahşap"],
+				"sceneDescription":"Ahşap masada dumanı tüten Adana kebap, arka planda mangal ateşi.",
 				"composition":"yakın çekim"}}
 				""";
 		String monitoredJson = "{\"visual\":{\"specificProduct\":\"pizza\",\"productCategory\":\"pizza\",\"atmosphere\":\"canlı\"}}";
@@ -143,6 +145,30 @@ class ContentPipelineServiceTest {
 		assertTrue(result.contains("[RAKİP]"));
 		assertTrue(result.contains("Renkler=kırmızı, turuncu, bej"));
 		assertTrue(result.contains("Dekor=tahta kesme tahtası"));
+		assertTrue(result.contains("Temalar=sokak lezzeti, ahşap"));
+		assertTrue(result.contains("Sahne=Ahşap masada dumanı tüten Adana kebap, arka planda mangal ateşi."));
+	}
+
+	@Test
+	void gorselDesenSorgusuKendiPostlariOnceliklendirir() throws Exception {
+		// Bir raporda rakip/sektör postu sayısı KENDİ'den kat kat fazla olduğunda, KENDİ
+		// postlarının salt tarih sıralamasında LIMIT'in dışına düşmemesi gerekir — DNA'nın
+		// ana kimlik kaynağı KENDİ'dir (sınıf yorumu). Gerçek oturumda bulunan bir örnek:
+		// 5 KENDİ postuna karşı 25 SEKTÖR postu vardı; eski "ORDER BY post_date DESC LIMIT 15"
+		// sorgusu KENDİ'nin yalnızca 2'sini (en yenilerini) alıyor, en ayırt edici olanı
+		// (rakiplerin arasına gömülü, daha eski bir KENDİ postu) hiç görmüyordu.
+		Method loadVisualPatterns = ContentPipelineService.class.getDeclaredMethod("loadVisualPatterns", UUID.class);
+		loadVisualPatterns.setAccessible(true);
+
+		ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+		when(jdbcTemplate.query(sqlCaptor.capture(), org.mockito.ArgumentMatchers.<RowMapper<Object>>any(), (Object[]) any()))
+				.thenReturn(List.of());
+
+		loadVisualPatterns.invoke(service, UUID.randomUUID());
+
+		String executedSql = sqlCaptor.getValue();
+		assertTrue(executedSql.contains("source_type = 'OWN'"),
+				"Sorgu KENDİ postlarını önceliklendirmeli (ORDER BY (source_type = 'OWN') DESC, ...)");
 	}
 
 	@Test
