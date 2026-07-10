@@ -145,6 +145,45 @@ class ContentPipelineServiceTest {
 		assertTrue(result.contains("Dekor=tahta kesme tahtası"));
 	}
 
+	@Test
+	void editIleTekrarUretimdeKrediZatenDusulmusseTekrarDusulmez() throws Exception {
+		appProperties.getPayment().setEnabled(true);
+
+		ContentRequest req = sampleRequest();
+		req.setCreditDebited((short) 1); // ilk üretimde zaten başarıyla düşülmüş
+
+		Method shouldDebit = ContentPipelineService.class.getDeclaredMethod("shouldDebitOnCompletion", ContentRequest.class);
+		shouldDebit.setAccessible(true);
+
+		assertEquals(false, shouldDebit.invoke(service, req));
+	}
+
+	@Test
+	void ilkUretimdeKrediHenuzDusulmemisseDusulur() throws Exception {
+		appProperties.getPayment().setEnabled(true);
+
+		ContentRequest req = sampleRequest();
+		req.setCreditDebited((short) 0);
+
+		Method shouldDebit = ContentPipelineService.class.getDeclaredMethod("shouldDebitOnCompletion", ContentRequest.class);
+		shouldDebit.setAccessible(true);
+
+		assertEquals(true, shouldDebit.invoke(service, req));
+	}
+
+	@Test
+	void odemeKapaliysaHicDusulmez() throws Exception {
+		appProperties.getPayment().setEnabled(false);
+
+		ContentRequest req = sampleRequest();
+		req.setCreditDebited((short) 0);
+
+		Method shouldDebit = ContentPipelineService.class.getDeclaredMethod("shouldDebitOnCompletion", ContentRequest.class);
+		shouldDebit.setAccessible(true);
+
+		assertEquals(false, shouldDebit.invoke(service, req));
+	}
+
 	// ---- yardımcılar ----
 
 	private ContentRequest sampleRequest() {

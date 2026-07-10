@@ -155,7 +155,12 @@ public class ContentPipelineService {
             // yazılır (credit_debited/credit_debit_error) ve ERROR seviyesinde loglanır; admin'in
             // POST /admin/retry-failed-content-debits ile tetiklediği retryFailedDebits() bunu bulup
             // tekrar dener.
-            if (appProperties.getPayment().isEnabled()) {
+            // ÖNEMLİ: edit() aynı content_request_id'yi PENDING'e alıp process()'i tekrar tetikler
+            // (bkz. ContentRequestService.edit) — creditDebited zaten 1 ise (ilk üretimde başarıyla
+            // düşüldüyse) burada TEKRAR düşülmez, aksi halde her düzenleme kullanıcıdan ikinci kez
+            // ücret alırdı. creditDebited bu metodun başında findById ile yüklenen değeri taşır,
+            // debitOnCompleted() bu çağrıdan önce hiç çalışmadığından güncel/doğru haldedir.
+            if (shouldDebitOnCompletion(req)) {
                 debitOnCompleted(req);
             }
 
@@ -543,6 +548,17 @@ public class ContentPipelineService {
 
     // Reconciliation poison guard: aynı istek için en fazla bu kadar düşüm denemesi yapılır
     private static final int MAX_DEBIT_ATTEMPTS = 5;
+
+    /**
+     * process() COMPLETED sonrası kredi düşümü denemesi yapmalı mı? Ödeme kapalıysa VEYA
+     * bu content_request için kredi zaten başarıyla düşüldüyse (creditDebited=1 — ilk üretimde
+     * veya edit() ile tetiklenen bir önceki yeniden-üretimde) hayır: edit() aynı content_request'i
+     * PENDING'e alıp process()'i tekrar çalıştırdığından, bu kontrol olmazsa her düzenleme
+     * kullanıcıdan kredi maliyetini ikinci (üçüncü, ...) kez tahsil ederdi.
+     */
+    private boolean shouldDebitOnCompletion(ContentRequest req) {
+        return appProperties.getPayment().isEnabled() && req.getCreditDebited() != 1;
+    }
 
     /**
      * İçerik COMPLETED olduğunda bakiyeyi düşer. Hata durumunda sonucu kalıcı olarak
