@@ -54,11 +54,20 @@ public final class ContentPrompts {
                 - compositionRules: Kompozisyon kuralları (close-up mu, flat-lay mi, lifestyle mı?)
                 - propsAndDecorStyle: Sıkça kullanılan aksesuar/dekor (ör: tahta kesme tahtası, çiçek, kumaş)
                 - designRules: Tasarım kuralları
+                - humanPresence: Analiz raporundaki "Başarı Faktörleri" / "Rakiplerden Öğren" gibi bölümlerde
+                  insan veya model kullanımının etkileşimi artırdığına dair bir bulgu VARSA, bunu somut bir görsel
+                  talimatına çevir (ör: "Fotoğraflarda gerçek insan/model bulunmalı — avukat-müvekkil görüşmesi
+                  sahneleri, samimi ve profesyonel bir etkileşim gösterilmeli"). Rapor bu konuda bir şey söylemiyorsa
+                  veya sektör gereği (ör. mahremiyet, marka tercihi) insansız kompozisyon daha uygunsa "insan
+                  kullanılmayacak, sadece ürün/ortam odaklı çekim" yaz. Bu alan ASLA boş bırakılmaz.
                 - preferredContentTypes: Tercih edilen içerik türleri
                 - avoid: Kesinlikle KAÇINILMASI GEREKENLER — yanlış ürün, yanlış renk, yanlış ortam gibi
                 - improvementGoals: Gelişim hedefleri
 
-                ÖNEMLI: mainProductOrService ve visualStyle alanları görsel üretim için kullanılacak; mümkün olduğunca spesifik ve detaylı doldur.
+                ÖNEMLI: mainProductOrService, visualStyle ve humanPresence alanları görsel üretim için kullanılacak;
+                mümkün olduğunca spesifik ve detaylı doldur. humanPresence'ı doldururken özellikle rapordaki
+                "Başarı Faktörleri" ve "Rakiplerden Öğren" bölümlerini dikkatle tara — bu bölümler genelde
+                raporun sonunda yer alır, atlama.
                 Eksik bilgi varsa analiz raporundan ve görsel verilerden çıkarım yap.
                 JSON dışında açıklama yazma.
                 """.formatted(sectorBlock, posts, visuals, reportContent);
@@ -166,11 +175,24 @@ public final class ContentPrompts {
                 if (typicalAtmosphere != null) sb.append("Tipik atmosfer: ").append(typicalAtmosphere).append("\n");
                 sb.append("=== GÖRSEL KİMLİK SONU ===\n\n");
             }
+
+            // İNSAN/MODEL KULLANIMI: raporun rekabet analizinden çıkarılan, ayrı ve zorunlu bir alan
+            // (bkz. forBrandDna) — düz bir "görsel stil" notu içinde kaybolmaması için ayrı vurgulanır.
+            String humanPresence = extractJsonField(brandDnaJson, "humanPresence");
+            if (humanPresence != null && !humanPresence.isBlank()) {
+                sb.append("=== İNSAN/MODEL KULLANIMI (rapor analizinden) ===\n");
+                sb.append(humanPresence).append("\n");
+                sb.append("=== İNSAN/MODEL KULLANIMI SONU ===\n\n");
+            }
         }
 
         if (reportContent != null && !reportContent.isBlank()) {
-            String reportSnippet = reportContent.length() > 1000
-                    ? reportContent.substring(0, 1000) + "..."
+            // Raporun asıl aksiyon önerileri ("Başarı Faktörleri", "İçerik Önerileri" gibi bölümler)
+            // genelde özet/karşılaştırma tablosundan SONRA gelir; eski 1000 karakterlik sınır bu
+            // bölümlere hiç ulaşmadan raporu kesiyordu (ör. "insan/model kullanımı" tavsiyesi görsel
+            // üretim prompt'una hiç girmiyordu). 3000 karakter çoğu raporun tamamını kapsar.
+            String reportSnippet = reportContent.length() > 3000
+                    ? reportContent.substring(0, 3000) + "..."
                     : reportContent;
             sb.append("Gelişim raporundan uygulanacak öneriler:\n").append(reportSnippet).append("\n\n");
         }
@@ -314,8 +336,9 @@ public final class ContentPrompts {
         }
 
         if (reportContent != null && !reportContent.isBlank()) {
-            String snippet = reportContent.length() > 800
-                    ? reportContent.substring(0, 800) + "..."
+            // bkz. forVisual() — aynı sebeple sınır yükseltildi (aksiyon önerileri raporun sonunda)
+            String snippet = reportContent.length() > 3000
+                    ? reportContent.substring(0, 3000) + "..."
                     : reportContent;
             sb.append("Gelişim raporundaki önerileri uygula. Rapor özeti:\n").append(snippet).append("\n\n");
         }

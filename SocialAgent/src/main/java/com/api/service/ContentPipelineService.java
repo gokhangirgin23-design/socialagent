@@ -505,8 +505,10 @@ public class ContentPipelineService {
     // ============================================================
 
     private void applyContentMetadata(ContentRequest req, String brandDna, String reportContent) {
-        String reportSnippet = reportContent.length() > 800
-                ? reportContent.substring(0, 800) + "..."
+        // bkz. ContentPrompts.forVisual() yorumu — raporun aksiyon önerileri genelde özet/tablodan
+        // sonra gelir, düşük bir karakter sınırı bunlara hiç ulaşmadan raporu keser.
+        String reportSnippet = reportContent.length() > 3000
+                ? reportContent.substring(0, 3000) + "..."
                 : reportContent;
         String prompt = ContentPrompts.forContentMetadata(brandDna, reportSnippet, req.getContentType().name());
         String metadataJson = aiAnalysisService.generateContentMetadata(prompt);
