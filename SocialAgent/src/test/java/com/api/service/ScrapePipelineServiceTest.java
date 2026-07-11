@@ -104,11 +104,50 @@ class ScrapePipelineServiceTest {
         verify(notificationService, never()).notifyReportCompleted(any());
     }
 
+    @SuppressWarnings("unchecked")
+    @Test
+    void kendiHesapScrapingBosDonerseRaporFailedOlurSektorVerisiyleDevamEtmez() {
+        // Gerçek vaka: OWN_ONLY raporunda kullanıcının kendi hesabından (bi_butik_originals)
+        // hiç post çekilemedi (özel/yanlış hesap adı), ama pipeline sessizce SECTOR verisiyle
+        // devam edip COMPLETED işaretledi — Brand DNA kullanıcının gerçek ürünüyle alakasız bir
+        // kimliğe (rakip sektör hesaplarından "tesettür") kaydı. Artık bu durumda FAILED olmalı.
+        UUID ownAccountId = UUID.randomUUID();
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class), (Object[]) any()))
+                .thenReturn(List.of(ownOnlyRequest(ownAccountId)));
+        ScrapeTarget ownTarget = ScrapeTarget.own("INSTAGRAM", "bi_butik_originals", ownAccountId);
+        when(targetResolver.resolve(any(ReportRequest.class))).thenReturn(List.of(ownTarget));
+        when(socialPostService.isRecentlyAnalyzed(any(ScrapeTarget.class))).thenReturn(false);
+        // Apify boş döner (hesap özel/yanlış/scrape hatası)
+        when(apifyClient.fetchPostsByUrls(any(List.class), anyInt())).thenReturn(List.of());
+        // countOwnPosts -> 0 (hiç KENDİ postu yazılmadı)
+        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), (Object[]) any())).thenReturn(0);
+
+        pipeline.processRequest(requestId);
+
+        // Rapor/analiz hiç üretilmemeli — sektör verisiyle sahte bir "kendi hesap" raporu oluşmasın
+        verify(analysisPipelineService, never()).analyzeRequest(any());
+        verify(reportPipelineService, never()).generateReport(any());
+        verify(notificationService, never()).notifyReportCompleted(any());
+        // FAILED olarak işaretlenmeli
+        verify(jdbcTemplate).update(
+                org.mockito.ArgumentMatchers.contains("UPDATE report_request"),
+                eq("FAILED"), anyString(), any(), any(), eq(requestId));
+    }
+
     private ReportRequest request() {
         ReportRequest r = new ReportRequest();
         r.setRequestId(requestId);
         r.setUserId(UUID.randomUUID());
         r.setReportType("COMPETITOR_ONLY");
+        return r;
+    }
+
+    private ReportRequest ownOnlyRequest(UUID selectedAccountId) {
+        ReportRequest r = new ReportRequest();
+        r.setRequestId(requestId);
+        r.setUserId(UUID.randomUUID());
+        r.setReportType("OWN_ONLY");
+        r.setSelectedUserSocialAccountId(selectedAccountId);
         return r;
     }
 

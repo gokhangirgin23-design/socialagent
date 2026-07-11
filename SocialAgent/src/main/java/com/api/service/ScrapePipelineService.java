@@ -122,6 +122,25 @@ public class ScrapePipelineService {
                         requestId, targets.size(), totalInserted);
             }
 
+            // KENDİ hesap seçiliyse (OWN_ONLY/BOTH) ama scraping'den tek bir KENDİ postu bile
+            // gelmediyse (hesap özel/yanlış yazılmış/Apify boş döndü vb.), rapor SESSİZCE
+            // sektör/rakip verisiyle "kendi hesap" gibi COMPLETED olmamalı — gerçek bir vakada
+            // Brand DNA, kullanıcının GERÇEK ürünüyle hiç alakası olmayan bir kimliğe (rakip
+            // sektör hesaplarından yanlışlıkla "tesettür" çıkarması) kaymıştı. Kendi hesap
+            // scraping'i boşsa rapor FAILED işaretlenir, sektör verisiyle devam edilmez.
+            if (request.getSelectedUserSocialAccountId() != null && countOwnPosts(requestId) == 0) {
+                String accountName = targets.stream()
+                        .filter(t -> t.type() == ScrapeTarget.TargetType.OWN)
+                        .map(ScrapeTarget::accountName)
+                        .findFirst().orElse("hesabınız");
+                markFinished(requestId, "FAILED",
+                        "Kendi hesabınızdan (" + accountName + ") hiç gönderi çekilemedi. "
+                        + "Hesap adının doğru yazıldığından ve herkese açık olduğundan emin olun.");
+                log.warn("KENDİ hesap scraping'i boş döndü, rapor FAILED: requestId={}, accountId={}",
+                        requestId, request.getSelectedUserSocialAccountId());
+                return;
+            }
+
             // 4) Analiz edilmemiş gönderileri AI ile analiz et (idempotent)
             int analyzed = analysisPipelineService.analyzeRequest(requestId);
             log.info("AI analizi tamamlandı: requestId={}, yazılanAnaliz={}", requestId, analyzed);
@@ -243,6 +262,14 @@ public class ScrapePipelineService {
                   AND EXISTS (SELECT 1 FROM post_analysis pa
                               WHERE pa.social_post_id = sp.social_post_id)
                 """, Integer.class, requestId);
+        return n != null ? n : 0;
+    }
+
+    /** İsteğe ait KENDİ (OWN) kaynaklı post sayısı — kendi hesap scraping'i boş mu diye kontrol için. */
+    private int countOwnPosts(UUID requestId) {
+        Integer n = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM social_post WHERE request_id = ? AND source_type = 'OWN'",
+                Integer.class, requestId);
         return n != null ? n : 0;
     }
 
