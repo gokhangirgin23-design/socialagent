@@ -9,6 +9,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.api.common.ApiException;
+import com.api.common.ResponseCode;
 import com.api.config.CreditCatalog;
 import com.api.dto.TransactionDto;
 import com.api.dto.TransactionsResponse;
@@ -386,6 +388,15 @@ public class PaymentService {
      * Endpoint: POST /payment/transactions
      */
     public TransactionsResponse getTransactionsResponse(UUID userId, int limit, int offset) {
+        // limit/offset doğrudan SQL LIMIT/OFFSET'e gidiyor; negatif limit PostgreSQL'de
+        // SQLException fırlatıp ham 999 SYSTEM_ERROR'a düşüyordu (H6 bulgusu) — burada
+        // anlamlı bir VALIDATION_ERROR'a çevrilir.
+        if (limit <= 0) {
+            throw new ApiException(ResponseCode.VALIDATION_ERROR, "limit 1 veya daha büyük olmalıdır.");
+        }
+        if (offset < 0) {
+            throw new ApiException(ResponseCode.VALIDATION_ERROR, "offset negatif olamaz.");
+        }
         String sql = """
                 SELECT transaction_type, credit_amount, amount, package_name, product_type, created_date
                 FROM user_payment_log

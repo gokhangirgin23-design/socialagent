@@ -170,4 +170,28 @@ class PaymentServiceTest {
         assertEquals(0, response.getTransactions().size());
         assertEquals(42L, response.getCreditBalance());
     }
+
+    @Test
+    void negatifLimitValidationErrorFirlatirHamSqlHatasiVermez() {
+        com.api.common.ApiException ex = org.junit.jupiter.api.Assertions.assertThrows(
+                com.api.common.ApiException.class,
+                () -> service.getTransactionsResponse(userId, -5, 0));
+
+        assertEquals(com.api.common.ResponseCode.VALIDATION_ERROR, ex.getResponseCode());
+    }
+
+    @Test
+    void sifirLimitValidationErrorFirlatir() {
+        org.junit.jupiter.api.Assertions.assertThrows(com.api.common.ApiException.class,
+                () -> service.getTransactionsResponse(userId, 0, 0));
+    }
+
+    @Test
+    void negatifOffsetValidationErrorFirlatir() {
+        com.api.common.ApiException ex = org.junit.jupiter.api.Assertions.assertThrows(
+                com.api.common.ApiException.class,
+                () -> service.getTransactionsResponse(userId, 50, -1));
+
+        assertEquals(com.api.common.ResponseCode.VALIDATION_ERROR, ex.getResponseCode());
+    }
 }
