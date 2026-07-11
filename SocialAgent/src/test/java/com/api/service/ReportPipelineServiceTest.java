@@ -16,6 +16,7 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 
@@ -135,6 +136,42 @@ class ReportPipelineServiceTest {
 
 		assertTrue(done);
 		verify(aiAnalysisService, times(1)).generateReport(anyString());
+	}
+
+	@SuppressWarnings("unchecked")
+	@Test
+	void alakasizSektorHesabiRapordanDislanir() {
+		// Moda/Lüks Moda vakası: Apify "Lüks Moda" aramasında 2 gerçek moda hesabı + 1 alakasız
+		// emlak hesabı buluyor (kullanıcı adında "moda"/"luks" geçtiği için yanlış eşleşme).
+		when(jdbcTemplate.query(contains("analysis_mode"), any(RowMapper.class), (Object[]) any()))
+				.thenReturn(List.of("NONE"));
+		when(jdbcTemplate.query(contains("source_type IN"), any(RowMapper.class), (Object[]) any()))
+				.thenReturn(List.of(
+						sampleSectorRow("moda_hesap_1", "kadın giyim"),
+						sampleSectorRow("moda_hesap_2", "erkek giyim"),
+						sampleSectorRow("emlak_hesap", "gayrimenkul")));
+		when(jdbcTemplate.query(contains("monitored_account ma"), any(RowMapper.class), (Object[]) any()))
+				.thenReturn(List.of());
+		when(reportService.ensureReport(eq(jobId))).thenReturn(reportId);
+		ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
+		when(aiAnalysisService.generateReport(promptCaptor.capture())).thenReturn("# Rapor");
+
+		boolean done = service.generateReport(jobId);
+
+		assertTrue(done);
+		String prompt = promptCaptor.getValue();
+		assertTrue(prompt.contains("@moda_hesap_1"), "İlgili sektör hesabı prompt'ta kalmalı: " + prompt);
+		assertTrue(prompt.contains("@moda_hesap_2"), "İlgili sektör hesabı prompt'ta kalmalı: " + prompt);
+		assertFalse(prompt.contains("@emlak_hesap"), "Alakasız hesap prompt'tan dışlanmalı: " + prompt);
+	}
+
+	private ReportPipelineService.PostRaw sampleSectorRow(String accountName, String productCategory) {
+		return new ReportPipelineService.PostRaw(
+				"SEKTÖR",
+				accountName,
+				"IMAGE",
+				50L, 5L, 500L,
+				"{\"visual\":{\"productCategory\":\"" + productCategory + "\"}}");
 	}
 
 	// PostRaw package-private olduğu için doğrudan erişilebilir (aynı paket)

@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -126,6 +127,24 @@ public class ReportPipelineService {
 
         if (rawRows.isEmpty()) {
             return List.of();
+        }
+
+        // Apify'ın sektör keyword aramasıyla bulduğu SECTOR hesapları arasında, gerçek konusu
+        // diğerleriyle hiç örtüşmeyen (ör. "Lüks Moda" aramasında yanlışlıkla eşleşen bir emlak
+        // hesabı) hesapları rapordan dışla — bkz. SectorRelevanceFilter.
+        Map<String, List<String>> sectorCategories = new LinkedHashMap<>();
+        for (PostRaw row : rawRows) {
+            if (!"SEKTÖR".equals(row.source())) continue;
+            String category = SectorRelevanceFilter.extractProductCategory(row.analysisJson());
+            if (category != null) {
+                sectorCategories.computeIfAbsent(row.accountName(), k -> new ArrayList<>()).add(category);
+            }
+        }
+        Set<String> irrelevantAccounts = SectorRelevanceFilter.findIrrelevantAccounts(sectorCategories);
+        if (!irrelevantAccounts.isEmpty()) {
+            log.warn("Sektör aramasında alakasız hesap(lar) tespit edildi, rapordan dışlanıyor: requestId={}, hesaplar={}",
+                    requestId, irrelevantAccounts);
+            rawRows.removeIf(row -> "SEKTÖR".equals(row.source()) && irrelevantAccounts.contains(row.accountName()));
         }
 
         // Hesap bazında grupla: "TİP:hesap_adi" → post listesi

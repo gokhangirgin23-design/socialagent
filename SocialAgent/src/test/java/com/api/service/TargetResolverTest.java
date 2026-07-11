@@ -4,13 +4,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
@@ -40,7 +40,6 @@ class TargetResolverTest {
     private final UUID userId = UUID.randomUUID();
     private final UUID requestId = UUID.randomUUID();
     private final UUID ownAccountId = UUID.randomUUID();
-    private final UUID sectorId = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
@@ -73,11 +72,10 @@ class TargetResolverTest {
 
     @Test
     void noneModuSektorProfillerindeScrapeTargetUretir() {
-        // loadUserSectorKeyword: 1. user_info sorgusu -> 2. sector adı sorgusu
-        // singletonList kullanılır: List.of(UUID[]) null element nedeniyle NPE atar
-        UUID[] sectorRef = new UUID[]{ sectorId, null };
-        doReturn(Collections.singletonList(sectorRef))
-                .doReturn(List.of("Moda"))
+        // loadUserSectorKeyword artık TEK sorgu (user_info ⋈ sector) — alt sektör kullanılmıyor
+        // (bkz. TargetResolver.loadUserSectorKeyword yorumu: Apify aramasında dar alt sektör
+        // ifadeleri alakasız hesap sızma riskini artırıyordu, her zaman sektör adı kullanılır).
+        doReturn(List.of("Moda"))
                 .when(jdbcTemplate).query(anyString(), any(RowMapper.class), any(UUID.class));
 
         when(apifyClient.searchTopProfiles(anyString(), anyInt())).thenReturn(List.of(
@@ -86,19 +84,16 @@ class TargetResolverTest {
 
         List<ScrapeTarget> targets = resolver.resolve(request("NONE", null));
 
-        verify(apifyClient, times(1)).searchTopProfiles(anyString(), anyInt());
+        verify(apifyClient, times(1)).searchTopProfiles(eq("Moda"), anyInt());
         assertEquals(2, targets.size());
         targets.forEach(t -> assertEquals(ScrapeTarget.TargetType.SECTOR, t.type()));
     }
 
     @Test
     void ownOnlyKendiHesapVeSektorHedefleriUretir() {
-        // resolveOwn sorgusu -> user_info sorgusu -> sector adı sorgusu (3 çağrı sırayla)
+        // resolveOwn sorgusu -> loadUserSectorKeyword sorgusu (2 çağrı sırayla; alt sektör yok)
         ScrapeTarget own = ScrapeTarget.own("INSTAGRAM", "kendi_hesap", ownAccountId);
-        // singletonList: UUID[] içindeki null subsectorId, List.of vararg expansion nedeniyle NPE yapar
-        UUID[] sectorRef = new UUID[]{ sectorId, null };
         doReturn(List.of(own))
-                .doReturn(Collections.singletonList(sectorRef))
                 .doReturn(List.of("Tekstil"))
                 .when(jdbcTemplate).query(anyString(), any(RowMapper.class), any(UUID.class));
 
@@ -107,7 +102,7 @@ class TargetResolverTest {
 
         List<ScrapeTarget> targets = resolver.resolve(request("OWN_ONLY", ownAccountId));
 
-        verify(apifyClient, times(1)).searchTopProfiles(anyString(), anyInt());
+        verify(apifyClient, times(1)).searchTopProfiles(eq("Tekstil"), anyInt());
         assertEquals(2, targets.size());
         assertEquals(ScrapeTarget.TargetType.OWN, targets.get(0).type());
         assertEquals(ScrapeTarget.TargetType.SECTOR, targets.get(1).type());
@@ -127,6 +122,21 @@ class TargetResolverTest {
         // BOTH -> sektör araması yapılmaz
         verify(apifyClient, never()).searchTopProfiles(anyString(), anyInt());
         assertEquals(2, targets.size());
+    }
+
+    @Test
+    void apifyAramaTerimiHicSubsectorTablosunaBakmaz() {
+        // Alt sektör kullanılmıyor (bkz. TargetResolver.loadUserSectorKeyword yorumu) — Apify
+        // aramasında dar alt sektör ifadeleri (ör. "Lüks Moda") alakasız hesap sızma riskini
+        // artırıyordu; bu yüzden sorgu artık subsector tablosuna hiç değmemeli.
+        org.mockito.ArgumentCaptor<String> sqlCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
+        doReturn(List.of("Moda"))
+                .when(jdbcTemplate).query(sqlCaptor.capture(), any(RowMapper.class), any(UUID.class));
+        when(apifyClient.searchTopProfiles(anyString(), anyInt())).thenReturn(List.of());
+
+        resolver.resolve(request("NONE", null));
+
+        assertEquals(false, sqlCaptor.getValue().toLowerCase().contains("subsector"));
     }
 
     private ReportRequest request(String reportType, UUID selectedAccountId) {

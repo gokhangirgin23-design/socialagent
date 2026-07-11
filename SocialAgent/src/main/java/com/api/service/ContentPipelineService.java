@@ -2,7 +2,10 @@ package com.api.service;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -282,8 +285,47 @@ public class ContentPipelineService {
         }
     }
 
-    // Görsel analiz sorgu satırı: analysis_json + kaynak (OWN|MONITORED|SECTOR)
-    private record VisualPatternRow(String analysisJson, String sourceType) {
+    // Görsel analiz sorgu satırı: analysis_json + kaynak (OWN|MONITORED|SECTOR) + sektör hesap adı
+    private record VisualPatternRow(String analysisJson, String sourceType, String sectorAccountName) {
+    }
+
+    /**
+     * SECTOR hesapları arasında, gerçek konusu (productCategory) diğer hiçbir sektör hesabıyla
+     * örtüşmeyen (Apify'ın keyword aramasıyla yanlışlıkla eşleştirdiği alakasız bir hesap
+     * olması muhtemel) hesap adlarını döner — bkz. SectorRelevanceFilter.
+     */
+    private Set<String> findIrrelevantSectorAccounts(UUID reportId) {
+        String sql = """
+                SELECT sp.sector_account_name, pa.analysis_json
+                FROM post_analysis pa, social_post sp, report r
+                WHERE pa.social_post_id = sp.social_post_id
+                  AND sp.request_id = r.request_id
+                  AND r.report_id = ?
+                  AND sp.source_type = 'SECTOR'
+                  AND sp.sector_account_name IS NOT NULL
+                  AND pa.analysis_json IS NOT NULL
+                """;
+        try {
+            List<String[]> rows = jdbcTemplate.query(sql, (rs, rowNum) ->
+                    new String[]{rs.getString("sector_account_name"), rs.getString("analysis_json")}, reportId);
+            Map<String, List<String>> categoriesByAccount = new LinkedHashMap<>();
+            for (String[] row : rows) {
+                String category = SectorRelevanceFilter.extractProductCategory(row[1]);
+                if (category != null) {
+                    categoriesByAccount.computeIfAbsent(row[0], k -> new ArrayList<>()).add(category);
+                }
+            }
+            Set<String> irrelevant = SectorRelevanceFilter.findIrrelevantAccounts(categoriesByAccount);
+            if (!irrelevant.isEmpty()) {
+                log.warn("Sektör aramasında alakasız hesap(lar) tespit edildi, Brand DNA'dan dışlanıyor: reportId={}, hesaplar={}",
+                        reportId, irrelevant);
+            }
+            return irrelevant;
+        } catch (Exception ex) {
+            log.warn("Sektör hesap alaka analizi başarısız (atlanmadan devam edilir): reportId={}, hata={}",
+                    reportId, ex.getMessage());
+            return Set.of();
+        }
     }
 
     /**
@@ -293,13 +335,17 @@ public class ContentPipelineService {
      * KENDİ/RAKİP/SEKTÖR etiketiyle işaretlenir (Brand DNA yalnızca KENDİ'den kimlik alsın diye).
      */
     private String loadVisualPatterns(UUID reportId) {
+        // Apify'ın sektör aramasıyla bulduğu, gerçek konusu diğer sektör hesaplarıyla hiç
+        // örtüşmeyen (alakasız) hesapları önceden tespit et — bkz. SectorRelevanceFilter.
+        Set<String> irrelevantSectorAccounts = findIrrelevantSectorAccounts(reportId);
+
         // analysis_json + source_type çek (OWN + SECTOR + MONITORED).
         // KENDİ postları her zaman önce sıralanır (source_type = 'OWN' DESC), sonra tarih DESC —
         // aksi halde çok sayıda rakip/sektör postu olan bir raporda, KENDİ'nin az sayıdaki postu
         // sırf daha eski tarihli olduğu için LIMIT 15'in dışında kalabilirdi. KENDİ, DNA'nın ana
         // kimlik kaynağı olduğundan (bkz. sınıf yorumu) asla rakip verisiyle dışarı itilmemeli.
         String sql = """
-                SELECT pa.analysis_json, sp.source_type
+                SELECT pa.analysis_json, sp.source_type, sp.sector_account_name
                 FROM post_analysis pa, social_post sp, report r
                 WHERE pa.social_post_id = sp.social_post_id
                   AND sp.request_id = r.request_id
@@ -310,7 +356,8 @@ public class ContentPipelineService {
                 """;
         try {
             List<VisualPatternRow> rows = jdbcTemplate.query(sql,
-                    (rs, rowNum) -> new VisualPatternRow(rs.getString("analysis_json"), rs.getString("source_type")),
+                    (rs, rowNum) -> new VisualPatternRow(rs.getString("analysis_json"), rs.getString("source_type"),
+                            rs.getString("sector_account_name")),
                     reportId);
             if (rows.isEmpty()) return null;
 
@@ -318,6 +365,9 @@ public class ContentPipelineService {
             int count = 0;
             for (VisualPatternRow row : rows) {
                 if (row.analysisJson() == null || row.analysisJson().isBlank()) continue;
+                if ("SECTOR".equals(row.sourceType()) && irrelevantSectorAccounts.contains(row.sectorAccountName())) {
+                    continue; // Apify'ın yanlış eşleştirdiği alakasız sektör hesabı — DNA'ya karışmasın
+                }
                 try {
                     JsonNode visual = objectMapper.readTree(row.analysisJson()).path("visual");
                     if (visual.isMissingNode() || visual.isNull()) continue;

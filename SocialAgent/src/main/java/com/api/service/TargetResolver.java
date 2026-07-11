@@ -119,40 +119,27 @@ public class TargetResolver {
     }
 
     /**
-     * Kullanıcının alt-sektör (önce) veya sektör adını döndürür.
-     * Apify keyword araması için kullanılır (D1).
+     * Kullanıcının sektör adını döndürür — Apify keyword araması için kullanılır (D1).
+     *
+     * BİLEREK alt sektör DEĞİL, her zaman SEKTÖR adı kullanılır: Apify'ın Instagram araması
+     * semantik değil, metin/kelime eşleştirmesine yakın çalışıyor. "Lüks Moda" gibi dar,
+     * çok kelimeli bir alt sektör ifadesi eşleşecek gerçekten konuyla ilgili hesap havuzunu
+     * küçültüyor ve alakasız hesapların (ör. kullanıcı adında tesadüfen aynı kelimeler geçen
+     * bir emlak hesabı) ilk N sonuca sızma riskini artırıyor — gerçek bir vakada bulundu.
+     * Alt sektör hâlâ Brand DNA/görsel üretim prompt bağlamında kullanılıyor
+     * (bkz. ContentPipelineService.loadUserSectorContext), sadece Apify arama teriminden
+     * çıkarıldı. Ek güvence olarak SectorRelevanceFilter de arama sonrası kirlenmeyi ayrıca yakalıyor.
      */
     private String loadUserSectorKeyword(UUID userId) {
-        // Sektör ve alt-sektör id'lerini çek
-        String refSql = """
-                SELECT sector_id, subsector_id
-                FROM user_info
-                WHERE user_id = ? AND active = 1
+        String sql = """
+                SELECT s.name
+                FROM user_info ui, sector s
+                WHERE ui.sector_id = s.sector_id
+                  AND ui.user_id = ?
+                  AND ui.active = 1
+                  AND s.active = 1
                 """;
-        List<UUID[]> refs = jdbcTemplate.query(refSql, (rs, rowNum) -> new UUID[]{
-                rs.getObject("sector_id", UUID.class),
-                rs.getObject("subsector_id", UUID.class)}, userId);
-        if (refs.isEmpty()) {
-            return null;
-        }
-        UUID sectorId = refs.get(0)[0];
-        UUID subsectorId = refs.get(0)[1];
-        if (sectorId == null) {
-            return null;
-        }
-        // Alt-sektör adı önce (daha spesifik)
-        if (subsectorId != null) {
-            List<String> names = jdbcTemplate.query(
-                    "SELECT name FROM subsector WHERE subsector_id = ? AND active = 1",
-                    (rs, rowNum) -> rs.getString("name"), subsectorId);
-            if (!names.isEmpty() && names.get(0) != null) {
-                return names.get(0);
-            }
-        }
-        // Sektör adı
-        List<String> names = jdbcTemplate.query(
-                "SELECT name FROM sector WHERE sector_id = ? AND active = 1",
-                (rs, rowNum) -> rs.getString("name"), sectorId);
+        List<String> names = jdbcTemplate.query(sql, (rs, rowNum) -> rs.getString("name"), userId);
         return names.isEmpty() ? null : names.get(0);
     }
 

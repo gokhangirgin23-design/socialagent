@@ -171,6 +171,59 @@ class ContentPipelineServiceTest {
 				"Sorgu KENDİ postlarını önceliklendirmeli (ORDER BY (source_type = 'OWN') DESC, ...)");
 	}
 
+	@SuppressWarnings("unchecked")
+	@Test
+	void alakasizSektorHesabiBrandDnaVerisindenDislanir() throws Exception {
+		// Moda/Lüks Moda vakası: Apify "Lüks Moda" aramasında 2 gerçek moda hesabı + 1 alakasız
+		// emlak hesabı buluyor (kullanıcı adında "moda"/"luks" geçtiği için yanlış eşleşme) —
+		// bkz. SectorRelevanceFilter. Emlak hesabının verisi Brand DNA girdisine karışmamalı.
+		UUID reportId = UUID.randomUUID();
+
+		ArgumentCaptor<RowMapper<Object>> relevanceMapper = ArgumentCaptor.forClass(RowMapper.class);
+		when(jdbcTemplate.query(contains("sp.sector_account_name, pa.analysis_json"), relevanceMapper.capture(), (Object[]) any()))
+				.thenAnswer(invocation -> {
+					RowMapper<Object> mapper = relevanceMapper.getValue();
+					return List.of(
+							mapper.mapRow(mockRelevanceRow("moda_hesap_1", "{\"visual\":{\"productCategory\":\"kadın giyim\"}}"), 0),
+							mapper.mapRow(mockRelevanceRow("moda_hesap_2", "{\"visual\":{\"productCategory\":\"erkek giyim\"}}"), 1),
+							mapper.mapRow(mockRelevanceRow("emlak_hesap", "{\"visual\":{\"productCategory\":\"gayrimenkul\"}}"), 2));
+				});
+
+		ArgumentCaptor<RowMapper<Object>> visualMapper = ArgumentCaptor.forClass(RowMapper.class);
+		when(jdbcTemplate.query(contains("pa.analysis_json, sp.source_type"), visualMapper.capture(), (Object[]) any()))
+				.thenAnswer(invocation -> {
+					RowMapper<Object> mapper = visualMapper.getValue();
+					return List.of(
+							mapper.mapRow(mockVisualRow3("{\"visual\":{\"productCategory\":\"kadın giyim\",\"atmosphere\":\"şık\"}}", "SECTOR", "moda_hesap_1"), 0),
+							mapper.mapRow(mockVisualRow3("{\"visual\":{\"productCategory\":\"erkek giyim\",\"atmosphere\":\"şık\"}}", "SECTOR", "moda_hesap_2"), 1),
+							mapper.mapRow(mockVisualRow3("{\"visual\":{\"productCategory\":\"gayrimenkul\",\"atmosphere\":\"lüks\"}}", "SECTOR", "emlak_hesap"), 2));
+				});
+
+		Method loadVisualPatterns = ContentPipelineService.class.getDeclaredMethod("loadVisualPatterns", UUID.class);
+		loadVisualPatterns.setAccessible(true);
+		String result = (String) loadVisualPatterns.invoke(service, reportId);
+
+		assertNotNull(result);
+		assertTrue(result.contains("kadın giyim"), "İlgili sektör hesabı verisi kalmalı: " + result);
+		assertTrue(result.contains("erkek giyim"), "İlgili sektör hesabı verisi kalmalı: " + result);
+		assertTrue(!result.contains("gayrimenkul"), "Alakasız hesap verisi dışlanmalı: " + result);
+	}
+
+	private ResultSet mockRelevanceRow(String accountName, String analysisJson) throws SQLException {
+		ResultSet rs = mock(ResultSet.class);
+		when(rs.getString("sector_account_name")).thenReturn(accountName);
+		when(rs.getString("analysis_json")).thenReturn(analysisJson);
+		return rs;
+	}
+
+	private ResultSet mockVisualRow3(String analysisJson, String sourceType, String sectorAccountName) throws SQLException {
+		ResultSet rs = mock(ResultSet.class);
+		when(rs.getString("analysis_json")).thenReturn(analysisJson);
+		when(rs.getString("source_type")).thenReturn(sourceType);
+		when(rs.getString("sector_account_name")).thenReturn(sectorAccountName);
+		return rs;
+	}
+
 	@Test
 	void editIleTekrarUretimdeKrediZatenDusulmusseTekrarDusulmez() throws Exception {
 		appProperties.getPayment().setEnabled(true);
