@@ -47,6 +47,8 @@ public class ContentRequestService {
     private final AppProperties appProperties;
     private final PaymentService paymentService;
     private final S3UploadService s3UploadService;
+    // Ücretsiz ilk kullanım hakkı (V11) — kredi sistemine dokunmadan ayrı tablodan kontrol/kayıt
+    private final FreeUsageService freeUsageService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -56,15 +58,29 @@ public class ContentRequestService {
 
     /**
      * Kullanılabilir içerik tiplerini, kredi maliyetlerini ve kullanıcının kredi bakiyesini döner.
+     * reportId verilirse (opsiyonel) POST/STORY için "bu rapordan ücretsiz üretilebilir mi" bilgisi
+     * de hesaplanır (V11 — ücretsiz ilk kullanım, bkz. FreeUsageService).
      * Endpoint: POST /content/available-types
      */
-    public Map<String, Object> availableTypes(UUID userId) {
+    public Map<String, Object> availableTypes(UUID userId, UUID reportId) {
         long creditBalance = paymentService.getCreditBalance(userId);
+        boolean paymentEnabled = appProperties.getPayment().isEnabled();
+
+        // Carousel: kullanıcı hiç kredi paketi satın almadıysa (ücretsiz deneme döneminde) kilitli —
+        // ücretsiz hakka DAHİL DEĞİL, sadece gerçek kredi satın alınca açılır. Belirli bir rapora
+        // bağlı değil (reportId'den bağımsız, kullanıcı seviyesinde bir kısıt).
+        boolean carouselLocked = paymentEnabled && !freeUsageService.hasEverPurchased(userId);
+
         List<Map<String, Object>> types = List.of(
-                typeEntry("POST",     "Post",      CreditCatalog.POST_CREDIT_COST),
-                typeEntry("STORY",    "Story",     CreditCatalog.STORY_CREDIT_COST),
-                typeEntry("CAROUSEL", "Carousel",  CreditCatalog.CAROUSEL_CREDIT_COST),
-                typeEntry("REEL",     "Reel",      null)
+                typeEntry("POST", "Post", CreditCatalog.POST_CREDIT_COST,
+                        reportId != null && paymentEnabled && freeUsageService.isFreeContentAvailable(userId, reportId, ContentType.POST),
+                        false, null),
+                typeEntry("STORY", "Story", CreditCatalog.STORY_CREDIT_COST,
+                        reportId != null && paymentEnabled && freeUsageService.isFreeContentAvailable(userId, reportId, ContentType.STORY),
+                        false, null),
+                typeEntry("CAROUSEL", "Carousel", CreditCatalog.CAROUSEL_CREDIT_COST,
+                        false, carouselLocked, carouselLocked ? "İlk kredi paketini satın alınca açılır" : null),
+                typeEntry("REEL", "Reel", null, false, false, null)
         );
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("creditBalance", creditBalance);
@@ -72,11 +88,15 @@ public class ContentRequestService {
         return result;
     }
 
-    private Map<String, Object> typeEntry(String value, String label, Integer creditCost) {
+    private Map<String, Object> typeEntry(String value, String label, Integer creditCost,
+            boolean free, boolean disabled, String disabledReason) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("type", value);
         m.put("label", label);
         m.put("creditCost", creditCost);
+        m.put("free", free);
+        m.put("disabled", disabled);
+        m.put("disabledReason", disabledReason);
         return m;
     }
 
@@ -98,22 +118,35 @@ public class ContentRequestService {
                     "Görsel üzerine yazı ekleme özelliği şu an kullanılamıyor.");
         }
 
-        // Kredi bakiyesi kontrolü (PAYMENT_ENABLED = true ise)
-        int creditCost = CreditCatalog.creditCostFor(contentType);
-        if (appProperties.getPayment().isEnabled()) {
-            long creditBalance = paymentService.getCreditBalance(userId);
-            if (creditBalance < creditCost) {
-                log.info("Yetersiz kredi: userId={}, contentType={}, creditCost={}, creditBalance={}",
-                        userId, contentType, creditCost, creditBalance);
-                return ContentCreateResponse.insufficient(creditCost, creditBalance);
-            }
-        }
-
         // Rapor kullanıcıya ait mi?
         validateReportOwnership(userId, request.getReportId());
 
+        int creditCost = CreditCatalog.creditCostFor(contentType);
+        UUID newContentRequestId = UUID.randomUUID();
+
+        // V11 — ücretsiz ilk kullanım hakkı: content_request'te E7 tarzı bir duplicate-guard
+        // kilidi YOK, bu yüzden hak tüketimi ATOMİK koşullu UPDATE ile denenir (bkz.
+        // FreeUsageService.tryConsumeFreeContent) — çift-tık aynı anda 2 istek göndersin,
+        // yalnızca biri gerçekten ücretsiz sayılır.
+        boolean useFree = false;
+        if (appProperties.getPayment().isEnabled()) {
+            if (freeUsageService.isFreeContentAvailable(userId, request.getReportId(), contentType)
+                    && freeUsageService.tryConsumeFreeContent(userId, newContentRequestId)) {
+                useFree = true;
+                log.info("Ücretsiz ilk içerik hakkı kullanılıyor: userId={}, reportId={}, contentType={}",
+                        userId, request.getReportId(), contentType);
+            } else {
+                long creditBalance = paymentService.getCreditBalance(userId);
+                if (creditBalance < creditCost) {
+                    log.info("Yetersiz kredi: userId={}, contentType={}, creditCost={}, creditBalance={}",
+                            userId, contentType, creditCost, creditBalance);
+                    return ContentCreateResponse.insufficient(creditCost, creditBalance);
+                }
+            }
+        }
+
         ContentRequest entity = new ContentRequest();
-        entity.setContentRequestId(UUID.randomUUID());
+        entity.setContentRequestId(newContentRequestId);
         entity.setUserId(userId);
         entity.setReportId(request.getReportId());
         entity.setContentType(contentType);
@@ -124,6 +157,7 @@ public class ContentRequestService {
         entity.setEditCount(0);
         entity.setAttemptCount(0);
         entity.setActive((short) 1);
+        entity.setIsFreeUsage(useFree ? (short) 1 : (short) 0);
         LocalDateTime now = LocalDateTime.now();
         entity.setCreatedDate(now);
         entity.setUpdatedDate(now);
@@ -131,10 +165,10 @@ public class ContentRequestService {
         contentRequestRepository.save(entity);
         contentQueueProducer.publish(entity.getContentRequestId());
 
-        log.info("İçerik isteği oluşturuldu: id={}, userId={}, reportId={}, type={}, creditCost={}",
-                entity.getContentRequestId(), userId, request.getReportId(), contentType, creditCost);
+        log.info("İçerik isteği oluşturuldu: id={}, userId={}, reportId={}, type={}, creditCost={}, ücretsiz={}",
+                entity.getContentRequestId(), userId, request.getReportId(), contentType, creditCost, useFree);
 
-        return ContentCreateResponse.queued(entity.getContentRequestId(), creditCost);
+        return ContentCreateResponse.queued(entity.getContentRequestId(), useFree ? 0 : creditCost, useFree);
     }
 
     // ============================================================

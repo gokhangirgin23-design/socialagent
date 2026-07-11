@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -36,6 +37,7 @@ class ContentRequestServiceTest {
     private AppProperties appProperties;
     private PaymentService paymentService;
     private S3UploadService s3UploadService;
+    private FreeUsageService freeUsageService;
     private ContentRequestService service;
 
     private final UUID userId = UUID.randomUUID();
@@ -49,8 +51,9 @@ class ContentRequestServiceTest {
         appProperties = new AppProperties();
         paymentService = mock(PaymentService.class);
         s3UploadService = mock(S3UploadService.class);
+        freeUsageService = mock(FreeUsageService.class);
         service = new ContentRequestService(contentRequestRepository, contentQueueProducer, jdbcTemplate,
-                appProperties, paymentService, s3UploadService);
+                appProperties, paymentService, s3UploadService, freeUsageService);
     }
 
     private ContentCreateRequest sampleRequest(String contentType, boolean includeText) {
@@ -86,5 +89,47 @@ class ContentRequestServiceTest {
 
         assertEquals("QUEUED", response.getStatus());
         verify(contentQueueProducer).publish(any());
+    }
+
+    // ============================================================
+    // V11 — Ücretsiz ilk kullanım hakkı
+    // ============================================================
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void ucretsizIcerikHakkiVarsaKrediKontroluAtlanir() {
+        ContentCreateRequest req = sampleRequest("POST", false);
+        when(jdbcTemplate.queryForObject(anyString(), any(Class.class), any(), any())).thenReturn(1);
+        when(freeUsageService.isFreeContentAvailable(eq(userId), eq(reportId), any())).thenReturn(true);
+        when(freeUsageService.tryConsumeFreeContent(eq(userId), any())).thenReturn(true);
+        when(contentRequestRepository.save(any(ContentRequest.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        ContentCreateResponse response = service.create(userId, req);
+
+        assertEquals("QUEUED", response.getStatus());
+        assertEquals(0, response.getCreditCost());
+        assertEquals(Boolean.TRUE, response.getFreeUsage());
+        // Kredi bakiyesi HİÇ sorgulanmadı — ücretsiz hak kredi kontrolünün önüne geçti
+        verify(paymentService, never()).getCreditBalance(any());
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void ucretsizHakYaristaKaybedilirseNormalKrediAkisinaDoner() {
+        // isFreeContentAvailable true ama tryConsumeFreeContent (atomik UPDATE) yarışta kaybeder (false)
+        ContentCreateRequest req = sampleRequest("POST", false);
+        when(jdbcTemplate.queryForObject(anyString(), any(Class.class), any(), any())).thenReturn(1);
+        when(freeUsageService.isFreeContentAvailable(eq(userId), eq(reportId), any())).thenReturn(true);
+        when(freeUsageService.tryConsumeFreeContent(eq(userId), any())).thenReturn(false);
+        when(paymentService.getCreditBalance(userId)).thenReturn(100L);
+        when(contentRequestRepository.save(any(ContentRequest.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        ContentCreateResponse response = service.create(userId, req);
+
+        assertEquals("QUEUED", response.getStatus());
+        assertEquals(Boolean.FALSE, response.getFreeUsage());
+        verify(paymentService).getCreditBalance(userId);
     }
 }

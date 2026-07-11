@@ -60,4 +60,14 @@ public class ReportRequestDto {
 
     // Yetersizse: kullanıcının mevcut kredi bakiyesi
     private Long creditBalance;
+
+    // ===== Rapor listesinde sektör/hesap gösterimi (V10) =====
+    // Raporun ÜRETİLDİĞİ ANDAKİ sektör/alt sektör/hesap adı (bu migration'dan önceki raporlarda null)
+    private String sectorName;
+    private String subsectorName;
+    private String ownAccountName;
+
+    // ===== Ücretsiz ilk kullanım (V11) =====
+    // Bu rapor ücretsiz hakla mı oluşturuldu?
+    private Boolean freeUsage;
 }

@@ -48,6 +48,7 @@ class ReportRequestServiceTest {
     private PaytrGateway paytrGateway;
     private ReportPriceResolver reportPriceResolver;
     private AppProperties appProperties;
+    private FreeUsageService freeUsageService;
     private ReportRequestService service;
 
     private final UUID userId = UUID.randomUUID();
@@ -65,9 +66,10 @@ class ReportRequestServiceTest {
         // Ödeme kapısını kapatarak kredi kontrolü akışını devre dışı bırakıyoruz;
         // testin odağı yalnızca duplicate koruması.
         appProperties.getPayment().setEnabled(false);
+        freeUsageService = mock(FreeUsageService.class);
 
         service = new ReportRequestService(jdbcTemplate, reportRequestRepository, reportRequestMapper,
-                jobQueueProducer, paymentService, paytrGateway, reportPriceResolver, appProperties);
+                jobQueueProducer, paymentService, paytrGateway, reportPriceResolver, appProperties, freeUsageService);
 
         // COMPETITOR_ONLY modu için ön koşul: en az 1 izlenen hesap var
         when(jdbcTemplate.query(contains("user_monitored_account_id"), any(RowMapper.class), (Object[]) any()))
@@ -132,5 +134,59 @@ class ReportRequestServiceTest {
         }
 
         verify(reportRequestRepository).saveAndFlush(any(ReportRequest.class));
+    }
+
+    // ============================================================
+    // V11 — Ücretsiz ilk kullanım hakkı
+    // ============================================================
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void ucretsizRaporHakkiVarsaKrediKontroluAtlanirVeHakTuketilir() {
+        appProperties.getPayment().setEnabled(true); // kredi kapısı AÇIK — yine de ücretsiz hak devreye girmeli
+        when(jdbcTemplate.query(contains("status IN"), any(RowMapper.class), (Object[]) any()))
+                .thenReturn(List.of());
+        when(freeUsageService.isFreeReportAvailable(userId)).thenReturn(true);
+
+        ReportRequest saved = new ReportRequest();
+        saved.setRequestId(UUID.randomUUID());
+        saved.setUserId(userId);
+        saved.setReportType("NONE");
+        when(reportRequestRepository.saveAndFlush(any(ReportRequest.class))).thenReturn(saved);
+        when(reportRequestMapper.toDto(saved)).thenReturn(new com.api.dto.ReportRequestDto());
+        // sektör sorguları: hasSectorSelected (yalnızca sector_id, ön koşul) ve
+        // lookupUserSectorSnapshot (sector_id + subsector_id, UUID[] döner) — SQL içeriğine göre
+        // ayrı dönüş tipleri gerektiğinden thenAnswer ile SQL metnine bakılarak dallanır.
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class), (Object[]) any()))
+                .thenAnswer(inv -> {
+                    String sql = inv.getArgument(0);
+                    if (sql.contains("subsector_id")) {
+                        // DİKKAT: List.of(UUID[]) varargs spread'e uğrar (List<UUID> olur, List<UUID[]>
+                        // DEĞİL) — singletonList tek sabit parametre aldığından array'i TEK eleman olarak sarar.
+                        return java.util.Collections.singletonList(new UUID[] { UUID.randomUUID(), UUID.randomUUID() });
+                    }
+                    if (sql.contains("status IN")) {
+                        return List.of();
+                    }
+                    if (sql.contains("sector_id")) {
+                        return List.of(UUID.randomUUID());
+                    }
+                    return List.of();
+                });
+
+        CreateReportRequestDto req = new CreateReportRequestDto();
+        req.setReportType("NONE");
+
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            var result = service.createRequest(userId, req);
+            assertEquals(Boolean.FALSE, result.getInsufficientCredits());
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+
+        // Kredi bakiyesi HİÇ sorgulanmadı — ücretsiz hak kredi kontrolünün önüne geçti
+        verify(paymentService, never()).getCreditBalance(any());
+        verify(freeUsageService).markFreeReportUsed(eq(userId), eq(saved.getRequestId()));
     }
 }

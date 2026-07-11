@@ -633,6 +633,14 @@ public class ContentPipelineService {
      */
     private boolean debitOnCompleted(ContentRequest req) {
         UUID contentRequestId = req.getContentRequestId();
+        // V11 — ücretsiz ilk kullanım: gerçek kredi düşümü hiç denenmez, doğrudan "başarıyla
+        // düşüldü" (0 kredi, hiç harcanmadı) olarak işaretlenir — aksi halde reconciliation
+        // bunu sonsuza kadar "başarısız düşüm" sanıp tekrar tekrar dener.
+        if (req.getIsFreeUsage() == 1) {
+            markCreditDebitState(contentRequestId, true, null);
+            log.info("COMPLETED — ücretsiz ilk kullanım, kredi düşülmedi: contentRequestId={}", contentRequestId);
+            return true;
+        }
         try {
             int creditCost = CreditCatalog.creditCostFor(req.getContentType());
             boolean debited = paymentService.tryDebitCredits(req.getUserId(), creditCost,

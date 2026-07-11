@@ -110,4 +110,10 @@ public class ContentRequest {
     // Düşüm denemesi sayacı (reconciliation poison guard)
     @Column(name = "credit_debit_attempts", nullable = false)
     private int creditDebitAttempts = 0;
+
+    // ===== Ücretsiz ilk kullanım — V11 migration =====
+
+    // Bu içerik ücretsiz ilk kullanım hakkıyla mı oluşturuldu? (0/1)
+    @Column(name = "is_free_usage", nullable = false)
+    private short isFreeUsage = 0;
 }

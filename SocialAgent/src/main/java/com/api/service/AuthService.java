@@ -53,6 +53,8 @@ public class AuthService {
 	private final UserMapper userMapper;
 	// JWT/Google ayarları
 	private final AppProperties appProperties;
+	// Ücretsiz ilk kullanım hakkı (V11) — yeni kullanıcı kaydında satır açılır
+	private final FreeUsageService freeUsageService;
 
 	// Opak refresh token üretimi için güvenli rastgele kaynak
 	private final SecureRandom secureRandom = new SecureRandom();
@@ -164,7 +166,11 @@ public class AuthService {
 		newUser.setActive(1);
 		newUser.setCreatedDate(now);
 		newUser.setUpdatedDate(now);
-		return userInfoRepository.save(newUser);
+		UserInfo saved = userInfoRepository.save(newUser);
+		// V11: yeni kullanıcı için ücretsiz ilk kullanım hakkı satırı açılır (mevcut kullanıcılar
+		// V11 migration'ıyla zaten seed edilmişti — bu yalnızca bundan sonraki kayıtlar için)
+		freeUsageService.ensureRowExists(saved.getUserId());
+		return saved;
 	}
 
 	/**

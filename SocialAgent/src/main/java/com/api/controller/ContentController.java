@@ -42,11 +42,13 @@ public class ContentController {
      * Endpoint: POST /content/available-types
      */
     @Operation(summary = "İçerik tipleri ve fiyatlar",
-            description = "Kullanılabilir içerik tiplerini, birim fiyatlarını ve kullanıcı bakiyesini döner.")
+            description = "Kullanılabilir içerik tiplerini, birim fiyatlarını ve kullanıcı bakiyesini döner. "
+                    + "reportId verilirse (opsiyonel) o rapor için ücretsiz ilk kullanım hakkı bilgisi de döner.")
     @PostMapping("/available-types")
-    public DataResponse<Map<String, Object>> availableTypes() {
+    public DataResponse<Map<String, Object>> availableTypes(@RequestBody(required = false) AvailableTypesRequest request) {
         UUID userId = SecurityUtil.getCurrentUserId();
-        return DataResponse.success(contentRequestService.availableTypes(userId));
+        UUID reportId = request != null ? request.getReportId() : null;
+        return DataResponse.success(contentRequestService.availableTypes(userId, reportId));
     }
 
     /**
@@ -112,5 +114,12 @@ public class ContentController {
         private UUID contentRequestId;
         public UUID getContentRequestId() { return contentRequestId; }
         public void setContentRequestId(UUID contentRequestId) { this.contentRequestId = contentRequestId; }
+    }
+
+    // İç DTO — yalnızca bu controller'da kullanılır (reportId opsiyonel)
+    public static class AvailableTypesRequest {
+        private UUID reportId;
+        public UUID getReportId() { return reportId; }
+        public void setReportId(UUID reportId) { this.reportId = reportId; }
     }
 }

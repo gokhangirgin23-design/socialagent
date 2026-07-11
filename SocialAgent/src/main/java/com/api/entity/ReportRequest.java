@@ -109,4 +109,22 @@ public class ReportRequest {
     // 1 aktif rapor isteği" kuralını DB seviyesinde, eşzamanlı istekler arasında bile uygular.
     @Column(name = "active_lock_key")
     private UUID activeLockKey;
+
+    // ===== Rapor listesinde sektör/hesap gösterimi — V10 migration =====
+
+    // Rapor OLUŞTURULDUĞU ANDAKİ kullanıcı sektörü/alt sektörü (canlı user_info'ya değil, bu
+    // ANLIK değere göre gösterilir — kullanıcı sonradan sektör değiştirirse eski raporlar
+    // yanlış görünmesin diye). Bu migration'dan önceki raporlarda null.
+    @Column(name = "sector_id")
+    private UUID sectorId;
+
+    @Column(name = "subsector_id")
+    private UUID subsectorId;
+
+    // ===== Ücretsiz ilk kullanım — V11 migration =====
+
+    // Bu rapor ücretsiz ilk kullanım hakkıyla mı oluşturuldu? (0/1). Java-side default ŞART
+    // (bkz. credit_debited yorumu yukarıda — aynı NOT NULL/Hibernate-NULL-INSERT riski).
+    @Column(name = "is_free_usage")
+    private Integer isFreeUsage = 0;
 }

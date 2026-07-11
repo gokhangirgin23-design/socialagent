@@ -19,12 +19,15 @@ public class ContentCreateResponse {
     private Integer creditCost;
     private Long creditBalance;
     private Long missingCredits;
+    // V11: bu üretim ücretsiz ilk kullanım hakkıyla mı yapıldı?
+    private Boolean freeUsage;
 
-    public static ContentCreateResponse queued(UUID id, int creditCost) {
+    public static ContentCreateResponse queued(UUID id, int creditCost, boolean freeUsage) {
         ContentCreateResponse r = new ContentCreateResponse();
         r.status = "QUEUED";
         r.contentRequestId = id;
         r.creditCost = creditCost;
+        r.freeUsage = freeUsage;
         return r;
     }
 

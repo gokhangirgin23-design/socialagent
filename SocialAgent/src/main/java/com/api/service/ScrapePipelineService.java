@@ -295,6 +295,15 @@ public class ScrapePipelineService {
      * @return true ise kredi bu çağrıda başarıyla düşüldü
      */
     private boolean debitOnCompleted(UUID requestId, ReportRequest request) {
+        // V11 — ücretsiz ilk kullanım: gerçek kredi düşümü hiç denenmez, doğrudan "başarıyla
+        // düşüldü" (0 kredi, hiç harcanmadı) olarak işaretlenir — aksi halde reconciliation
+        // bunu sonsuza kadar "başarısız düşüm" sanıp tekrar tekrar dener.
+        if (request.getIsFreeUsage() != null && request.getIsFreeUsage() == 1) {
+            markCreditDebitState(requestId, true, null);
+            log.info("COMPLETED — ücretsiz ilk kullanım, kredi düşülmedi: requestId={}, userId={}",
+                    requestId, request.getUserId());
+            return true;
+        }
         int creditCost;
         try {
             AnalysisMode mode = AnalysisMode.valueOf(request.getReportType());

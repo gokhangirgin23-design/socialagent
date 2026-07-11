@@ -22,12 +22,14 @@ public class AvailableTypesResponseDto {
     // Seçilebilir rapor tipleri (hesap durumuna göre filtrelenmiş)
     private List<ReportTypeOption> types;
 
-    /** Tek bir rapor tipi seçeneği (tip, etiket, kredi maliyeti). */
+    /** Tek bir rapor tipi seçeneği (tip, etiket, kredi maliyeti, ücretsiz hak durumu). */
     @Getter
     @AllArgsConstructor
     public static class ReportTypeOption {
         private String type;
         private String label;
         private int creditCost;
+        // V11: kullanıcının hâlâ ücretsiz ilk rapor hakkı varsa true (tip fark etmeksizin — fiyat zaten sabit)
+        private boolean free;
     }
 }

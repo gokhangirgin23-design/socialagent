@@ -84,6 +84,8 @@ public class ReportRequestService {
     private final ReportPriceResolver reportPriceResolver;
     // Ödeme kapısı bayrak (app.payment.enabled = false → kredi kontrolü atlanır)
     private final AppProperties appProperties;
+    // Ücretsiz ilk kullanım hakkı (V11) — kredi sistemine dokunmadan ayrı tablodan kontrol/kayıt
+    private final FreeUsageService freeUsageService;
 
     /**
      * Yeni rapor isteği oluşturur (FAZ CREDIT — kredi kapısı).
@@ -126,7 +128,17 @@ public class ReportRequestService {
         // 2) Ödeme kapısı kapalıysa kredi kontrolü atlanır; doğrudan istek oluşturulur (PAYMENT_ENABLED=false)
         if (!appProperties.getPayment().isEnabled()) {
             log.info("Ödeme kapısı kapalı; rapor isteği ücretsiz oluşturuldu: userId={}, tip={}", userId, mode);
-            ReportRequestDto freeDto = persistAndQueue(userId, mode, ownAccountId);
+            ReportRequestDto freeDto = persistAndQueue(userId, mode, ownAccountId, false);
+            freeDto.setInsufficientCredits(false);
+            return freeDto;
+        }
+
+        // 2.5) Ücretsiz ilk kullanım hakkı (V11) — kredi kontrolünden ÖNCE kontrol edilir; varsa
+        // kredi hiç düşülmeden istek oluşturulur. active_lock_key (E7) kullanıcı başına eşzamanlı
+        // tek istek garanti ettiğinden burada ek bir yarış koruması gerekmez.
+        if (freeUsageService.isFreeReportAvailable(userId)) {
+            log.info("Ücretsiz ilk rapor hakkı kullanılıyor: userId={}, tip={}", userId, mode);
+            ReportRequestDto freeDto = persistAndQueue(userId, mode, ownAccountId, true);
             freeDto.setInsufficientCredits(false);
             return freeDto;
         }
@@ -148,7 +160,7 @@ public class ReportRequestService {
         }
 
         // Kredi yeterli → rapor isteğini oluştur; kredi düşümü pipeline COMPLETED olduğunda yapılır (#40)
-        ReportRequestDto dto = persistAndQueue(userId, mode, ownAccountId);
+        ReportRequestDto dto = persistAndQueue(userId, mode, ownAccountId, false);
         dto.setInsufficientCredits(false);
         return dto;
     }
@@ -162,7 +174,7 @@ public class ReportRequestService {
      * ReportRequest.activeLockKey javadoc'u) — saveAndFlush çakışırsa DataIntegrityViolationException
      * yakalanıp kullanıcıya "zaten aktif bir isteğiniz var" hatası olarak döndürülür.
      */
-    private ReportRequestDto persistAndQueue(UUID userId, AnalysisMode mode, UUID ownAccountId) {
+    private ReportRequestDto persistAndQueue(UUID userId, AnalysisMode mode, UUID ownAccountId, boolean isFreeUsage) {
         LocalDateTime now = LocalDateTime.now();
 
         // Ön kontrol: kullanıcının zaten PENDING/PROCESSING bir isteği var mı? (dostane, hızlı yol)
@@ -178,11 +190,18 @@ public class ReportRequestService {
                     "Zaten işlenmekte olan bir rapor isteğiniz var. Lütfen tamamlanmasını bekleyin.");
         }
 
+        // V10: rapor üretim ANINDAKİ sektör/alt sektörü dondur (canlı user_info'ya join değil —
+        // kullanıcı sonradan sektör değiştirirse eski raporlar yanlış görünmesin)
+        UUID[] sectorSnapshot = lookupUserSectorSnapshot(userId);
+
         ReportRequest request = new ReportRequest();
         request.setRequestId(UUID.randomUUID());
         request.setUserId(userId);
         request.setReportType(mode.name());
         request.setSelectedUserSocialAccountId(ownAccountId);
+        request.setSectorId(sectorSnapshot[0]);
+        request.setSubsectorId(sectorSnapshot[1]);
+        request.setIsFreeUsage(isFreeUsage ? 1 : 0);
         request.setQueuePushed(0);
         request.setStatus("PENDING");    // V2: NOT NULL, DEFAULT 'PENDING'
         request.setAttemptCount(0);      // V2: NOT NULL, DEFAULT 0
@@ -212,6 +231,12 @@ public class ReportRequestService {
             throw ex;
         }
         UUID finalRequestId = saved.getRequestId();
+
+        // V11: ücretsiz ilk rapor hakkı bu istekle tüketildi (bkz. FreeUsageService sınıf yorumu —
+        // active_lock_key zaten yarışı engellediğinden burada ek atomiklik gerekmez)
+        if (isFreeUsage) {
+            freeUsageService.markFreeReportUsed(userId, finalRequestId);
+        }
 
         // Race condition önlemi: RabbitMQ mesajını TX commit'ten SONRA gönder.
         // Aksi hâlde worker DB'de kaydı henüz göremeden işlemeye çalışır.
@@ -301,14 +326,22 @@ public class ReportRequestService {
         int offset = safePage * safeSize;
 
         // LEFT JOIN report: henüz rapor oluşmamış isteklerde rep.report_id NULL döner
+        // V10: sector/subsector (rr üzerinde donmuş anlık kopya) + own account adı için LEFT JOIN'ler.
+        // Bu migration'dan ÖNCEKİ raporlarda rr.sector_id/subsector_id null olduğundan bu alanlar
+        // da null döner (frontend "—" gösterir) — geriye dönük bir taşıma yapılmadı (V8/V9 ile tutarlı).
         String sql = """
                 SELECT rr.request_id, rr.user_id, rr.report_type,
                        rr.queue_pushed, rr.queue_push_date, rr.queue_error,
                        rr.status, rr.process_error, rr.process_started_date, rr.process_finished_date,
-                       rr.created_date, rr.updated_date,
-                       rep.report_id
+                       rr.created_date, rr.updated_date, rr.is_free_usage,
+                       rep.report_id,
+                       sec.name AS sector_name, sub.name AS subsector_name,
+                       usa.account_name AS own_account_name
                 FROM report_request rr
                 LEFT JOIN report rep ON rep.request_id = rr.request_id
+                LEFT JOIN sector sec ON sec.sector_id = rr.sector_id
+                LEFT JOIN subsector sub ON sub.subsector_id = rr.subsector_id
+                LEFT JOIN user_social_account usa ON usa.user_social_account_id = rr.selected_user_social_account_id
                 WHERE rr.user_id = ? AND rr.active = 1
                 ORDER BY rr.created_date DESC
                 LIMIT ? OFFSET ?
@@ -339,6 +372,11 @@ public class ReportRequestService {
             }
             // LEFT JOIN sonucu: rapor tamamlandıysa dolu, henüz yoksa null
             dto.setReportId(rs.getObject("report_id", UUID.class));
+            dto.setSectorName(rs.getString("sector_name"));
+            dto.setSubsectorName(rs.getString("subsector_name"));
+            dto.setOwnAccountName(rs.getString("own_account_name"));
+            Integer freeUsage = rs.getObject("is_free_usage", Integer.class);
+            dto.setFreeUsage(freeUsage != null && freeUsage == 1);
             return dto;
         }, userId, safeSize, offset);
     }
@@ -353,21 +391,24 @@ public class ReportRequestService {
         boolean hasOwn = findOwnAccountId(userId) != null;
         boolean hasMonitored = hasMonitoredAccounts(userId);
         long creditBalance = paymentService.getCreditBalance(userId);
+        // V11: ücretsiz hak varsa TÜM tipler ücretsiz gösterilir (fiyat tipten bağımsız sabit —
+        // hangi tipi seçerse seçsin ilk üretimi ücretsizdir)
+        boolean freeAvailable = appProperties.getPayment().isEnabled() && freeUsageService.isFreeReportAvailable(userId);
 
         List<AvailableTypesResponseDto.ReportTypeOption> types = new ArrayList<>();
         // NONE: sektör analizi — her zaman seçilebilir
         types.add(new AvailableTypesResponseDto.ReportTypeOption(
-                "NONE", "Sektör analizi", reportPriceResolver.creditCostFor(AnalysisMode.NONE)));
+                "NONE", "Sektör analizi", reportPriceResolver.creditCostFor(AnalysisMode.NONE), freeAvailable));
         // OWN_ONLY: kendi hesabı varsa seçilebilir
         if (hasOwn) {
             types.add(new AvailableTypesResponseDto.ReportTypeOption(
-                    "OWN_ONLY", "Kendi Hesabım ile Sektör Analizi", reportPriceResolver.creditCostFor(AnalysisMode.OWN_ONLY)));
+                    "OWN_ONLY", "Kendi Hesabım ile Sektör Analizi", reportPriceResolver.creditCostFor(AnalysisMode.OWN_ONLY), freeAvailable));
         }
         // COMPETITOR_ONLY: en az 1 rakip hesabı varsa seçilebilir
         if (hasMonitored) {
             types.add(new AvailableTypesResponseDto.ReportTypeOption(
                     "COMPETITOR_ONLY", "Rakip hesap analizi",
-                    reportPriceResolver.creditCostFor(AnalysisMode.COMPETITOR_ONLY)));
+                    reportPriceResolver.creditCostFor(AnalysisMode.COMPETITOR_ONLY), freeAvailable));
         }
 
         return AvailableTypesResponseDto.builder()
@@ -463,6 +504,24 @@ public class ReportRequestService {
                 (rs, rowNum) -> rs.getObject("user_monitored_account_id", UUID.class),
                 userId);
         return !rows.isEmpty();
+    }
+
+    /**
+     * Kullanıcının O ANKİ sektör/alt sektör id'lerini döner ([sectorId, subsectorId]) — V10,
+     * rapor oluşturma anında donmuş bir kopyayı report_request'e yazmak için.
+     */
+    private UUID[] lookupUserSectorSnapshot(UUID userId) {
+        String sql = """
+                SELECT sector_id, subsector_id
+                FROM user_info
+                WHERE user_id = ? AND active = 1
+                """;
+        List<UUID[]> rows = jdbcTemplate.query(sql,
+                (rs, rowNum) -> new UUID[] {
+                        rs.getObject("sector_id", UUID.class),
+                        rs.getObject("subsector_id", UUID.class)
+                }, userId);
+        return rows.isEmpty() ? new UUID[] { null, null } : rows.get(0);
     }
 
     /**
