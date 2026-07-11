@@ -74,12 +74,21 @@ public class SocialPostService {
                         target.monitoredAccountId(), cutoff);
             }
             case OWN -> {
-                // Kendi hesabı: report_request.selected_user_social_account_id üzerinden
+                // Kendi hesabı: report_request.selected_user_social_account_id üzerinden.
+                // KRİTİK: sp.source_type = 'OWN' filtresi ZORUNLU — aksi halde aynı istekte
+                // çekilen SECTOR postları da eşleşir (hepsi aynı request_id'ye bağlı), ve OWN
+                // scraping'i hiç başarılı olmamış olsa bile "yakın zamanda analiz edilmiş"
+                // sanılıp bir sonraki denemede Apify'a HİÇ gidilmeden atlanır. Gerçek vakada
+                // bulundu: bi_butik_originals'ın OWN scraping'i başarısız oldu ama 5 SECTOR
+                // postu analiz edildi; hesap mylovebutik olarak değiştirilip tekrar denendiğinde
+                // bu sorgu o eski SECTOR postlarını "OWN analiz edilmiş" sayıp mylovebutik'i
+                // Apify'a hiç göndermedi.
                 String sql = """
                         SELECT sp.social_post_id
                         FROM social_post sp, post_analysis pa, report_request rr
                         WHERE sp.social_post_id = pa.social_post_id
                           AND sp.request_id = rr.request_id
+                          AND sp.source_type = 'OWN'
                           AND rr.selected_user_social_account_id = ?
                           AND pa.created_date >= ?
                         """;
