@@ -1,10 +1,15 @@
 package com.api.ai;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 /**
  * İçerik üretimi için AI prompt'ları.
  * Brand DNA, görsel ve caption üretiminde kullanılan prompt şablonları.
  */
 public final class ContentPrompts {
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private ContentPrompts() {
     }
@@ -48,7 +53,12 @@ public final class ContentPrompts {
                 - brandPersonality: Markanın kişilik özellikleri (3-5 madde)
                 - toneOfVoice: Ses tonu ve iletişim stili
                 - visualStyle: Görsel kimlik — renk, ışık, atmosfer, çekim stili (görsel analizden çıkar; detaylı olmalı)
-                - typicalBackground: Markaya özgü arka plan tercihleri (ör: ahşap masa, beyaz fon, dış mekan — görselden çıkar)
+                - typicalBackground: Markaya özgü arka plan tercihleri (ör: ahşap masa, beyaz fon, dış mekan — görselden çıkar; POSTLARIN ÇOĞUNLUĞUNDA görülen arka plan)
+                - signatureBackground: [KENDİ] etiketli postlar arasında AZINLIKTA olsa da markaya özgü, öne çıkan, ayırt
+                  edici bir arka plan/ortam varyasyonu VARSA (ör: postların çoğu iç mekan ama nadir bir dış mekan/manzara
+                  çekimi işletmenin imzası niteliğindeyse), bunu somut bir görsel talimatına çevir (typicalBackground'dan
+                  FARKLI ve ondan daha spesifik olmalı). Böyle belirgin bir azınlık varyasyonu yoksa veya postlar zaten
+                  homojense "belirgin bir imza arka plan yok" yaz. Bu alan ASLA boş bırakılmaz.
                 - typicalAtmosphere: Markaya özgü atmosfer (ör: sıcak ve rustik, modern ve minimal, canlı ve renkli)
                 - colorPalette: Ana marka renkleri (3-5 renk, isimleriyle)
                 - compositionRules: Kompozisyon kuralları (close-up mu, flat-lay mi, lifestyle mı?)
@@ -64,10 +74,11 @@ public final class ContentPrompts {
                 - avoid: Kesinlikle KAÇINILMASI GEREKENLER — yanlış ürün, yanlış renk, yanlış ortam gibi
                 - improvementGoals: Gelişim hedefleri
 
-                ÖNEMLI: mainProductOrService, visualStyle ve humanPresence alanları görsel üretim için kullanılacak;
-                mümkün olduğunca spesifik ve detaylı doldur. humanPresence'ı doldururken özellikle rapordaki
-                "Başarı Faktörleri" ve "Rakiplerden Öğren" bölümlerini dikkatle tara — bu bölümler genelde
-                raporun sonunda yer alır, atlama.
+                ÖNEMLI: mainProductOrService, visualStyle, humanPresence ve signatureBackground alanları görsel
+                üretim için kullanılacak; mümkün olduğunca spesifik ve detaylı doldur. humanPresence'ı doldururken
+                özellikle rapordaki "Başarı Faktörleri" ve "Rakiplerden Öğren" bölümlerini dikkatle tara — bu
+                bölümler genelde raporun sonunda yer alır, atlama. signatureBackground'ı doldururken [KENDİ]
+                etiketli post analizlerindeki azınlık ama tekrarlı/belirgin arka plan varyasyonlarına dikkat et.
                 Eksik bilgi varsa analiz raporundan ve görsel verilerden çıkarım yap.
                 JSON dışında açıklama yazma.
                 """.formatted(sectorBlock, posts, visuals, reportContent);
@@ -167,11 +178,26 @@ public final class ContentPrompts {
             String colorPalette = extractJsonField(brandDnaJson, "colorPalette");
             String typicalBackground = extractJsonField(brandDnaJson, "typicalBackground");
             String typicalAtmosphere = extractJsonField(brandDnaJson, "typicalAtmosphere");
-            if (visualStyle != null || colorPalette != null || typicalBackground != null || typicalAtmosphere != null) {
+
+            // İMZA ARKA PLAN: azınlıkta ama markaya özgü bir arka plan varyasyonu (bkz. forBrandDna).
+            // Her üretimde typicalBackground'ı ezmesin diye yaklaşık 3-4 üretimden 1'inde devreye girer.
+            String signatureBackground = extractJsonField(brandDnaJson, "signatureBackground");
+            boolean hasSignatureBackground = signatureBackground != null && !signatureBackground.isBlank()
+                    && !signatureBackground.toLowerCase().contains("yok")
+                    && !signatureBackground.toLowerCase().contains("belirgin değil");
+            boolean useSignatureBackground = hasSignatureBackground && Math.random() < 0.28;
+
+            if (visualStyle != null || colorPalette != null || typicalBackground != null
+                    || typicalAtmosphere != null || useSignatureBackground) {
                 sb.append("=== GÖRSEL KİMLİK ===\n");
                 if (visualStyle != null) sb.append("Görsel stil: ").append(visualStyle).append("\n");
                 if (colorPalette != null) sb.append("Renk paleti: ").append(colorPalette).append("\n");
-                if (typicalBackground != null) sb.append("Tipik arka plan: ").append(typicalBackground).append("\n");
+                if (useSignatureBackground) {
+                    sb.append("Arka plan (bu üretim için imza varyasyon kullanılacak): ")
+                      .append(signatureBackground).append("\n");
+                } else if (typicalBackground != null) {
+                    sb.append("Tipik arka plan: ").append(typicalBackground).append("\n");
+                }
                 if (typicalAtmosphere != null) sb.append("Tipik atmosfer: ").append(typicalAtmosphere).append("\n");
                 sb.append("=== GÖRSEL KİMLİK SONU ===\n\n");
             }
@@ -244,27 +270,39 @@ public final class ContentPrompts {
     }
 
     /**
-     * Brand DNA JSON'undan belirtilen alanı basit string eşleşmesiyle çeker.
-     * Parse bağımlılığı olmadan hızlı alan okuma için.
+     * Brand DNA JSON'undan belirtilen alanı Jackson ile ayrıştırıp çeker.
+     * Alan düz string ise olduğu gibi, iç içe nesne/dizi ise (ör. visualStyle:
+     * {colorPalette, lighting, atmosphere, ...}) tüm alt alanları "anahtar: değer"
+     * biçiminde birleştirip döner — önceki "ilk 100 ham karakter" yöntemi girintili/
+     * çok satırlı nesnelerde (ör. lighting) veriyi yarım kesip kaybediyordu.
      */
     private static String extractJsonField(String json, String fieldName) {
         if (json == null || json.isBlank()) return null;
-        String key = "\"" + fieldName + "\"";
-        int idx = json.indexOf(key);
-        if (idx < 0) return null;
-        int colon = json.indexOf(':', idx + key.length());
-        if (colon < 0) return null;
-        int valueStart = colon + 1;
-        while (valueStart < json.length() && Character.isWhitespace(json.charAt(valueStart))) valueStart++;
-        if (valueStart >= json.length()) return null;
-        char first = json.charAt(valueStart);
-        if (first == '"') {
-            int end = json.indexOf('"', valueStart + 1);
-            return end > valueStart ? json.substring(valueStart + 1, end) : null;
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(json);
+            JsonNode field = root.get(fieldName);
+            if (field == null || field.isNull()) return null;
+            if (field.isTextual()) return field.asText();
+            if (field.isObject()) {
+                StringBuilder sb = new StringBuilder();
+                field.fields().forEachRemaining(entry -> {
+                    if (sb.length() > 0) sb.append(", ");
+                    sb.append(entry.getKey()).append(": ").append(entry.getValue().asText());
+                });
+                return sb.length() > 0 ? sb.toString() : null;
+            }
+            if (field.isArray()) {
+                StringBuilder sb = new StringBuilder();
+                for (JsonNode item : field) {
+                    if (sb.length() > 0) sb.append(", ");
+                    sb.append(item.asText());
+                }
+                return sb.length() > 0 ? sb.toString() : null;
+            }
+            return field.asText();
+        } catch (Exception ex) {
+            return null;
         }
-        // Array veya nesne ise ilk 100 karakteri al
-        int end = Math.min(valueStart + 100, json.length());
-        return json.substring(valueStart, end).replaceAll("[\\n\\r]", " ").trim();
     }
 
     /**
