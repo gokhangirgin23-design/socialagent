@@ -140,7 +140,27 @@ public class TargetResolver {
                   AND s.active = 1
                 """;
         List<String> names = jdbcTemplate.query(sql, (rs, rowNum) -> rs.getString("name"), userId);
-        return names.isEmpty() ? null : names.get(0);
+        return names.isEmpty() ? null : sanitizeApifySearchKeyword(names.get(0));
+    }
+
+    /**
+     * Apify'ın instagram-search-scraper aktörü, input.search alanında noktalama işaretlerine
+     * (! ? . , : ; - + = * & % $ # @ / \ ~ ^ | &lt; &gt; ( ) [ ] { } " ' `) izin vermiyor — 400
+     * Bad Request ile reddediyor. Gerçek bir vakada bulundu: "Yeme &amp; İçme" sektörü bu yüzden
+     * HİÇ arama yapamadı (400 hatası sessizce boş sonuç olarak yutuldu), OWN_ONLY raporu yalnızca
+     * KENDİ hesapla sınırlı kaldı. Şu an tutulan 16 sektörden 4'ü "&amp;" içeriyor (Yeme &amp; İçme,
+     * Otel &amp; Turizm, Fotoğraf &amp; Video, Ev &amp; Yaşam) — bu yüzden tek bir sektöre özel yama değil,
+     * genel bir sanitizer gerekiyor. DB'deki görünen isim (UI, Brand DNA bağlamı) DEĞİŞMEZ,
+     * sadece Apify'a giden arama terimi temizlenir.
+     */
+    private static String sanitizeApifySearchKeyword(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String s = raw.replace("&", " ve ");
+        s = s.replaceAll("[!?.,:;\\-+=*%$#@/\\\\~^|<>()\\[\\]{}\"'`]", " ");
+        s = s.replaceAll("\\s+", " ").trim();
+        return s.isBlank() ? null : s;
     }
 
     /**

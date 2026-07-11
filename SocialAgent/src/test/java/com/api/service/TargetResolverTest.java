@@ -139,6 +139,33 @@ class TargetResolverTest {
         assertEquals(false, sqlCaptor.getValue().toLowerCase().contains("subsector"));
     }
 
+    @Test
+    void ozelKarakterliSektorAdiApifyeTemizlenmisGonderilir() {
+        // Gerçek vaka: "Yeme & İçme" Apify'ın arama aktörü tarafından 400 Bad Request ile
+        // reddediliyordu ("&" izin verilen karakterler arasında değil) — arama hiç yapılmadan
+        // sessizce boş sonuç dönüyordu. Artık "&" temizlenip "ve" ile değiştiriliyor.
+        doReturn(List.of("Yeme & İçme"))
+                .when(jdbcTemplate).query(anyString(), any(RowMapper.class), any(UUID.class));
+        when(apifyClient.searchTopProfiles(anyString(), anyInt())).thenReturn(List.of());
+
+        resolver.resolve(request("NONE", null));
+
+        verify(apifyClient, times(1)).searchTopProfiles(eq("Yeme ve İçme"), anyInt());
+    }
+
+    @Test
+    void digerYasakliNoktalamaIsaretleriDeTemizlenir() {
+        // Apify regex'i "! ? . , : ; - + = * & % $ # @ / \ ~ ^ | < > ( ) [ ] { } \" ' `" kabul
+        // etmiyor — bunlardan herhangi biri fazladan boşluğa dönüşüp temizlenmeli.
+        doReturn(List.of("Ev & Yaşam (Dekorasyon)"))
+                .when(jdbcTemplate).query(anyString(), any(RowMapper.class), any(UUID.class));
+        when(apifyClient.searchTopProfiles(anyString(), anyInt())).thenReturn(List.of());
+
+        resolver.resolve(request("NONE", null));
+
+        verify(apifyClient, times(1)).searchTopProfiles(eq("Ev ve Yaşam Dekorasyon"), anyInt());
+    }
+
     private ReportRequest request(String reportType, UUID selectedAccountId) {
         ReportRequest r = new ReportRequest();
         r.setRequestId(requestId);
