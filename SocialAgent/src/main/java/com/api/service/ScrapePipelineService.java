@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import com.api.apify.ApifyClient;
 import com.api.apify.ApifyPost;
 import com.api.config.AppProperties;
+import com.api.dto.repository.ReportRequestRepository;
 import com.api.entity.ReportRequest;
 
 import lombok.RequiredArgsConstructor;
@@ -73,6 +74,14 @@ public class ScrapePipelineService {
 
     // COMPLETED sonrası bakiye düşümü için rapor tip fiyatı (CLAUDE.md Madde 6, #40)
     private final ReportPriceResolver reportPriceResolver;
+
+    // report_request'i JPA üzerinden yükler — TÜM kolonlar (is_free_usage dahil) otomatik gelir.
+    // ÖNEMLİ: loadRequest/retryFailedDebits BİLEREK elle SELECT kolon listesi kullanmaz — yeni bir
+    // entity alanı eklendiğinde (V11 is_free_usage'da olduğu gibi) elle bakımlı bir SELECT listesi
+    // sessizce eksik kalıp Java-side varsayılana düşebilir ve gerçek ortamda tespit edilmesi zor bir
+    // hataya yol açabilir (bu tam olarak yaşandı — V11 test turunda ücretsiz rapor GERÇEKTEN kredi
+    // düşürdü, çünkü eski elle SELECT listesi is_free_usage'ı hiç seçmiyordu).
+    private final ReportRequestRepository reportRequestRepository;
 
     /**
      * Tek bir rapor isteğini baştan sona işler (worker bunu çağırır).
@@ -363,19 +372,17 @@ public class ScrapePipelineService {
      * @return bu çağrıda başarıyla düşümü tamamlanan kayıt sayısı
      */
     public int retryFailedDebits() {
-        String sql = """
-                SELECT request_id, user_id, report_type
+        // Yalnızca eşleşen id'ler JdbcTemplate ile bulunur; tam entity JPA findAllById ile yüklenir
+        // (TÜM kolonlar otomatik gelir — bkz. sınıf başındaki reportRequestRepository yorumu).
+        String idSql = """
+                SELECT request_id
                 FROM report_request
                 WHERE active = 1 AND status = 'COMPLETED' AND credit_debited = 0
                   AND credit_debit_attempts < ?
                 """;
-        List<ReportRequest> pending = jdbcTemplate.query(sql, (rs, rowNum) -> {
-            ReportRequest r = new ReportRequest();
-            r.setRequestId(rs.getObject("request_id", UUID.class));
-            r.setUserId(rs.getObject("user_id", UUID.class));
-            r.setReportType(rs.getString("report_type"));
-            return r;
-        }, MAX_DEBIT_ATTEMPTS);
+        List<UUID> pendingIds = jdbcTemplate.query(idSql,
+                (rs, rowNum) -> rs.getObject("request_id", UUID.class), MAX_DEBIT_ATTEMPTS);
+        List<ReportRequest> pending = reportRequestRepository.findAllById(pendingIds);
 
         if (pending.isEmpty()) {
             log.info("Tekrar denenecek düşmemiş kredi kaydı bulunamadı.");
@@ -423,19 +430,11 @@ public class ScrapePipelineService {
      * Bulunamazsa/pasifse null.
      */
     private ReportRequest loadRequest(UUID requestId) {
-        String sql = """
-                SELECT request_id, user_id, report_type, selected_user_social_account_id
-                FROM report_request
-                WHERE request_id = ? AND active = 1
-                """;
-        List<ReportRequest> rows = jdbcTemplate.query(sql, (rs, rowNum) -> {
-            ReportRequest r = new ReportRequest();
-            r.setRequestId(rs.getObject("request_id", UUID.class));
-            r.setUserId(rs.getObject("user_id", UUID.class));
-            r.setReportType(rs.getString("report_type"));
-            r.setSelectedUserSocialAccountId(rs.getObject("selected_user_social_account_id", UUID.class));
-            return r;
-        }, requestId);
-        return rows.isEmpty() ? null : rows.get(0);
+        // JPA findById: TÜM kolonlar otomatik gelir (bkz. sınıf başındaki reportRequestRepository yorumu)
+        ReportRequest r = reportRequestRepository.findById(requestId).orElse(null);
+        if (r == null || r.getActive() == null || r.getActive() != 1) {
+            return null;
+        }
+        return r;
     }
 }

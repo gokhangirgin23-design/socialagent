@@ -11,16 +11,17 @@ import static org.mockito.Mockito.when;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
 
 import com.api.apify.ApifyClient;
 import com.api.apify.ApifyPost;
 import com.api.config.AppProperties;
+import com.api.dto.repository.ReportRequestRepository;
 import com.api.entity.ReportRequest;
 
 /**
@@ -41,6 +42,7 @@ class ScrapePipelineServiceTest {
     private AppProperties appProperties;
     private ReportService reportService;
     private PaymentService paymentService;
+    private ReportRequestRepository reportRequestRepository;
     private ScrapePipelineService pipeline;
 
     private final UUID requestId = UUID.randomUUID();
@@ -57,17 +59,17 @@ class ScrapePipelineServiceTest {
         appProperties = new AppProperties();
         reportService = org.mockito.Mockito.mock(ReportService.class);
         paymentService = org.mockito.Mockito.mock(PaymentService.class);
+        reportRequestRepository = org.mockito.Mockito.mock(ReportRequestRepository.class);
         pipeline = new ScrapePipelineService(jdbcTemplate, targetResolver, apifyClient, socialPostService,
                 analysisPipelineService, reportPipelineService, notificationService, appProperties,
-                reportService, paymentService, null);
+                reportService, paymentService, null, reportRequestRepository);
     }
 
     @SuppressWarnings("unchecked")
     @Test
     void analizEdilmemisHedefApifydanCekilirVeYazilir() {
-        // loadRequest -> aktif rapor isteği
-        when(jdbcTemplate.query(anyString(), any(RowMapper.class), (Object[]) any()))
-                .thenReturn(List.of(request()));
+        // loadRequest -> aktif rapor isteği (JPA findById)
+        when(reportRequestRepository.findById(requestId)).thenReturn(Optional.of(request()));
         // Mod çözümü -> tek MONITORED hedef
         ScrapeTarget target = ScrapeTarget.monitored("INSTAGRAM", "rakip1", UUID.randomUUID());
         when(targetResolver.resolve(any(ReportRequest.class))).thenReturn(List.of(target));
@@ -90,8 +92,7 @@ class ScrapePipelineServiceTest {
     @SuppressWarnings("unchecked")
     @Test
     void yakinZamandaAnalizEdilenHedefApifyAtlar() {
-        when(jdbcTemplate.query(anyString(), any(RowMapper.class), (Object[]) any()))
-                .thenReturn(List.of(request()));
+        when(reportRequestRepository.findById(requestId)).thenReturn(Optional.of(request()));
         ScrapeTarget target = ScrapeTarget.monitored("INSTAGRAM", "rakip1", UUID.randomUUID());
         when(targetResolver.resolve(any(ReportRequest.class))).thenReturn(List.of(target));
         // Son N günde analiz edilmiş -> Apify atlanır
@@ -112,8 +113,7 @@ class ScrapePipelineServiceTest {
         // devam edip COMPLETED işaretledi — Brand DNA kullanıcının gerçek ürünüyle alakasız bir
         // kimliğe (rakip sektör hesaplarından "tesettür") kaydı. Artık bu durumda FAILED olmalı.
         UUID ownAccountId = UUID.randomUUID();
-        when(jdbcTemplate.query(anyString(), any(RowMapper.class), (Object[]) any()))
-                .thenReturn(List.of(ownOnlyRequest(ownAccountId)));
+        when(reportRequestRepository.findById(requestId)).thenReturn(Optional.of(ownOnlyRequest(ownAccountId)));
         ScrapeTarget ownTarget = ScrapeTarget.own("INSTAGRAM", "bi_butik_originals", ownAccountId);
         when(targetResolver.resolve(any(ReportRequest.class))).thenReturn(List.of(ownTarget));
         when(socialPostService.isRecentlyAnalyzed(any(ScrapeTarget.class))).thenReturn(false);
@@ -134,11 +134,43 @@ class ScrapePipelineServiceTest {
                 eq("FAILED"), anyString(), any(), any(), eq(requestId));
     }
 
+    // ============================================================
+    // V11 — Ücretsiz ilk kullanım: gerçek kredi düşümü ASLA denenmemeli
+    // ============================================================
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void ucretsizRaporTamamlaninca_GercekKrediDusumuHicDenenmez() {
+        // Regresyon: loadRequest() eskiden elle SELECT kolon listesi kullanıyordu ve is_free_usage'ı
+        // hiç seçmiyordu — bu yüzden ücretsiz raporlar bile GERÇEKTEN kredi düşürüyordu (canlıda
+        // yaşandı, bkz. ScrapePipelineService yorumu). Artık JPA findById kullanıldığından bu test
+        // bu bug sınıfının bir daha yaşanmayacağını doğruluyor.
+        ReportRequest freeRequest = request();
+        freeRequest.setIsFreeUsage(1);
+        when(reportRequestRepository.findById(requestId)).thenReturn(Optional.of(freeRequest));
+
+        ScrapeTarget target = ScrapeTarget.monitored("INSTAGRAM", "rakip1", UUID.randomUUID());
+        when(targetResolver.resolve(any(ReportRequest.class))).thenReturn(List.of(target));
+        when(socialPostService.isRecentlyAnalyzed(any(ScrapeTarget.class))).thenReturn(false);
+        when(apifyClient.fetchPostsByUrls(any(List.class), anyInt())).thenReturn(List.of(samplePost("p1")));
+        when(reportPipelineService.generateReport(eq(requestId))).thenReturn(true);
+
+        pipeline.processRequest(requestId);
+
+        verify(paymentService, never()).tryDebitCredits(any(), anyInt(), anyString(), any());
+        // Yine de credit_debited=1 olarak işaretlenmeli (reconciliation'ın sonsuza kadar
+        // "başarısız düşüm" sanıp tekrar tekrar denemesin diye)
+        verify(jdbcTemplate).update(
+                org.mockito.ArgumentMatchers.contains("credit_debited"),
+                eq(1), org.mockito.ArgumentMatchers.isNull(), any(), eq(requestId));
+    }
+
     private ReportRequest request() {
         ReportRequest r = new ReportRequest();
         r.setRequestId(requestId);
         r.setUserId(UUID.randomUUID());
         r.setReportType("COMPETITOR_ONLY");
+        r.setActive(1);
         return r;
     }
 
@@ -148,6 +180,7 @@ class ScrapePipelineServiceTest {
         r.setUserId(UUID.randomUUID());
         r.setReportType("OWN_ONLY");
         r.setSelectedUserSocialAccountId(selectedAccountId);
+        r.setActive(1);
         return r;
     }
 
