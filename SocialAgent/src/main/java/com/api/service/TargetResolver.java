@@ -231,14 +231,21 @@ public class TargetResolver {
      * de ayrıca yakalar.
      */
     private SectorKeywordContext loadUserSectorContext(UUID userId) {
+        // DİKKAT: "FROM user_info ui, sector s LEFT JOIN subsector ss ON ...ui..." (eski stil
+        // virgül join + ardından LEFT JOIN) Postgres'te ÇALIŞMAZ — JOIN, virgülden daha sıkı
+        // bağlandığından "sector s LEFT JOIN subsector ss" kendi başına bir birim oluşturur ve
+        // ON şartı henüz kapsama girmemiş "ui"ye erişemez ("invalid reference to FROM-clause
+        // entry for table ui"). Canlıda gerçek bir NONE/OWN_ONLY rapor denemesiyle bulundu —
+        // TargetResolverTest jdbcTemplate.query'yi mock'ladığından bu gerçek SQL hatası hiç
+        // çalıştırılmamıştı. Düzeltme: user_info BASE FROM tablosu, sector da (subsector gibi)
+        // açık JOIN ile bağlanır — böylece "ui" iki JOIN'in ON şartından da erişilebilir kalır.
         String sql = """
                 SELECT s.name AS sector_name, ss.name AS subsector_name
-                FROM user_info ui, sector s
+                FROM user_info ui
+                JOIN sector s ON s.sector_id = ui.sector_id AND s.active = 1
                 LEFT JOIN subsector ss ON ss.subsector_id = ui.subsector_id AND ss.active = 1
-                WHERE ui.sector_id = s.sector_id
-                  AND ui.user_id = ?
+                WHERE ui.user_id = ?
                   AND ui.active = 1
-                  AND s.active = 1
                 """;
         // Sanitize burada, RowMapper DIŞINDA uygulanır (DB'den ham isim çekilir) — RowMapper'ın
         // DB sürücüsü/ResultSet'e bağımlı olması testlerde jdbcTemplate.query'yi doğrudan
