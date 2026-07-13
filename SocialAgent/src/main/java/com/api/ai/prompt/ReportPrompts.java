@@ -107,9 +107,11 @@ public final class ReportPrompts {
 	 *
 	 * @param summaries hesap başına aggregate istatistikler (AccountReportRow)
 	 * @param analysisMode job'ın analiz modu
+	 * @param sectorName rapor isteğinde donmuş (V10 snapshot) sektör adı; yoksa null
+	 * @param subsectorName rapor isteğinde donmuş (V10 snapshot) alt sektör adı; yoksa null
 	 * @return OpenAI'a verilecek prompt
 	 */
-	public static String forJob(List<AccountReportRow> summaries, String analysisMode) {
+	public static String forJob(List<AccountReportRow> summaries, String analysisMode, String sectorName, String subsectorName) {
 		boolean isComparison = "OWN_ONLY".equals(analysisMode) || "BOTH".equals(analysisMode);
 		String systemRule = isComparison ? COMPARISON_RULE : SUCCESS_FACTOR_RULE;
 
@@ -141,21 +143,24 @@ public final class ReportPrompts {
 		return """
 				%s
 
-				Analiz modu: %s
+				%sAnaliz modu: %s
 				Analiz edilen hesap sayısı: %d
 
 				Aşağıda hesap bazlı istatistikler verilmiştir:
 
 				%s
 				Şimdi yukarıdaki verileri sentezleyip Markdown raporu üret.
-				""".formatted(systemRule, safe(analysisMode), summaries.size(), sb.toString());
+				""".formatted(systemRule, sectorContextBlock(sectorName, subsectorName), safe(analysisMode), summaries.size(), sb.toString());
 	}
 
 	/**
 	 * Hesap bazlı özetlerden dashboard structured insight JSON prompt'u üretir.
 	 * Çıktı: {"topInsight":"...","competitorFinding":"...","recommendation":"...","actionPlan":["..."]}
+	 *
+	 * @param sectorName rapor isteğinde donmuş (V10 snapshot) sektör adı; yoksa null
+	 * @param subsectorName rapor isteğinde donmuş (V10 snapshot) alt sektör adı; yoksa null
 	 */
-	public static String forInsight(List<AccountReportRow> summaries, String analysisMode) {
+	public static String forInsight(List<AccountReportRow> summaries, String analysisMode, String sectorName, String subsectorName) {
 		StringBuilder sb = new StringBuilder();
 		for (AccountReportRow r : summaries) {
 			sb.append(r.source()).append(" @").append(r.accountName())
@@ -172,10 +177,30 @@ public final class ReportPrompts {
 				SADECE aşağıdaki JSON formatında yanıt ver (Markdown, açıklama veya kod bloğu EKLEME):
 				{"topInsight":"En önemli tek bulgu (1-2 cümle)","competitorFinding":"Rakip/sektör karşılaştırmasından kritik bulgu (1-2 cümle)","recommendation":"En öncelikli uygulama önerisi (1-2 cümle)","actionPlan":["Aksiyon 1","Aksiyon 2","Aksiyon 3"]}
 
-				Analiz modu: %s
+				%sAnaliz modu: %s
 				Veriler:
 				%s
-				""".formatted(safe(analysisMode), sb.toString());
+				""".formatted(sectorContextBlock(sectorName, subsectorName), safe(analysisMode), sb.toString());
+	}
+
+	/**
+	 * SORUN 1, madde 1.4 — kıyaslama/içgörülerin ana sektöre değil kullanıcının ALT sektörüne
+	 * göre yapılmasını sağlayan bağlam bloğu. Alt sektör yoksa yalnızca sektör adı geçilir
+	 * (mevcut davranışa denk — blok boş dönerse prompt eskisiyle birebir aynı kalır).
+	 */
+	private static String sectorContextBlock(String sectorName, String subsectorName) {
+		if (subsectorName != null && !subsectorName.isBlank()) {
+			return """
+					Kullanıcının sektörü: %s, alt sektörü: %s.
+					Kıyaslama ve içgörüler **%s** alt sektörü özelinde yapılmalı; genel %s klişelerinden kaçın.
+					Sektör hesapları bu alt sektörün başarılı örnekleridir.
+
+					""".formatted(safe(sectorName), subsectorName, subsectorName, safe(sectorName));
+		}
+		if (sectorName != null && !sectorName.isBlank()) {
+			return "Kullanıcının sektörü: " + sectorName + ".\n\n";
+		}
+		return "";
 	}
 
 	private static String safe(String v) {

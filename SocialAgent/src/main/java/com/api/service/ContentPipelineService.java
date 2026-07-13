@@ -81,6 +81,8 @@ public class ContentPipelineService {
             // Kullanıcının güncel sektör/alt sektörünü DB'den çek (görsel üretimde sert kısıt)
             String sectorContext = loadUserSectorContext(req.getUserId());
             log.info("Sektör bağlamı yüklendi: contentRequestId={}, sektör={}", contentRequestId, sectorContext);
+            // SORUN 1, madde 1.3 — SectorRelevanceFilter'ın subsector-aware overload'ı için
+            String subsectorName = loadUserSubsectorName(req.getUserId());
 
             // Brand DNA: kendi önbelleğinde varsa kullan; yoksa aynı rapora ait başka bir
             // content_request'in DNA'sını ara (aynı raporun DNA'sı değişmez — yeniden üretim
@@ -93,7 +95,7 @@ public class ContentPipelineService {
                     req.setBrandDnaJson(brandDna);
                     saveQuiet(req);
                 } else {
-                    brandDna = generateBrandDna(req, reportContent, sectorContext);
+                    brandDna = generateBrandDna(req, reportContent, sectorContext, subsectorName);
                     if (brandDna != null) {
                         req.setBrandDnaJson(brandDna);
                         saveQuiet(req);
@@ -177,11 +179,11 @@ public class ContentPipelineService {
     // Brand DNA
     // ============================================================
 
-    private String generateBrandDna(ContentRequest req, String reportContent, String sectorContext) {
+    private String generateBrandDna(ContentRequest req, String reportContent, String sectorContext, String subsectorName) {
         // Kullanıcının kendi hesabına ait son 10 post caption'ını al
         String postsContext = loadOwnPostsCaptions(req.getReportId());
         // Görsel analiz verilerini al (ürün kategorisi, atmosfer, renkler, çekim stili)
-        String visualPatterns = loadVisualPatterns(req.getReportId());
+        String visualPatterns = loadVisualPatterns(req.getReportId(), subsectorName);
         String prompt = ContentPrompts.forBrandDna(postsContext, reportContent, visualPatterns, sectorContext);
         String dna = aiAnalysisService.generateBrandDna(prompt);
         if (dna != null) {
@@ -259,6 +261,27 @@ public class ContentPipelineService {
         return null;
     }
 
+    /**
+     * Kullanıcının güncel alt sektör adını döndürür (yoksa null). SORUN 1, madde 1.3 —
+     * loadVisualPatterns/findIrrelevantSectorAccounts'taki subsector-aware SectorRelevanceFilter
+     * çağrısı için kullanılır.
+     */
+    private String loadUserSubsectorName(UUID userId) {
+        String sql = """
+                SELECT ss.name
+                FROM user_info ui, subsector ss
+                WHERE ui.subsector_id = ss.subsector_id
+                  AND ui.user_id = ?
+                """;
+        try {
+            List<String> rows = jdbcTemplate.queryForList(sql, String.class, userId);
+            return rows.isEmpty() ? null : rows.get(0);
+        } catch (Exception ex) {
+            log.warn("Alt sektör adı yüklenemedi: hata={}", ex.getMessage());
+            return null;
+        }
+    }
+
     private String loadOwnPostsCaptions(UUID reportId) {
         // report_id → report.request_id → social_post (OWN) son 10 post caption'ı
         String sql = """
@@ -294,7 +317,7 @@ public class ContentPipelineService {
      * örtüşmeyen (Apify'ın keyword aramasıyla yanlışlıkla eşleştirdiği alakasız bir hesap
      * olması muhtemel) hesap adlarını döner — bkz. SectorRelevanceFilter.
      */
-    private Set<String> findIrrelevantSectorAccounts(UUID reportId) {
+    private Set<String> findIrrelevantSectorAccounts(UUID reportId, String subsectorName) {
         String sql = """
                 SELECT sp.sector_account_name, pa.analysis_json
                 FROM post_analysis pa, social_post sp, report r
@@ -315,7 +338,9 @@ public class ContentPipelineService {
                     categoriesByAccount.computeIfAbsent(row[0], k -> new ArrayList<>()).add(category);
                 }
             }
-            Set<String> irrelevant = SectorRelevanceFilter.findIrrelevantAccounts(categoriesByAccount);
+            // SORUN 1, madde 1.3 — alt sektör token'larıyla örtüşen hesap kesin alakalı sayılır
+            Set<String> subsectorTokens = SectorRelevanceFilter.tokenize(subsectorName);
+            Set<String> irrelevant = SectorRelevanceFilter.findIrrelevantAccounts(categoriesByAccount, subsectorTokens);
             if (!irrelevant.isEmpty()) {
                 log.warn("Sektör aramasında alakasız hesap(lar) tespit edildi, Brand DNA'dan dışlanıyor: reportId={}, hesaplar={}",
                         reportId, irrelevant);
@@ -334,10 +359,10 @@ public class ContentPipelineService {
      * Hem OWN hem SECTOR + MONITORED post_analysis kayıtlarından çeker; her satır
      * KENDİ/RAKİP/SEKTÖR etiketiyle işaretlenir (Brand DNA yalnızca KENDİ'den kimlik alsın diye).
      */
-    private String loadVisualPatterns(UUID reportId) {
+    private String loadVisualPatterns(UUID reportId, String subsectorName) {
         // Apify'ın sektör aramasıyla bulduğu, gerçek konusu diğer sektör hesaplarıyla hiç
         // örtüşmeyen (alakasız) hesapları önceden tespit et — bkz. SectorRelevanceFilter.
-        Set<String> irrelevantSectorAccounts = findIrrelevantSectorAccounts(reportId);
+        Set<String> irrelevantSectorAccounts = findIrrelevantSectorAccounts(reportId, subsectorName);
 
         // analysis_json + source_type çek (OWN + SECTOR + MONITORED).
         // KENDİ postları her zaman önce sıralanır (source_type = 'OWN' DESC), sonra tarih DESC —

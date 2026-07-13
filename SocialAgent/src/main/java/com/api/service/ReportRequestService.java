@@ -325,7 +325,13 @@ public class ReportRequestService {
         int safeSize = (size > 0) ? size : 10;
         int offset = safePage * safeSize;
 
-        // LEFT JOIN report: henüz rapor oluşmamış isteklerde rep.report_id NULL döner
+        // Korelasyonlu alt sorgu: henüz rapor oluşmamış isteklerde report_id NULL döner.
+        // Düz LEFT JOIN report YERİNE kullanılıyor çünkü ensureReport() senkronizasyonsuz
+        // (önce SELECT, yoksa INSERT) — eşzamanlı iki çağrı teorik olarak aynı request_id için
+        // birden fazla report satırı oluşturabilir (E7 çift-tık bug'ıyla aynı desen). Düz JOIN bu
+        // durumda satırı çoğaltır/yanlış satırı getirebilir; bu alt sorgu her zaman en güncel
+        // (created_date DESC) raporu seçer. (LATERAL JOIN denendi, H2 desteklemediği için scalar
+        // subquery'e geçildi — Postgres + H2 ikisinde de çalışır.)
         // V10: sector/subsector (rr üzerinde donmuş anlık kopya) + own account adı için LEFT JOIN'ler.
         // Bu migration'dan ÖNCEKİ raporlarda rr.sector_id/subsector_id null olduğundan bu alanlar
         // da null döner (frontend "—" gösterir) — geriye dönük bir taşıma yapılmadı (V8/V9 ile tutarlı).
@@ -334,11 +340,12 @@ public class ReportRequestService {
                        rr.queue_pushed, rr.queue_push_date, rr.queue_error,
                        rr.status, rr.process_error, rr.process_started_date, rr.process_finished_date,
                        rr.created_date, rr.updated_date, rr.is_free_usage,
-                       rep.report_id,
+                       (SELECT r2.report_id FROM report r2
+                        WHERE r2.request_id = rr.request_id
+                        ORDER BY r2.created_date DESC LIMIT 1) AS report_id,
                        sec.name AS sector_name, sub.name AS subsector_name,
                        usa.account_name AS own_account_name
                 FROM report_request rr
-                LEFT JOIN report rep ON rep.request_id = rr.request_id
                 LEFT JOIN sector sec ON sec.sector_id = rr.sector_id
                 LEFT JOIN subsector sub ON sub.subsector_id = rr.subsector_id
                 LEFT JOIN user_social_account usa ON usa.user_social_account_id = rr.selected_user_social_account_id

@@ -322,23 +322,45 @@ public class ContentRequestService {
      * Ürün görseli base64 data URL ise S3'e yükleyip URL döner.
      * S3 kapalıysa veya dönüştürme başarısızsa null döner — base64 asla DB'ye yazılmaz.
      */
+    // DİKKAT — bu sınır tek başına yeterli değil: JVM heap OOM'u (2026-07-13, VPS log ile
+    // doğrulandı — test container'ında ~13MB decode edilmiş görsel/~18MB JSON body OutOfMemoryError
+    // veriyor) bu kontrolden ÖNCE, Spring'in request body'yi deserialize ettiği aşamada oluşuyor —
+    // yani asıl güvenlik sınırı nginx client_max_body_size'da (bkz. SocialAgent-SERVER-SPEC.md, 14m).
+    // Bu kontrol nginx'i geçen ama yine de büyük olan görseller için İKİNCİ savunma hattı + kullanıcıya
+    // anlamlı hata mesajı sağlar. 10MB, ölçülen güvenli eşiğin (11MB OK / 13MB OOM) altında seçildi.
+    private static final int MAX_PRODUCT_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
+
     private String uploadProductImageIfPresent(String rawUrl, UUID userId, UUID contentRequestId) {
         if (rawUrl == null || rawUrl.isBlank()) return null;
         if (!rawUrl.startsWith("data:")) {
             // Zaten HTTP URL ise direkt kullan (tekrar yükleme yok)
             return rawUrl;
         }
+        int comma = rawUrl.indexOf(',');
+        if (comma < 0) {
+            throw new ApiException(ResponseCode.VALIDATION_ERROR,
+                    "Ürün görseli formatı geçersiz. Lütfen görseli tekrar seçin.");
+        }
+        byte[] imgBytes;
         try {
-            int comma = rawUrl.indexOf(',');
-            if (comma < 0) return null;
-            byte[] imgBytes = Base64.getDecoder().decode(rawUrl.substring(comma + 1));
+            imgBytes = Base64.getDecoder().decode(rawUrl.substring(comma + 1));
+        } catch (IllegalArgumentException ex) {
+            throw new ApiException(ResponseCode.VALIDATION_ERROR,
+                    "Ürün görseli bozuk veya okunamıyor. Lütfen görseli tekrar seçin.");
+        }
+        if (imgBytes.length > MAX_PRODUCT_IMAGE_BYTES) {
+            throw new ApiException(ResponseCode.VALIDATION_ERROR,
+                    "Ürün görseli çok büyük (en fazla 10 MB). Lütfen daha küçük bir görsel seçin.");
+        }
+        log.info("İçerik isteği görsel boyutu: {} KB, contentRequestId={}", imgBytes.length / 1024, contentRequestId);
+        try {
             String s3Url = s3UploadService.uploadProductImage(imgBytes, userId, contentRequestId);
             if (s3Url == null) {
                 log.info("Ürün görseli S3'e yüklenemedi; product_image_url null bırakıldı: contentRequestId={}", contentRequestId);
             }
             return s3Url;
         } catch (Exception ex) {
-            log.warn("Ürün görseli dönüştürme hatası; product_image_url null: hata={}", ex.getMessage());
+            log.warn("Ürün görseli S3 yükleme hatası; product_image_url null: hata={}", ex.getMessage());
             return null;
         }
     }

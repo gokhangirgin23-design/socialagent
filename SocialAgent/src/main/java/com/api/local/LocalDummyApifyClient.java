@@ -79,11 +79,11 @@ public class LocalDummyApifyClient extends ApifyClient {
 	public List<ApifyProfile> searchTopProfiles(String keyword, int limit) {
 		// Dummy profil havuzu: gerçek Instagram hesapları gibi görünen test verileri
 		List<ApifyProfile> pool = List.of(
-				new ApifyProfile("nationalgeographic", "https://www.instagram.com/nationalgeographic/", 280000000L, 0.12),
-				new ApifyProfile("instagram", "https://www.instagram.com/instagram/", 670000000L, 0.08),
-				new ApifyProfile("nasa", "https://www.instagram.com/nasa/", 97000000L, 0.15),
-				new ApifyProfile("9gag", "https://www.instagram.com/9gag/", 72000000L, 0.10),
-				new ApifyProfile("therock", "https://www.instagram.com/therock/", 395000000L, 0.06));
+				new ApifyProfile("nationalgeographic", "https://www.instagram.com/nationalgeographic/", 280000000L, 0.12, "National Geographic", null),
+				new ApifyProfile("instagram", "https://www.instagram.com/instagram/", 670000000L, 0.08, "Instagram", null),
+				new ApifyProfile("nasa", "https://www.instagram.com/nasa/", 97000000L, 0.15, "NASA", null),
+				new ApifyProfile("9gag", "https://www.instagram.com/9gag/", 72000000L, 0.10, "9GAG", null),
+				new ApifyProfile("therock", "https://www.instagram.com/therock/", 395000000L, 0.06, "Dwayne Johnson", null));
 		int take = Math.min(limit, pool.size());
 		log.info("[LOCAL-DUMMY] Apify profil araması taklit edildi: keyword={}, dönen={}", keyword, take);
 		return pool.subList(0, take);

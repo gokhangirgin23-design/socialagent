@@ -1,6 +1,5 @@
 package com.api.service;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -48,6 +47,21 @@ final class SectorRelevanceFilter {
      * @return alakasız bulunan hesap adları (boş olabilir)
      */
     static Set<String> findIrrelevantAccounts(Map<String, List<String>> categoriesByAccount) {
+        return findIrrelevantAccounts(categoriesByAccount, Set.of());
+    }
+
+    /**
+     * SORUN 1, madde 1.3 — subsector-aware overload. Kullanıcının alt sektör adının token'ları
+     * (ör. "takı") verilirse, bir hesabın productCategory'si bu token'larla örtüşüyorsa hesap
+     * KESİN alakalı sayılır (elenmez) — diğer SECTOR hesaplarıyla (ör. genel "moda" hesapları)
+     * hiç örtüşmese bile. Örtüşmeyen hesaplar için mevcut izolasyon sezgisi aynen uygulanır.
+     * subsectorTokens boşsa (alt sektör yok/verilmedi) davranış birebir eski haliyle aynıdır.
+     *
+     * @param categoriesByAccount SECTOR hesap adı → o hesabın postlarındaki productCategory değerleri
+     * @param subsectorTokens     kullanıcının alt sektör adının token'ları (boş olabilir)
+     * @return alakasız bulunan hesap adları (boş olabilir)
+     */
+    static Set<String> findIrrelevantAccounts(Map<String, List<String>> categoriesByAccount, Set<String> subsectorTokens) {
         if (categoriesByAccount.size() < 3) {
             return Set.of();
         }
@@ -61,12 +75,17 @@ final class SectorRelevanceFilter {
             tokensByAccount.put(entry.getKey(), tokens);
         }
 
+        boolean hasSubsectorTokens = subsectorTokens != null && !subsectorTokens.isEmpty();
+
         Set<String> irrelevant = new HashSet<>();
         for (Map.Entry<String, Set<String>> entry : tokensByAccount.entrySet()) {
             String account = entry.getKey();
             Set<String> ownTokens = entry.getValue();
             if (ownTokens.isEmpty()) {
                 continue; // kategori verisi yoksa yargılama, yanlış pozitif riski
+            }
+            if (hasSubsectorTokens && !Collections.disjoint(ownTokens, subsectorTokens)) {
+                continue; // alt sektörle örtüşen hesap kesin alakalı — izolasyon sezgisi uygulanmaz
             }
             boolean overlapsWithAnyOther = tokensByAccount.entrySet().stream()
                     .filter(e -> !e.getKey().equals(account))
@@ -78,8 +97,12 @@ final class SectorRelevanceFilter {
         return irrelevant;
     }
 
-    /** Türkçe metni küçük harfe çevirip kelimelere ayırır; 4 karakterden kısa (bağlaç vb.) kelimeler atlanır. */
-    private static Set<String> tokenize(String text) {
+    /**
+     * Türkçe metni küçük harfe çevirip kelimelere ayırır; 4 karakterden kısa (bağlaç vb.)
+     * kelimeler atlanır. Paket-private: TargetResolver de (SORUN 1, madde 1.2 — alt sektör
+     * relevance skorlaması) aynı tokenize mantığını kullanır.
+     */
+    static Set<String> tokenize(String text) {
         if (text == null || text.isBlank()) {
             return Set.of();
         }
@@ -91,10 +114,5 @@ final class SectorRelevanceFilter {
             }
         }
         return tokens;
-    }
-
-    // Test kolaylığı için (paket-private erişim testte kullanılıyor)
-    static List<String> tokenizeForTest(String text) {
-        return new ArrayList<>(tokenize(text));
     }
 }

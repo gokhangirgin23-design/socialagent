@@ -8,10 +8,14 @@ package com.api.apify;
  * @param profileUrl     profil URL'i (varsa)
  * @param followerCount  takipçi sayısı (sıralama birincil kriteri)
  * @param engagementRate etkileşim oranı (eşitlik bozucu ikincil kriter)
+ * @param fullName       profil görünen adı (SORUN 1, madde 1.2 — alt sektör relevance skorlaması için; yoksa null)
+ * @param biography      profil biyografisi (SORUN 1, madde 1.2 — alt sektör relevance skorlaması için; yoksa null)
  */
 public record ApifyProfile(
 		String accountName,
 		String profileUrl,
 		long followerCount,
-		double engagementRate) {
+		double engagementRate,
+		String fullName,
+		String biography) {
 }

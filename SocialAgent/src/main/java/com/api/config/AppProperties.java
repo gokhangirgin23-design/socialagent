@@ -112,6 +112,18 @@ public class AppProperties {
 		private int competitorPostsLimit = 2;
 		// run-sync uzun sürebileceğinden okuma zaman aşımı (sn)
 		private long timeoutSeconds = 120;
+
+		// SORUN 1 — alt sektör bazlı sektör araması (TargetResolver.resolveSectorByProfiles).
+		// Alt sektör aramasını devre dışı bırakmak gerekirse (ör. Apify tarafında kirlilik
+		// tekrar gözlenirse) tek bayrakla eski (sadece sektör) davranışa dönülebilir.
+		private boolean subsectorSearchEnabled = true;
+		// Alt sektör aramasından dönen profil sayısı bu eşiğin altındaysa ana sektör
+		// keyword'üyle ikinci bir arama yapılıp sonuçlar birleştirilir (fallback).
+		// Varsayılan topProfilesLimit/2 (5/2=2) ile tutarlı.
+		private int subsectorMinProfiles = 2;
+		// Alt sektör aramasında Apify'dan çekilecek havuz, topProfilesLimit'in kaç katı
+		// olsun (relevance skorlamasına [1.2] eleyecek daha geniş bir aday listesi sağlar).
+		private int subsectorPoolMultiplier = 2;
 	}
 
 	/**

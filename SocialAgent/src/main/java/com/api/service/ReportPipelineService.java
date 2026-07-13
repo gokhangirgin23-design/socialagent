@@ -61,8 +61,13 @@ public class ReportPipelineService {
         // 1) report_type'ı yükle (karşılaştırmalı mı, başarı faktörü mü)
         String reportType = loadReportType(requestId);
 
+        // SORUN 1, madde 1.4 — sektör/alt sektör bağlamı. V10 snapshot (rr.sector_id/subsector_id,
+        // rapor isteği anında donmuş) kullanılır, canlı user_info DEĞİL — kullanıcı sonradan
+        // sektörünü değiştirirse eski raporların bağlamı yanlış görünmesin diye.
+        ReportSectorContext sectorContext = loadSectorContext(requestId);
+
         // 2) Hesap bazlı özetleri topla (SQL aggregate + Java JSON parse)
-        List<AccountReportRow> summaries = loadAccountSummaries(requestId);
+        List<AccountReportRow> summaries = loadAccountSummaries(requestId, sectorContext.subsectorName());
         if (summaries.isEmpty()) {
             log.info("Rapor için özet bulunamadı, rapor üretilmedi: requestId={}", requestId);
             return false;
@@ -73,7 +78,7 @@ public class ReportPipelineService {
         reportService.markGenerating(reportId);
 
         // 4) Prompt üret ve OpenAI'dan Markdown iste
-        String prompt = ReportPrompts.forJob(summaries, reportType);
+        String prompt = ReportPrompts.forJob(summaries, reportType, sectorContext.sectorName(), sectorContext.subsectorName());
         String markdown = aiAnalysisService.generateReport(prompt);
 
         // 5) Sonuca göre durum geçişi
@@ -90,7 +95,7 @@ public class ReportPipelineService {
         // Structured insight JSON üret (dashboard kartı için — V4).
         // Başarısız olsa bile rapor COMPLETED kalır; insight_json boş bırakılır.
         try {
-            String insightPrompt = ReportPrompts.forInsight(summaries, reportType);
+            String insightPrompt = ReportPrompts.forInsight(summaries, reportType, sectorContext.sectorName(), sectorContext.subsectorName());
             String insightJson = aiAnalysisService.generateInsightJson(insightPrompt);
             if (insightJson != null && !insightJson.isBlank()) {
                 reportService.writeInsightJson(reportId, insightJson);
@@ -101,6 +106,28 @@ public class ReportPipelineService {
                     reportId, ex.getMessage());
         }
         return true;
+    }
+
+    /** Rapor isteğinin donmuş (V10 snapshot) sektör + alt sektör adı — ikisi de null olabilir. */
+    private record ReportSectorContext(String sectorName, String subsectorName) {
+    }
+
+    /**
+     * report_request.sector_id/subsector_id (V10 — istek anında donmuş) üzerinden sektör/alt
+     * sektör adını yükler. Canlı user_info'ya BAKILMAZ: kullanıcı sonradan sektörünü değiştirirse
+     * bu raporun bağlamı (hem prompt hem SectorRelevanceFilter) yanlış görünmemeli.
+     */
+    private ReportSectorContext loadSectorContext(UUID requestId) {
+        String sql = """
+                SELECT s.name AS sector_name, ss.name AS subsector_name
+                FROM report_request rr
+                LEFT JOIN sector s ON s.sector_id = rr.sector_id
+                LEFT JOIN subsector ss ON ss.subsector_id = rr.subsector_id
+                WHERE rr.request_id = ?
+                """;
+        List<ReportSectorContext> rows = jdbcTemplate.query(sql, (rs, rowNum) -> new ReportSectorContext(
+                rs.getString("sector_name"), rs.getString("subsector_name")), requestId);
+        return rows.isEmpty() ? new ReportSectorContext(null, null) : rows.get(0);
     }
 
     // ============================================================
@@ -119,8 +146,12 @@ public class ReportPipelineService {
     /**
      * Hesap bazlı özetleri iki SQL sorgusu + Java aggregate ile üretir.
      * OWN + SECTOR ve MONITORED ayrı sorgularla çekilir; Java'da birleştirilir.
+     *
+     * @param subsectorName kullanıcının alt sektör adı (V10 snapshot); SectorRelevanceFilter'a
+     *                       token olarak geçilir (SORUN 1, madde 1.3) — subsector token'larıyla
+     *                       örtüşen hesap, diğer sektör hesaplarıyla örtüşmese bile ASLA elenmez.
      */
-    private List<AccountReportRow> loadAccountSummaries(UUID requestId) {
+    private List<AccountReportRow> loadAccountSummaries(UUID requestId, String subsectorName) {
         List<PostRaw> rawRows = new ArrayList<>();
         rawRows.addAll(loadOwnAndSectorPosts(requestId));
         rawRows.addAll(loadMonitoredPosts(requestId));
@@ -140,7 +171,8 @@ public class ReportPipelineService {
                 sectorCategories.computeIfAbsent(row.accountName(), k -> new ArrayList<>()).add(category);
             }
         }
-        Set<String> irrelevantAccounts = SectorRelevanceFilter.findIrrelevantAccounts(sectorCategories);
+        Set<String> subsectorTokens = SectorRelevanceFilter.tokenize(subsectorName);
+        Set<String> irrelevantAccounts = SectorRelevanceFilter.findIrrelevantAccounts(sectorCategories, subsectorTokens);
         if (!irrelevantAccounts.isEmpty()) {
             log.warn("Sektör aramasında alakasız hesap(lar) tespit edildi, rapordan dışlanıyor: requestId={}, hesaplar={}",
                     requestId, irrelevantAccounts);

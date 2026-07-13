@@ -136,9 +136,9 @@ class ContentPipelineServiceTest {
 					mapper.mapRow(mockRow(monitoredJson, "MONITORED"), 1));
 		});
 
-		Method loadVisualPatterns = ContentPipelineService.class.getDeclaredMethod("loadVisualPatterns", UUID.class);
+		Method loadVisualPatterns = ContentPipelineService.class.getDeclaredMethod("loadVisualPatterns", UUID.class, String.class);
 		loadVisualPatterns.setAccessible(true);
-		String result = (String) loadVisualPatterns.invoke(service, reportId);
+		String result = (String) loadVisualPatterns.invoke(service, reportId, null);
 
 		assertNotNull(result);
 		assertTrue(result.contains("[KENDİ]"));
@@ -157,14 +157,14 @@ class ContentPipelineServiceTest {
 		// 5 KENDİ postuna karşı 25 SEKTÖR postu vardı; eski "ORDER BY post_date DESC LIMIT 15"
 		// sorgusu KENDİ'nin yalnızca 2'sini (en yenilerini) alıyor, en ayırt edici olanı
 		// (rakiplerin arasına gömülü, daha eski bir KENDİ postu) hiç görmüyordu.
-		Method loadVisualPatterns = ContentPipelineService.class.getDeclaredMethod("loadVisualPatterns", UUID.class);
+		Method loadVisualPatterns = ContentPipelineService.class.getDeclaredMethod("loadVisualPatterns", UUID.class, String.class);
 		loadVisualPatterns.setAccessible(true);
 
 		ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
 		when(jdbcTemplate.query(sqlCaptor.capture(), org.mockito.ArgumentMatchers.<RowMapper<Object>>any(), (Object[]) any()))
 				.thenReturn(List.of());
 
-		loadVisualPatterns.invoke(service, UUID.randomUUID());
+		loadVisualPatterns.invoke(service, UUID.randomUUID(), null);
 
 		String executedSql = sqlCaptor.getValue();
 		assertTrue(executedSql.contains("source_type = 'OWN'"),
@@ -199,9 +199,9 @@ class ContentPipelineServiceTest {
 							mapper.mapRow(mockVisualRow3("{\"visual\":{\"productCategory\":\"gayrimenkul\",\"atmosphere\":\"lüks\"}}", "SECTOR", "emlak_hesap"), 2));
 				});
 
-		Method loadVisualPatterns = ContentPipelineService.class.getDeclaredMethod("loadVisualPatterns", UUID.class);
+		Method loadVisualPatterns = ContentPipelineService.class.getDeclaredMethod("loadVisualPatterns", UUID.class, String.class);
 		loadVisualPatterns.setAccessible(true);
-		String result = (String) loadVisualPatterns.invoke(service, reportId);
+		String result = (String) loadVisualPatterns.invoke(service, reportId, null);
 
 		assertNotNull(result);
 		assertTrue(result.contains("kadın giyim"), "İlgili sektör hesabı verisi kalmalı: " + result);
