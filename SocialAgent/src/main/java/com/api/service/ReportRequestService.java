@@ -193,6 +193,9 @@ public class ReportRequestService {
         // V10: rapor üretim ANINDAKİ sektör/alt sektörü dondur (canlı user_info'ya join değil —
         // kullanıcı sonradan sektör değiştirirse eski raporlar yanlış görünmesin)
         UUID[] sectorSnapshot = lookupUserSectorSnapshot(userId);
+        // V12: rapor üretim ANINDAKİ kendi hesap adını dondur (AccountService hesabı yerinde
+        // yeniden adlandırabildiğinden — canlı join eski raporların adını değiştirebilirdi)
+        String ownAccountNameSnapshot = ownAccountId != null ? lookupAccountName(ownAccountId) : null;
 
         ReportRequest request = new ReportRequest();
         request.setRequestId(UUID.randomUUID());
@@ -201,6 +204,7 @@ public class ReportRequestService {
         request.setSelectedUserSocialAccountId(ownAccountId);
         request.setSectorId(sectorSnapshot[0]);
         request.setSubsectorId(sectorSnapshot[1]);
+        request.setOwnAccountName(ownAccountNameSnapshot);
         request.setIsFreeUsage(isFreeUsage ? 1 : 0);
         request.setQueuePushed(0);
         request.setStatus("PENDING");    // V2: NOT NULL, DEFAULT 'PENDING'
@@ -332,23 +336,25 @@ public class ReportRequestService {
         // durumda satırı çoğaltır/yanlış satırı getirebilir; bu alt sorgu her zaman en güncel
         // (created_date DESC) raporu seçer. (LATERAL JOIN denendi, H2 desteklemediği için scalar
         // subquery'e geçildi — Postgres + H2 ikisinde de çalışır.)
-        // V10: sector/subsector (rr üzerinde donmuş anlık kopya) + own account adı için LEFT JOIN'ler.
-        // Bu migration'dan ÖNCEKİ raporlarda rr.sector_id/subsector_id null olduğundan bu alanlar
-        // da null döner (frontend "—" gösterir) — geriye dönük bir taşıma yapılmadı (V8/V9 ile tutarlı).
+        // V10: sector/subsector (rr üzerinde donmuş anlık kopya) — sektör/alt sektör kullanıcı
+        // tarafından yeniden adlandırılamadığından (yalnızca admin migration'ları değiştirir) id
+        // üzerinden canlı join güvenlidir. V12: own_account_name ARTIK rr üzerinde STRING olarak
+        // donmuş — user_social_account'a canlı JOIN YAPILMAZ (AccountService hesabı yerinde
+        // yeniden adlandırabildiğinden, canlı join eski raporların hesap adını değiştirirdi).
+        // Bu migration'lardan ÖNCEKİ raporlarda ilgili alanlar null döner (frontend "—" gösterir)
+        // — geriye dönük bir taşıma yapılmadı (V8/V9 ile tutarlı).
         String sql = """
                 SELECT rr.request_id, rr.user_id, rr.report_type,
                        rr.queue_pushed, rr.queue_push_date, rr.queue_error,
                        rr.status, rr.process_error, rr.process_started_date, rr.process_finished_date,
-                       rr.created_date, rr.updated_date, rr.is_free_usage,
+                       rr.created_date, rr.updated_date, rr.is_free_usage, rr.own_account_name,
                        (SELECT r2.report_id FROM report r2
                         WHERE r2.request_id = rr.request_id
                         ORDER BY r2.created_date DESC LIMIT 1) AS report_id,
-                       sec.name AS sector_name, sub.name AS subsector_name,
-                       usa.account_name AS own_account_name
+                       sec.name AS sector_name, sub.name AS subsector_name
                 FROM report_request rr
                 LEFT JOIN sector sec ON sec.sector_id = rr.sector_id
                 LEFT JOIN subsector sub ON sub.subsector_id = rr.subsector_id
-                LEFT JOIN user_social_account usa ON usa.user_social_account_id = rr.selected_user_social_account_id
                 WHERE rr.user_id = ? AND rr.active = 1
                 ORDER BY rr.created_date DESC
                 LIMIT ? OFFSET ?
@@ -529,6 +535,20 @@ public class ReportRequestService {
                         rs.getObject("subsector_id", UUID.class)
                 }, userId);
         return rows.isEmpty() ? new UUID[] { null, null } : rows.get(0);
+    }
+
+    /**
+     * Verilen hesabın o ANDAKİ account_name'ini getirir (V12 snapshot için). Bulunamazsa null.
+     */
+    private String lookupAccountName(UUID userSocialAccountId) {
+        String sql = """
+                SELECT account_name
+                FROM user_social_account
+                WHERE user_social_account_id = ?
+                """;
+        List<String> rows = jdbcTemplate.query(sql,
+                (rs, rowNum) -> rs.getString("account_name"), userSocialAccountId);
+        return rows.isEmpty() ? null : rows.get(0);
     }
 
     /**

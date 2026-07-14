@@ -18,8 +18,12 @@ import lombok.Getter;
 @AllArgsConstructor
 public class DashboardSummaryDto {
 
-    // 0-100 hesap skoru (kendi vs rakip/sektör etkileşim oranı); rapor yoksa null
+    // 0-100 hesap skoru (kompozit: göreli etkileşim + paylaşım temposu + etkileşim trendi);
+    // kendi gönderisi hiç yoksa null
     private Integer accountScore;
+
+    // accountScore'un kırılımı ("neden bu skor" açıklaması); accountScore null ise bu da null
+    private ScoreBreakdown scoreBreakdown;
 
     // İzlenen rakip hesap bilgisi
     private MonitoredInfo monitored;
@@ -93,5 +97,16 @@ public class DashboardSummaryDto {
         private BigDecimal balance;
         private String currency;
         private long creditBalance;
+    }
+
+    @Getter
+    @AllArgsConstructor
+    public static class ScoreBreakdown {
+        private int relativePoints;   // 0-50: göreli etkileşim (log2 ölçekli)
+        private int activityPoints;   // 0-25: paylaşım temposu
+        private int trendPoints;      // 0-25: etkileşim trendi
+        private long ownPostCount;
+        private long ownAvgEngagement;
+        private long othersAvgEngagement;
     }
 }

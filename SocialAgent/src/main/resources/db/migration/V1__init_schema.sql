@@ -3,29 +3,32 @@
 -- H2 (MODE=PostgreSQL) ve PostgreSQL ile uyumludur.
 -- Ortak alanlar: active (0/1), created_date, updated_date. Tüm PK'ler UUID.
 -- İlişkiler native sorgu ile çekildiğinden FK constraint yok; index'ler var.
--- NOT: Bu dosya eski V1-V8 migration'larının tek şema/tohum halinde
--- birleştirilmiş (squash) hâlidir; eski dosyalar artık yoktur.
+-- NOT: Bu dosya eski V1-V13 migration'larının tek şema/tohum halinde
+-- birleştirilmiş (squash) hâlidir; eski dosyalar artık yoktur
+-- (spectiqs-gelistirme-paketi Ek Görev — konsolidasyon, 2026-07-14).
 -- ============================================================
 
 -- ============================================================
 -- ŞEMA
 -- ============================================================
 
--- Sektör tablosu
+-- Sektör tablosu (display_order: select listelerindeki gösterim sırası, küçük önce — eski V13)
 CREATE TABLE sector (
     sector_id      UUID PRIMARY KEY,
     name           VARCHAR(255) NOT NULL,
     active         INTEGER      NOT NULL DEFAULT 1,
+    display_order  INTEGER      NOT NULL DEFAULT 999,
     created_date   TIMESTAMP,
     updated_date   TIMESTAMP
 );
 
--- Alt sektör tablosu
+-- Alt sektör tablosu (display_order: bağlı sektör içindeki gösterim sırası — eski V13)
 CREATE TABLE subsector (
     subsector_id   UUID PRIMARY KEY,
     sector_id      UUID         NOT NULL,
     name           VARCHAR(255) NOT NULL,
     active         INTEGER      NOT NULL DEFAULT 1,
+    display_order  INTEGER      NOT NULL DEFAULT 999,
     created_date   TIMESTAMP,
     updated_date   TIMESTAMP,
     CONSTRAINT uq_subsector_sector_name UNIQUE (sector_id, name)
@@ -117,6 +120,20 @@ CREATE INDEX idx_uma_monitored_id ON user_monitored_account (monitored_account_i
 --   PARTIAL    : rapor üretildi AMA eksik analiz var (yutulmuş dış-API hatası; analyzed < total)
 --   FAILED     : işleme sırasında exception kaçtı / kullanılabilir rapor üretilemedi
 -- attempt_count: requeue/sweep deneme sayacı (poison-message koruması; tavanı aşan istek tekrar seçilmez)
+--
+-- credit_debited/credit_debit_error/credit_debit_attempts: kredi düşümü mutabakatı (eski V6) —
+--   COMPLETED sonrası kredi başarıyla düşüldü mü (0/1); admin reconciliation bu kolonlar üzerinden
+--   COMPLETED+credit_debited=0 kayıtları bulup tekrar dener.
+-- active_lock_key: yalnızca PENDING/PROCESSING iken userId taşır, terminal durumda NULL'a döner
+--   (eski V7, E7 çift-tık fix'i) — UNIQUE kısıt "kullanıcı başına en fazla 1 aktif istek" kuralını
+--   DB seviyesinde uygular (NULL'lar kısıttan muaf). Constraint adı ReportRequestService'te
+--   DataIntegrityViolationException mesajı eşleştirmesi için birebir korunmalıdır.
+-- sector_id/subsector_id: rapor OLUŞTURULDUĞU ANDAKİ sektör/alt sektör (eski V10) — kullanıcı
+--   sonradan sektör değiştirirse eski raporlar yanlış görünmesin diye canlı user_info'ya değil bu
+--   anlık kopyaya göre gösterilir.
+-- is_free_usage: bu rapor ücretsiz ilk kullanım hakkıyla mı oluşturuldu (eski V11).
+-- own_account_name: rapor OLUŞTURULDUĞU ANDAKİ kendi hesap adı (eski V12) — AccountService hesabı
+--   yerinde yeniden adlandırabildiğinden, canlı join yerine bu STRING snapshot kullanılır.
 CREATE TABLE report_request (
     request_id                       UUID PRIMARY KEY,
     user_id                          UUID NOT NULL,
@@ -130,13 +147,24 @@ CREATE TABLE report_request (
     process_finished_date            TIMESTAMP,
     process_error                    TEXT,
     attempt_count                    INTEGER NOT NULL DEFAULT 0,
+    credit_debited                   SMALLINT NOT NULL DEFAULT 0,
+    credit_debit_error               TEXT,
+    credit_debit_attempts            INTEGER  NOT NULL DEFAULT 0,
+    active_lock_key                  UUID,
+    sector_id                        UUID,
+    subsector_id                     UUID,
+    is_free_usage                    INTEGER NOT NULL DEFAULT 0,
+    own_account_name                 VARCHAR(255),
     active                           INTEGER NOT NULL DEFAULT 1,
     created_date                     TIMESTAMP,
-    updated_date                     TIMESTAMP
+    updated_date                     TIMESTAMP,
+    CONSTRAINT uq_report_request_active_lock UNIQUE (active_lock_key)
 );
 CREATE INDEX idx_report_request_user_id ON report_request (user_id);
 -- Sweep/requeue sorgusu status üzerinden filtrelediği için index
 CREATE INDEX idx_report_request_status ON report_request (status);
+-- Reconciliation sorgusu (status + credit_debited üzerinden) için index
+CREATE INDEX idx_report_request_credit_debited ON report_request (status, credit_debited);
 
 -- Çekilen sosyal medya gönderileri
 -- request_id: bağlı rapor isteği
@@ -216,21 +244,27 @@ CREATE INDEX idx_notification_user_created ON notification (user_id, created_dat
 CREATE INDEX idx_notification_user_read ON notification (user_id, is_read);
 
 -- ============================================================
--- Bakiye / Cüzdan + Hareket Defteri (ödeme)
+-- Bakiye / Cüzdan + Hareket Defteri (ödeme) — FAZ CREDIT (eski V2) dahil
 -- ============================================================
 
 -- Kullanıcı cüzdanı (kullanıcı başına TEK satır)
+-- credit_balance/total_credit_topup/total_credit_spent: kredi bazlı cüzdan (eski V2) — TL
+-- kolonları (balance/total_topup/total_spent) SİLİNMEDİ, PayTR TL tutarı ve tarihsel kayıt için
+-- kalır; mevcut TL bakiyeler için otomatik dönüşüm yapılmaz.
 CREATE TABLE user_payment (
-    id              UUID PRIMARY KEY,
-    user_id         UUID NOT NULL,
-    balance         NUMERIC(19, 2) NOT NULL DEFAULT 0,
-    currency        VARCHAR(3) NOT NULL DEFAULT 'TL',
-    total_topup     NUMERIC(19, 2) NOT NULL DEFAULT 0,
-    total_spent     NUMERIC(19, 2) NOT NULL DEFAULT 0,
-    version         BIGINT NOT NULL DEFAULT 0,
-    active          INTEGER NOT NULL DEFAULT 1,
-    created_date    TIMESTAMP,
-    updated_date    TIMESTAMP,
+    id                   UUID PRIMARY KEY,
+    user_id              UUID NOT NULL,
+    balance              NUMERIC(19, 2) NOT NULL DEFAULT 0,
+    currency             VARCHAR(3) NOT NULL DEFAULT 'TL',
+    total_topup          NUMERIC(19, 2) NOT NULL DEFAULT 0,
+    total_spent          NUMERIC(19, 2) NOT NULL DEFAULT 0,
+    credit_balance       BIGINT NOT NULL DEFAULT 0,
+    total_credit_topup   BIGINT NOT NULL DEFAULT 0,
+    total_credit_spent   BIGINT NOT NULL DEFAULT 0,
+    version              BIGINT NOT NULL DEFAULT 0,
+    active               INTEGER NOT NULL DEFAULT 1,
+    created_date         TIMESTAMP,
+    updated_date         TIMESTAMP,
     CONSTRAINT uq_user_payment_user UNIQUE (user_id)
 );
 
@@ -241,6 +275,11 @@ CREATE TABLE user_payment (
 -- processed       : bakiye bu satır için işlendi mi (0/1)
 -- pending_*       : ödeme tamamlanınca oluşturulacak rapor isteğinin niyeti (deficit akışı)
 -- report_id       : ödeme tamamlanıp rapor üretilince ScrapePipelineService tarafından doldurulur
+-- amount/currency : NOT NULL DEĞİL (eski V4/V5) — DEBIT/REFUND kredi hareketlerinde TL tutarı/para
+--   birimi kavramı yok; writeCreditMovementLog() bu alanları hiç set etmez, Hibernate INSERT'i tüm
+--   mapped kolonları açıkça (null dahil) gönderdiğinden DB DEFAULT'u devreye girmez.
+-- credit_amount/credit_balance_before/after/product_type/package_code/package_name: kredi hareketi
+--   + ürün/paket bilgisi (eski V2) — ayrı bir "purchase" tablosu yok, TEK tabloda tutulur.
 CREATE TABLE user_payment_log (
     id                          UUID PRIMARY KEY,
     user_id                     UUID NOT NULL,
@@ -248,10 +287,16 @@ CREATE TABLE user_payment_log (
     report_request_id           UUID,
     report_id                   UUID,
     transaction_type            VARCHAR(20) NOT NULL,
-    amount                      NUMERIC(19, 2) NOT NULL,
-    currency                    VARCHAR(3) NOT NULL DEFAULT 'TL',
+    amount                      NUMERIC(19, 2),
+    currency                    VARCHAR(3),
     balance_before              NUMERIC(19, 2),
     balance_after               NUMERIC(19, 2),
+    credit_amount                BIGINT,
+    credit_balance_before        BIGINT,
+    credit_balance_after         BIGINT,
+    product_type                 VARCHAR(30),
+    package_code                 VARCHAR(20),
+    package_name                 VARCHAR(50),
     merchant_oid                VARCHAR(64),
     payment_provider            VARCHAR(20) NOT NULL DEFAULT 'PAYTR',
     payment_status              VARCHAR(20),
@@ -280,6 +325,8 @@ CREATE INDEX idx_upl_report_id      ON user_payment_log (report_id);
 -- İçerik üretimi tablosu
 -- Kullanıcı bir rapor üzerinden görsel/caption üretim isteği açar;
 -- worker üretimi asenkron yapar, durum bu tabloda izlenir.
+-- credit_debited/credit_debit_error/credit_debit_attempts: kredi düşümü mutabakatı (eski V6).
+-- is_free_usage: bu içerik ücretsiz ilk kullanım hakkıyla mı oluşturuldu (eski V11).
 CREATE TABLE content_request (
     content_request_id      UUID            PRIMARY KEY,
     user_id                 UUID            NOT NULL,
@@ -291,310 +338,203 @@ CREATE TABLE content_request (
     edit_count              INTEGER         NOT NULL DEFAULT 0, -- max edit-limit (config) hakkı
     status                  VARCHAR(20)     NOT NULL DEFAULT 'PENDING', -- PENDING|PROCESSING|COMPLETED|FAILED
     brand_dna_json          TEXT,                              -- OpenAI'dan üretilen Brand DNA (yeniden kullanılır)
-    visual_urls             TEXT,                              -- JSON array; S3 URL'leri
-    caption                 TEXT,
-    hashtags                TEXT,
-    cta                     TEXT,
-    first_comment           TEXT,
-    suggested_post_time     TEXT,
-    process_started_date    TIMESTAMP,
-    process_finished_date   TIMESTAMP,
-    process_error           TEXT,
-    attempt_count           INTEGER         NOT NULL DEFAULT 0,
-    active                  SMALLINT        NOT NULL DEFAULT 1,
-    created_date            TIMESTAMP,
-    updated_date            TIMESTAMP
+    visual_urls              TEXT,                              -- JSON array; S3 URL'leri
+    caption                  TEXT,
+    hashtags                 TEXT,
+    cta                      TEXT,
+    first_comment            TEXT,
+    suggested_post_time      TEXT,
+    process_started_date     TIMESTAMP,
+    process_finished_date    TIMESTAMP,
+    process_error            TEXT,
+    attempt_count            INTEGER         NOT NULL DEFAULT 0,
+    credit_debited            SMALLINT        NOT NULL DEFAULT 0,
+    credit_debit_error        TEXT,
+    credit_debit_attempts     INTEGER         NOT NULL DEFAULT 0,
+    is_free_usage             INTEGER         NOT NULL DEFAULT 0,
+    active                    SMALLINT        NOT NULL DEFAULT 1,
+    created_date              TIMESTAMP,
+    updated_date               TIMESTAMP
 );
 CREATE INDEX idx_content_request_user   ON content_request(user_id);
 CREATE INDEX idx_content_request_report ON content_request(report_id);
 CREATE INDEX idx_content_request_status ON content_request(status);
+CREATE INDEX idx_content_request_credit_debited ON content_request (status, credit_debited);
+
+-- Ücretsiz ilk kullanım hakkı (eski V11) — kullanıcı başına 1 rapor + (o rapora sıralı bağlı)
+-- 1 post/story hakkı. Kredi sistemine (user_payment.credit_balance) HİÇ dokunmaz; kontrol/kayıt
+-- tamamen bu tablodan yapılır (bkz. FreeUsageService).
+CREATE TABLE user_free_usage (
+    user_id                 UUID PRIMARY KEY,
+    free_report_used        INTEGER NOT NULL DEFAULT 0,
+    free_report_request_id  UUID,
+    free_report_used_date   TIMESTAMP,
+    free_content_used       INTEGER NOT NULL DEFAULT 0,
+    free_content_id         UUID,
+    free_content_used_date  TIMESTAMP,
+    created_date            TIMESTAMP NOT NULL,
+    updated_date            TIMESTAMP NOT NULL
+);
+
+-- Mevcut tüm kullanıcılar için satır seed et (herkese 1 hak tanı kararı — eski V11). Fresh/boş
+-- şemada user_info boş olduğundan bu sorgu 0 satır ekler; kalıcı bir "eski kullanıcıları migrate
+-- et" adımı olarak tutuluyor (ör. ileride bu V1'in üstüne veri geri yüklenirse).
+INSERT INTO user_free_usage (user_id, free_report_used, free_content_used, created_date, updated_date)
+SELECT user_id, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP FROM user_info;
 
 -- ============================================================
 -- TOHUM VERİSİ — Sektörler + Alt sektörler (sabit UUID; her ortamda aynı)
--- MVP için onaylanan tam liste: 30 sektör / 162 alt sektör.
+-- Güncel kürasyon (eski V13): 15 sektör / 87 alt sektör, verilen İŞ SIRASIYLA
+-- (display_order). Eski 30/162'lik liste + Influencer eki (eski V3) + V8/V9
+-- kürasyonları bu liste tarafından tamamen değiştirildi (superseded).
 -- ============================================================
 
--- Sektörler (30)
-INSERT INTO sector (sector_id, name, active, created_date, updated_date) VALUES
- ('30000000-0000-0000-0000-000000000001', 'E-Ticaret', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000002', 'Sağlık', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000003', 'Güzellik', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000004', 'Yeme & İçme', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000005', 'Otel & Turizm', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000006', 'Gayrimenkul', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000007', 'Otomotiv', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000008', 'Eğitim', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000009', 'Spor', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000010', 'Finans', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000011', 'Hukuk', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000012', 'Teknoloji', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000013', 'Pazarlama', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000014', 'Fotoğraf & Video', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000015', 'Etkinlik', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000016', 'Ev & Yaşam', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000017', 'İnşaat', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000018', 'Sanayi', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000019', 'Tarım', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000020', 'Evcil Hayvan', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000021', 'Anne & Bebek', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000022', 'Moda', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000023', 'Kişisel Marka', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000024', 'Kamu & STK', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000025', 'Eğlence', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000026', 'Dijital İçerik', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000027', 'Girişimcilik', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000028', 'Yapay Zeka', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000029', 'Kripto & Web3', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('30000000-0000-0000-0000-000000000030', 'Lüks Yaşam', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+-- Sektörler (15, verilen sırayla)
+INSERT INTO sector (sector_id, name, active, display_order, created_date, updated_date) VALUES
+ ('11111111-1111-1111-1111-111111111201', 'Moda & Aksesuar', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('11111111-1111-1111-1111-111111111202', 'Güzellik & Sağlık', 1, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('11111111-1111-1111-1111-111111111203', 'Yeme & İçme', 1, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('11111111-1111-1111-1111-111111111204', 'Anne & Bebek', 1, 4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('11111111-1111-1111-1111-111111111205', 'Ev Yaşam & Dekorasyon', 1, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('11111111-1111-1111-1111-111111111206', 'Eğitim', 1, 6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('11111111-1111-1111-1111-111111111207', 'Otomotiv', 1, 7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('11111111-1111-1111-1111-111111111208', 'Evcil Hayvan', 1, 8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('11111111-1111-1111-1111-111111111209', 'Yazılım', 1, 9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('11111111-1111-1111-1111-111111111210', 'Gayrimenkul', 1, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('11111111-1111-1111-1111-111111111211', 'Turizm & Etkinlik', 1, 11, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('11111111-1111-1111-1111-111111111212', 'Finans', 1, 12, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('11111111-1111-1111-1111-111111111213', 'Hukuk', 1, 13, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('11111111-1111-1111-1111-111111111214', 'Profesyonel Hizmetler', 1, 14, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('11111111-1111-1111-1111-111111111215', 'Pazarlama, Medya', 1, 15, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
--- E-Ticaret alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', 'Moda', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000001', 'Ayakkabı', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000003', '30000000-0000-0000-0000-000000000001', 'Takı & Aksesuar', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000004', '30000000-0000-0000-0000-000000000001', 'Kozmetik', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000005', '30000000-0000-0000-0000-000000000001', 'Ev Dekorasyonu', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000006', '30000000-0000-0000-0000-000000000001', 'Mobilya', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000007', '30000000-0000-0000-0000-000000000001', 'Elektronik', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000008', '30000000-0000-0000-0000-000000000001', 'Anne & Bebek', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000009', '30000000-0000-0000-0000-000000000001', 'Pet Ürünleri', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000010', '30000000-0000-0000-0000-000000000001', 'Hobi', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+-- Moda & Aksesuar alt sektörleri
+INSERT INTO subsector (subsector_id, sector_id, name, active, display_order, created_date, updated_date) VALUES
+ ('22222222-2222-2222-2222-222222222201', '11111111-1111-1111-1111-111111111201', 'Kadın Giyim', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222202', '11111111-1111-1111-1111-111111111201', 'Erkek Giyim', 1, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222203', '11111111-1111-1111-1111-111111111201', 'Çocuk Giyim', 1, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222204', '11111111-1111-1111-1111-111111111201', 'Tesettür Giyim', 1, 4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222205', '11111111-1111-1111-1111-111111111201', 'Ayakkabı', 1, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222206', '11111111-1111-1111-1111-111111111201', 'Çanta', 1, 6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222207', '11111111-1111-1111-1111-111111111201', 'Takı', 1, 7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222208', '11111111-1111-1111-1111-111111111201', 'Saat', 1, 8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222209', '11111111-1111-1111-1111-111111111201', 'İç Giyim', 1, 9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222210', '11111111-1111-1111-1111-111111111201', 'Spor Giyim', 1, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
--- Sağlık alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000011', '30000000-0000-0000-0000-000000000002', 'Diş Kliniği', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000012', '30000000-0000-0000-0000-000000000002', 'Estetik Merkezi', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000013', '30000000-0000-0000-0000-000000000002', 'Psikolog', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000014', '30000000-0000-0000-0000-000000000002', 'Diyetisyen', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000015', '30000000-0000-0000-0000-000000000002', 'Fizyoterapi', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000016', '30000000-0000-0000-0000-000000000002', 'Göz Kliniği', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000017', '30000000-0000-0000-0000-000000000002', 'Kadın Doğum', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000018', '30000000-0000-0000-0000-000000000002', 'Veteriner', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000019', '30000000-0000-0000-0000-000000000002', 'Tıp Merkezi', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-
--- Güzellik alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000020', '30000000-0000-0000-0000-000000000003', 'Kuaför', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000021', '30000000-0000-0000-0000-000000000003', 'Berber', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000022', '30000000-0000-0000-0000-000000000003', 'Güzellik Salonu', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000023', '30000000-0000-0000-0000-000000000003', 'Nail Studio', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000024', '30000000-0000-0000-0000-000000000003', 'Lazer Epilasyon', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000025', '30000000-0000-0000-0000-000000000003', 'Cilt Bakımı', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000026', '30000000-0000-0000-0000-000000000003', 'Kalıcı Makyaj', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+-- Güzellik & Sağlık alt sektörleri
+INSERT INTO subsector (subsector_id, sector_id, name, active, display_order, created_date, updated_date) VALUES
+ ('22222222-2222-2222-2222-222222222211', '11111111-1111-1111-1111-111111111202', 'Kuaför', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222212', '11111111-1111-1111-1111-111111111202', 'Berber', 1, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222213', '11111111-1111-1111-1111-111111111202', 'Güzellik Salonu', 1, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222214', '11111111-1111-1111-1111-111111111202', 'Nail Studio', 1, 4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222215', '11111111-1111-1111-1111-111111111202', 'Diş Kliniği', 1, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222216', '11111111-1111-1111-1111-111111111202', 'Estetik Cerrahi', 1, 6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222217', '11111111-1111-1111-1111-111111111202', 'Saç Ekimi', 1, 7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222218', '11111111-1111-1111-1111-111111111202', 'Diyetisyen', 1, 8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222219', '11111111-1111-1111-1111-111111111202', 'Psikolog', 1, 9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222220', '11111111-1111-1111-1111-111111111202', 'Spor Salonu', 1, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222221', '11111111-1111-1111-1111-111111111202', 'Pilates', 1, 11, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222222', '11111111-1111-1111-1111-111111111202', 'Yoga', 1, 12, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
 -- Yeme & İçme alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000027', '30000000-0000-0000-0000-000000000004', 'Kafe', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000028', '30000000-0000-0000-0000-000000000004', 'Restoran', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000029', '30000000-0000-0000-0000-000000000004', 'Hamburger', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000030', '30000000-0000-0000-0000-000000000004', 'Pizza', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000031', '30000000-0000-0000-0000-000000000004', 'Tatlıcı', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000032', '30000000-0000-0000-0000-000000000004', 'Pastane', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000033', '30000000-0000-0000-0000-000000000004', 'Kahve', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000034', '30000000-0000-0000-0000-000000000004', 'Fast Food', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000035', '30000000-0000-0000-0000-000000000004', 'Steakhouse', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000036', '30000000-0000-0000-0000-000000000004', 'Vegan', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-
--- Otel & Turizm alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000037', '30000000-0000-0000-0000-000000000005', 'Otel', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000038', '30000000-0000-0000-0000-000000000005', 'Butik Otel', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000039', '30000000-0000-0000-0000-000000000005', 'Tatil Köyü', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000040', '30000000-0000-0000-0000-000000000005', 'Seyahat Acentesi', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000041', '30000000-0000-0000-0000-000000000005', 'Kamp Alanı', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000042', '30000000-0000-0000-0000-000000000005', 'Glamping', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-
--- Gayrimenkul alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000043', '30000000-0000-0000-0000-000000000006', 'Emlak Ofisi', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000044', '30000000-0000-0000-0000-000000000006', 'İnşaat Firması', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000045', '30000000-0000-0000-0000-000000000006', 'Konut Projesi', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000046', '30000000-0000-0000-0000-000000000006', 'Ticari Gayrimenkul', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-
--- Otomotiv alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000047', '30000000-0000-0000-0000-000000000007', 'Galeri', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000048', '30000000-0000-0000-0000-000000000007', 'Oto Servis', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000049', '30000000-0000-0000-0000-000000000007', 'Oto Kuaför', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000050', '30000000-0000-0000-0000-000000000007', 'Lastik', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000051', '30000000-0000-0000-0000-000000000007', 'Araç Kiralama', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000052', '30000000-0000-0000-0000-000000000007', 'Elektrikli Araç', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-
--- Eğitim alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000053', '30000000-0000-0000-0000-000000000008', 'Dil Kursu', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000054', '30000000-0000-0000-0000-000000000008', 'Yazılım Eğitimi', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000055', '30000000-0000-0000-0000-000000000008', 'Özel Okul', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000056', '30000000-0000-0000-0000-000000000008', 'Kreş', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000057', '30000000-0000-0000-0000-000000000008', 'Üniversite Hazırlık', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000058', '30000000-0000-0000-0000-000000000008', 'Online Eğitim', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-
--- Spor alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000059', '30000000-0000-0000-0000-000000000009', 'Fitness', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000060', '30000000-0000-0000-0000-000000000009', 'Pilates', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000061', '30000000-0000-0000-0000-000000000009', 'Yoga', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000062', '30000000-0000-0000-0000-000000000009', 'CrossFit', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000063', '30000000-0000-0000-0000-000000000009', 'Yüzme', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000064', '30000000-0000-0000-0000-000000000009', 'Tenis', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000065', '30000000-0000-0000-0000-000000000009', 'Futbol Akademisi', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-
--- Finans alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000066', '30000000-0000-0000-0000-000000000010', 'Muhasebe', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000067', '30000000-0000-0000-0000-000000000010', 'Mali Müşavir', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000068', '30000000-0000-0000-0000-000000000010', 'Sigorta', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000069', '30000000-0000-0000-0000-000000000010', 'Finansal Danışman', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000070', '30000000-0000-0000-0000-000000000010', 'Yatırım Danışmanlığı', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-
--- Hukuk alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000071', '30000000-0000-0000-0000-000000000011', 'Avukat', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000072', '30000000-0000-0000-0000-000000000011', 'Hukuk Bürosu', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000073', '30000000-0000-0000-0000-000000000011', 'Arabuluculuk', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-
--- Teknoloji alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000074', '30000000-0000-0000-0000-000000000012', 'SaaS', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000075', '30000000-0000-0000-0000-000000000012', 'Yapay Zeka', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000076', '30000000-0000-0000-0000-000000000012', 'Yazılım Firması', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000077', '30000000-0000-0000-0000-000000000012', 'Mobil Uygulama', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000078', '30000000-0000-0000-0000-000000000012', 'Siber Güvenlik', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000079', '30000000-0000-0000-0000-000000000012', 'Bulut Hizmetleri', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-
--- Pazarlama alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000080', '30000000-0000-0000-0000-000000000013', 'Reklam Ajansı', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000081', '30000000-0000-0000-0000-000000000013', 'Dijital Pazarlama', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000082', '30000000-0000-0000-0000-000000000013', 'SEO', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000083', '30000000-0000-0000-0000-000000000013', 'Sosyal Medya Ajansı', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000084', '30000000-0000-0000-0000-000000000013', 'Video Prodüksiyon', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-
--- Fotoğraf & Video alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000085', '30000000-0000-0000-0000-000000000014', 'Fotoğrafçı', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000086', '30000000-0000-0000-0000-000000000014', 'Düğün Fotoğrafçısı', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000087', '30000000-0000-0000-0000-000000000014', 'Drone Çekimi', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000088', '30000000-0000-0000-0000-000000000014', 'Video Prodüksiyon', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-
--- Etkinlik alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000089', '30000000-0000-0000-0000-000000000015', 'Düğün Organizasyonu', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000090', '30000000-0000-0000-0000-000000000015', 'Event Ajansı', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000091', '30000000-0000-0000-0000-000000000015', 'Catering', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000092', '30000000-0000-0000-0000-000000000015', 'Davet Organizasyonu', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-
--- Ev & Yaşam alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000093', '30000000-0000-0000-0000-000000000016', 'İç Mimarlık', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000094', '30000000-0000-0000-0000-000000000016', 'Mimarlık', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000095', '30000000-0000-0000-0000-000000000016', 'Mobilya', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000096', '30000000-0000-0000-0000-000000000016', 'Mutfak', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000097', '30000000-0000-0000-0000-000000000016', 'Bahçe', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000098', '30000000-0000-0000-0000-000000000016', 'Perde', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-
--- İnşaat alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000099', '30000000-0000-0000-0000-000000000017', 'Müteahhit', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000100', '30000000-0000-0000-0000-000000000017', 'Yapı Malzemeleri', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000101', '30000000-0000-0000-0000-000000000017', 'Çelik Yapı', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000102', '30000000-0000-0000-0000-000000000017', 'Cephe Sistemleri', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-
--- Sanayi alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000103', '30000000-0000-0000-0000-000000000018', 'Makine', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000104', '30000000-0000-0000-0000-000000000018', 'Otomasyon', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000105', '30000000-0000-0000-0000-000000000018', 'Üretim', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000106', '30000000-0000-0000-0000-000000000018', 'Fabrika', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000107', '30000000-0000-0000-0000-000000000018', 'Endüstriyel Ürünler', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-
--- Tarım alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000108', '30000000-0000-0000-0000-000000000019', 'Tarım Teknolojileri', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000109', '30000000-0000-0000-0000-000000000019', 'Gübre', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000110', '30000000-0000-0000-0000-000000000019', 'Tohum', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000111', '30000000-0000-0000-0000-000000000019', 'Hayvancılık', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000112', '30000000-0000-0000-0000-000000000019', 'Organik Ürün', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-
--- Evcil Hayvan alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000113', '30000000-0000-0000-0000-000000000020', 'Veteriner', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000114', '30000000-0000-0000-0000-000000000020', 'Pet Shop', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000115', '30000000-0000-0000-0000-000000000020', 'Pet Oteli', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000116', '30000000-0000-0000-0000-000000000020', 'Pet Kuaförü', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+INSERT INTO subsector (subsector_id, sector_id, name, active, display_order, created_date, updated_date) VALUES
+ ('22222222-2222-2222-2222-222222222223', '11111111-1111-1111-1111-111111111203', 'Pastane', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222224', '11111111-1111-1111-1111-111111111203', 'Fırın', 1, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222225', '11111111-1111-1111-1111-111111111203', 'Burger', 1, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222226', '11111111-1111-1111-1111-111111111203', 'Pizza', 1, 4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222227', '11111111-1111-1111-1111-111111111203', 'Kebap', 1, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222228', '11111111-1111-1111-1111-111111111203', 'Döner', 1, 6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222229', '11111111-1111-1111-1111-111111111203', 'Tatlıcı', 1, 7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222230', '11111111-1111-1111-1111-111111111203', 'Kahvaltıcı', 1, 8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222231', '11111111-1111-1111-1111-111111111203', 'Restoran', 1, 9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222232', '11111111-1111-1111-1111-111111111203', 'Kafe', 1, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222233', '11111111-1111-1111-1111-111111111203', 'Nargile Kafe', 1, 11, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222234', '11111111-1111-1111-1111-111111111203', 'Kahveci', 1, 12, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
 -- Anne & Bebek alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000117', '30000000-0000-0000-0000-000000000021', 'Bebek Mağazası', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000118', '30000000-0000-0000-0000-000000000021', 'Hamile Giyim', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000119', '30000000-0000-0000-0000-000000000021', 'Oyuncak', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000120', '30000000-0000-0000-0000-000000000021', 'Çocuk Gelişimi', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+INSERT INTO subsector (subsector_id, sector_id, name, active, display_order, created_date, updated_date) VALUES
+ ('22222222-2222-2222-2222-222222222235', '11111111-1111-1111-1111-111111111204', 'Bebek Ürünleri', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222236', '11111111-1111-1111-1111-111111111204', 'Oyuncak', 1, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222237', '11111111-1111-1111-1111-111111111204', 'Hamile Ürünleri', 1, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222238', '11111111-1111-1111-1111-111111111204', 'Çocuk Etkinlik Merkezi', 1, 4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
--- Moda alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000121', '30000000-0000-0000-0000-000000000022', 'Kadın Giyim', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000122', '30000000-0000-0000-0000-000000000022', 'Erkek Giyim', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000123', '30000000-0000-0000-0000-000000000022', 'Çocuk Giyim', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000124', '30000000-0000-0000-0000-000000000022', 'Tesettür', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000125', '30000000-0000-0000-0000-000000000022', 'Outdoor', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000126', '30000000-0000-0000-0000-000000000022', 'Lüks Moda', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+-- Ev Yaşam & Dekorasyon alt sektörleri
+INSERT INTO subsector (subsector_id, sector_id, name, active, display_order, created_date, updated_date) VALUES
+ ('22222222-2222-2222-2222-222222222239', '11111111-1111-1111-1111-111111111205', 'Mobilya', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222240', '11111111-1111-1111-1111-111111111205', 'Ev Tekstili', 1, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222241', '11111111-1111-1111-1111-111111111205', 'Dekorasyon', 1, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222242', '11111111-1111-1111-1111-111111111205', 'Mutfak Ürünleri', 1, 4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222243', '11111111-1111-1111-1111-111111111205', 'İç Aydınlatma', 1, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222244', '11111111-1111-1111-1111-111111111205', 'Bahçe Ürünleri', 1, 6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222245', '11111111-1111-1111-1111-111111111205', 'Ev Elektronik Eşyalar', 1, 7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
--- Kişisel Marka alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000127', '30000000-0000-0000-0000-000000000023', 'Eğitmen', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000128', '30000000-0000-0000-0000-000000000023', 'Koç', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000129', '30000000-0000-0000-0000-000000000023', 'Danışman', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000130', '30000000-0000-0000-0000-000000000023', 'Konuşmacı', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000131', '30000000-0000-0000-0000-000000000023', 'Influencer', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000132', '30000000-0000-0000-0000-000000000023', 'İçerik Üreticisi', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+-- Eğitim alt sektörleri
+INSERT INTO subsector (subsector_id, sector_id, name, active, display_order, created_date, updated_date) VALUES
+ ('22222222-2222-2222-2222-222222222246', '11111111-1111-1111-1111-111111111206', 'Online Eğitim', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222247', '11111111-1111-1111-1111-111111111206', 'Dil Kursu', 1, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222248', '11111111-1111-1111-1111-111111111206', 'Yazılım Eğitimi', 1, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222249', '11111111-1111-1111-1111-111111111206', 'Özel Okul', 1, 4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222250', '11111111-1111-1111-1111-111111111206', 'Kreş', 1, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222251', '11111111-1111-1111-1111-111111111206', 'Üniversite', 1, 6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
--- Kamu & STK alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000133', '30000000-0000-0000-0000-000000000024', 'Belediye', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000134', '30000000-0000-0000-0000-000000000024', 'Vakıf', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000135', '30000000-0000-0000-0000-000000000024', 'Dernek', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000136', '30000000-0000-0000-0000-000000000024', 'Eğitim Vakfı', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+-- Otomotiv alt sektörleri
+INSERT INTO subsector (subsector_id, sector_id, name, active, display_order, created_date, updated_date) VALUES
+ ('22222222-2222-2222-2222-222222222252', '11111111-1111-1111-1111-111111111207', 'Oto Galeri', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222253', '11111111-1111-1111-1111-111111111207', 'Oto Servis', 1, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222254', '11111111-1111-1111-1111-111111111207', 'Araç Kiralama', 1, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
--- Eğlence alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000137', '30000000-0000-0000-0000-000000000025', 'Müzik', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000138', '30000000-0000-0000-0000-000000000025', 'Gece Kulübü', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000139', '30000000-0000-0000-0000-000000000025', 'Bar', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000140', '30000000-0000-0000-0000-000000000025', 'Sinema', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000141', '30000000-0000-0000-0000-000000000025', 'Tiyatro', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+-- Evcil Hayvan alt sektörleri
+INSERT INTO subsector (subsector_id, sector_id, name, active, display_order, created_date, updated_date) VALUES
+ ('22222222-2222-2222-2222-222222222255', '11111111-1111-1111-1111-111111111208', 'Pet Shop', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222256', '11111111-1111-1111-1111-111111111208', 'Veteriner', 1, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
--- Dijital İçerik alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000142', '30000000-0000-0000-0000-000000000026', 'Podcast', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000143', '30000000-0000-0000-0000-000000000026', 'YouTube Kanalı', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000144', '30000000-0000-0000-0000-000000000026', 'Twitch Yayıncısı', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000145', '30000000-0000-0000-0000-000000000026', 'Blog', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000146', '30000000-0000-0000-0000-000000000026', 'Haber Platformu', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+-- Yazılım alt sektörleri
+INSERT INTO subsector (subsector_id, sector_id, name, active, display_order, created_date, updated_date) VALUES
+ ('22222222-2222-2222-2222-222222222257', '11111111-1111-1111-1111-111111111209', 'Yazılım Firması', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222258', '11111111-1111-1111-1111-111111111209', 'Mobil Uygulama', 1, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222259', '11111111-1111-1111-1111-111111111209', 'Yapay Zeka', 1, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
--- Girişimcilik alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000147', '30000000-0000-0000-0000-000000000027', 'Startup', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000148', '30000000-0000-0000-0000-000000000027', 'Kuluçka Merkezi', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000149', '30000000-0000-0000-0000-000000000027', 'VC', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000150', '30000000-0000-0000-0000-000000000027', 'Teknoloji Girişimi', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+-- Gayrimenkul alt sektörleri
+INSERT INTO subsector (subsector_id, sector_id, name, active, display_order, created_date, updated_date) VALUES
+ ('22222222-2222-2222-2222-222222222260', '11111111-1111-1111-1111-111111111210', 'Emlak Ofisi', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222261', '11111111-1111-1111-1111-111111111210', 'Konut Projesi', 1, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222262', '11111111-1111-1111-1111-111111111210', 'Villa Projesi', 1, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222263', '11111111-1111-1111-1111-111111111210', 'Mimarlık', 1, 4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222264', '11111111-1111-1111-1111-111111111210', 'İç Mimarlık', 1, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
--- Yapay Zeka alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000151', '30000000-0000-0000-0000-000000000028', 'AI SaaS', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000152', '30000000-0000-0000-0000-000000000028', 'AI Agent', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000153', '30000000-0000-0000-0000-000000000028', 'AI Danışmanlığı', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000154', '30000000-0000-0000-0000-000000000028', 'Prompt Engineering', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+-- Turizm & Etkinlik alt sektörleri
+INSERT INTO subsector (subsector_id, sector_id, name, active, display_order, created_date, updated_date) VALUES
+ ('22222222-2222-2222-2222-222222222265', '11111111-1111-1111-1111-111111111211', 'Otel', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222266', '11111111-1111-1111-1111-111111111211', 'Butik Otel', 1, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222267', '11111111-1111-1111-1111-111111111211', 'Kamp', 1, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222268', '11111111-1111-1111-1111-111111111211', 'Seyahat Acentesi', 1, 4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222269', '11111111-1111-1111-1111-111111111211', 'Organizasyon', 1, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222270', '11111111-1111-1111-1111-111111111211', 'Düğün Organizasyonu', 1, 6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222271', '11111111-1111-1111-1111-111111111211', 'Fotoğrafçı', 1, 7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222272', '11111111-1111-1111-1111-111111111211', 'Video Prodüksiyon', 1, 8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
--- Kripto & Web3 alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000155', '30000000-0000-0000-0000-000000000029', 'Kripto Borsası', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000156', '30000000-0000-0000-0000-000000000029', 'Blockchain', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000157', '30000000-0000-0000-0000-000000000029', 'NFT', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000158', '30000000-0000-0000-0000-000000000029', 'DeFi', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+-- Finans alt sektörleri
+INSERT INTO subsector (subsector_id, sector_id, name, active, display_order, created_date, updated_date) VALUES
+ ('22222222-2222-2222-2222-222222222273', '11111111-1111-1111-1111-111111111212', 'Sigorta', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222274', '11111111-1111-1111-1111-111111111212', 'BES', 1, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222275', '11111111-1111-1111-1111-111111111212', 'Yatırım', 1, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222276', '11111111-1111-1111-1111-111111111212', 'Muhasebe', 1, 4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222277', '11111111-1111-1111-1111-111111111212', 'Mali Müşavir', 1, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
--- Lüks Yaşam alt sektörleri
-INSERT INTO subsector (subsector_id, sector_id, name, active, created_date, updated_date) VALUES
- ('40000000-0000-0000-0000-000000000159', '30000000-0000-0000-0000-000000000030', 'Mücevher', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000160', '30000000-0000-0000-0000-000000000030', 'Saat', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000161', '30000000-0000-0000-0000-000000000030', 'Lüks Otomobil', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
- ('40000000-0000-0000-0000-000000000162', '30000000-0000-0000-0000-000000000030', 'Premium Yaşam', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+-- Hukuk alt sektörleri
+INSERT INTO subsector (subsector_id, sector_id, name, active, display_order, created_date, updated_date) VALUES
+ ('22222222-2222-2222-2222-222222222278', '11111111-1111-1111-1111-111111111213', 'Avukat', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222279', '11111111-1111-1111-1111-111111111213', 'Arabulucu', 1, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222280', '11111111-1111-1111-1111-111111111213', 'Uzlaştırmacı', 1, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+
+-- Profesyonel Hizmetler alt sektörleri
+INSERT INTO subsector (subsector_id, sector_id, name, active, display_order, created_date, updated_date) VALUES
+ ('22222222-2222-2222-2222-222222222281', '11111111-1111-1111-1111-111111111214', 'Danışmanlık', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222282', '11111111-1111-1111-1111-111111111214', 'İnsan Kaynakları', 1, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+
+-- Pazarlama, Medya alt sektörleri
+INSERT INTO subsector (subsector_id, sector_id, name, active, display_order, created_date, updated_date) VALUES
+ ('22222222-2222-2222-2222-222222222283', '11111111-1111-1111-1111-111111111215', 'Dijital Pazarlama', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222284', '11111111-1111-1111-1111-111111111215', 'Reklam Ajansı', 1, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222285', '11111111-1111-1111-1111-111111111215', 'Influencer', 1, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222286', '11111111-1111-1111-1111-111111111215', 'İçerik Üreticisi', 1, 4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+ ('22222222-2222-2222-2222-222222222287', '11111111-1111-1111-1111-111111111215', 'Haber Medyası', 1, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);

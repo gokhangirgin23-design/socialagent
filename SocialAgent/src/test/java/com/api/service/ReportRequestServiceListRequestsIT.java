@@ -65,4 +65,37 @@ class ReportRequestServiceListRequestsIT {
         assertEquals(1, result.size(), "Aynı request_id için tek satır dönmeli, satır çoğalmamalı");
         assertEquals(newReportId, result.get(0).getReportId(), "En güncel (created_date DESC) report_id dönmeli");
     }
+
+    /**
+     * V12 regresyon testi: own_account_name artık report_request üzerinde donmuş bir STRING
+     * kolonundan okunuyor, user_social_account'a canlı JOIN'lenmiyor. Bu testte hesap, raporun
+     * oluşturulmasından SONRA yerinde yeniden adlandırılıyor (AccountService'in yaptığı gibi) —
+     * listRequests'in hâlâ ORİJİNAL (snapshot) adı döndürdüğü, güncel adı DEĞİL, doğrulanıyor.
+     */
+    @Test
+    void hesapSonradanYenidenAdlandirilirsaRaporEskiSnapshotAdiniGosterir() {
+        UUID userId = UUID.randomUUID();
+        UUID requestId = UUID.randomUUID();
+        UUID accountId = UUID.randomUUID();
+        LocalDateTime now = LocalDateTime.now();
+
+        jdbcTemplate.update("""
+                INSERT INTO user_social_account
+                    (user_social_account_id, user_id, platform, account_name, active, created_date, updated_date)
+                VALUES (?, ?, 'INSTAGRAM', 'yeni_hesap_adi', 1, ?, ?)
+                """, accountId, userId, now, now);
+
+        jdbcTemplate.update("""
+                INSERT INTO report_request
+                    (request_id, user_id, report_type, selected_user_social_account_id, own_account_name,
+                     queue_pushed, status, attempt_count, active, created_date, updated_date, is_free_usage)
+                VALUES (?, ?, 'OWN_ONLY', ?, 'eski_hesap_adi', 1, 'COMPLETED', 0, 1, ?, ?, 0)
+                """, requestId, userId, accountId, now, now);
+
+        List<ReportRequestDto> result = reportRequestService.listRequests(userId, 0, 10);
+
+        assertEquals(1, result.size());
+        assertEquals("eski_hesap_adi", result.get(0).getOwnAccountName(),
+                "Hesap sonradan yeniden adlandırılsa bile rapor üretim ANINDAKİ adı göstermeli");
+    }
 }

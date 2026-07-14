@@ -54,8 +54,10 @@ public class DashboardService {
         UUID lastCompletedRequestId = findLastCompletedRequestId(userId);
 
         // 4) Hesap skoru (kendi postlar vs diğerleri)
-        Integer accountScore = (lastCompletedRequestId != null)
+        ScoreResult scoreResult = (lastCompletedRequestId != null)
                 ? computeAccountScore(lastCompletedRequestId) : null;
+        Integer accountScore = scoreResult != null ? scoreResult.score() : null;
+        DashboardSummaryDto.ScoreBreakdown scoreBreakdown = scoreResult != null ? scoreResult.breakdown() : null;
 
         // 5) Son analiz tarihi (process_finished_date)
         java.time.LocalDateTime lastAnalysisDate = findLastAnalysisDate(userId);
@@ -75,6 +77,7 @@ public class DashboardService {
 
         return DashboardSummaryDto.builder()
                 .accountScore(accountScore)
+                .scoreBreakdown(scoreBreakdown)
                 .monitored(monitored)
                 .lastAnalysisDate(lastAnalysisDate)
                 .lastReport(lastReport)
@@ -121,25 +124,108 @@ public class DashboardService {
 
     // ── Hesap skoru ─────────────────────────────────────────────────────────
 
+    /** computeAccountScore'un dönüş taşıyıcısı: hem toplam skor hem "neden bu skor" kırılımı. */
+    private record ScoreResult(int score, DashboardSummaryDto.ScoreBreakdown breakdown) {}
+
     /**
-     * 0-100 hesap skoru: kendi postların ort. etkileşimi / diğerlerinin ort. etkileşimi.
-     * Basit MVP formülü; ileride kalibre edilebilir.
+     * 0-100 kompozit hesap skoru — 3 bileşen: Göreli etkileşim (0-50, log2 ölçekli — büyüklük
+     * farkını sıkıştırır), Paylaşım temposu (0-25, kendi gönderi sayısı/hedef 10), Etkileşim
+     * trendi (0-25, kendi gönderilerin tarihe göre yeni yarısı vs eski yarısı). Eski ham oran
+     * formülü ("ownAvg/othersAvg / 2 * 100") küçük hesaplarda oranı ~0.01'e çakıp skoru hep 1
+     * gösteriyordu; kompozit skor takipçi büyüklüğü farkını göz ardı etmez ve motive edicidir.
+     * Kendi gönderisi hiç yoksa null döner (0/1 gibi caydırıcı bir sayı göstermek yerine).
      */
-    private int computeAccountScore(UUID requestId) {
+    private ScoreResult computeAccountScore(UUID requestId) {
+        long ownPostCount = queryOwnPostCount(requestId);
+        if (ownPostCount == 0) {
+            return null;
+        }
+
         long ownAvg = queryAvgEngagement(requestId, new String[]{"OWN"});
         long othersAvg = queryAvgEngagement(requestId, new String[]{"SECTOR", "MONITORED"});
 
+        int relativePoints = computeRelativePoints(ownAvg, othersAvg);
+        int activityPoints = computeActivityPoints(ownPostCount);
+        int trendPoints = computeTrendPoints(requestId);
+
+        int score = Math.max(0, Math.min(100, relativePoints + activityPoints + trendPoints));
+        DashboardSummaryDto.ScoreBreakdown breakdown = new DashboardSummaryDto.ScoreBreakdown(
+                relativePoints, activityPoints, trendPoints, ownPostCount, ownAvg, othersAvg);
+        return new ScoreResult(score, breakdown);
+    }
+
+    /** Göreli etkileşim (0-50): eşit performans 25p, 4x iyi 50p, 4x kötü 0p (log2 ölçek). */
+    private int computeRelativePoints(long ownAvg, long othersAvg) {
         if (ownAvg == 0) {
             return 0;
         }
         if (othersAvg == 0) {
-            // Karşılaştırma için başka hesap yok; orta skor
-            return 50;
+            // Karşılaştırma için başka hesap yok; nötr orta değer
+            return 25;
         }
-        // ratio: 1.0 = eşit (50 puan), 2.0 = 2x daha iyi (100 puan)
         double ratio = (double) ownAvg / othersAvg;
-        int score = (int) Math.round(Math.min(ratio / 2.0, 1.0) * 100);
-        return Math.max(0, Math.min(100, score));
+        return (int) Math.round(clamp01(0.5 + 0.25 * log2(ratio)) * 50);
+    }
+
+    /** Paylaşım temposu (0-25): kendi gönderi sayısı / hedef 10, 10+ gönderi tam puan. */
+    private int computeActivityPoints(long ownPostCount) {
+        double normalized = Math.min(1.0, ownPostCount / 10.0);
+        return (int) Math.round(normalized * 25);
+    }
+
+    /**
+     * Etkileşim trendi (0-25): kendi gönderileri post_date'e göre eskiden yeniye sırala, ortadan
+     * ikiye böl, yeni yarının ort. etkileşimini eski yarıyla kıyasla (aynı log2 ölçek). Yeterli
+     * veri yoksa (2'den az post, ya da bir yarı tamamen 0 etkileşimliyse anlamlı kıyas yoksa)
+     * nötr (~12p) döner — "yatay seyir" ile aynı görünsün diye bilerek caydırıcı olmayan bir
+     * varsayılan seçildi.
+     */
+    private int computeTrendPoints(UUID requestId) {
+        List<Long> engagements = queryOwnEngagementsByDate(requestId);
+        if (engagements.size() < 2) {
+            return 12;
+        }
+        int mid = engagements.size() / 2;
+        double olderAvg = engagements.subList(0, mid).stream().mapToLong(Long::longValue).average().orElse(0);
+        double newerAvg = engagements.subList(mid, engagements.size()).stream().mapToLong(Long::longValue).average().orElse(0);
+
+        if (olderAvg == 0 && newerAvg == 0) {
+            return 12;
+        }
+        if (newerAvg == 0) {
+            return 0;
+        }
+        if (olderAvg == 0) {
+            return 25;
+        }
+        double ratio = newerAvg / olderAvg;
+        return (int) Math.round(clamp01(0.5 + 0.25 * log2(ratio)) * 25);
+    }
+
+    private double log2(double v) {
+        return Math.log(v) / Math.log(2);
+    }
+
+    private double clamp01(double v) {
+        return Math.max(0.0, Math.min(1.0, v));
+    }
+
+    /** Kendi gönderi sayısı (paylaşım temposu bileşeni için). */
+    private long queryOwnPostCount(UUID requestId) {
+        String sql = "SELECT COUNT(*) FROM social_post WHERE request_id = ? AND source_type = 'OWN'";
+        Long count = jdbcTemplate.queryForObject(sql, Long.class, requestId);
+        return count != null ? count : 0;
+    }
+
+    /** Kendi gönderilerin etkileşimi (likes+comments), post_date'e göre eskiden yeniye sıralı. */
+    private List<Long> queryOwnEngagementsByDate(UUID requestId) {
+        String sql = """
+                SELECT COALESCE(likes_count, 0) + COALESCE(comments_count, 0) AS engagement
+                FROM social_post
+                WHERE request_id = ? AND source_type = 'OWN'
+                ORDER BY post_date ASC
+                """;
+        return jdbcTemplate.query(sql, (rs, i) -> rs.getLong("engagement"), requestId);
     }
 
     /** Belirtilen source_type'lar için ort. etkileşim (likes + comments). */

@@ -127,4 +127,13 @@ public class ReportRequest {
     // (bkz. credit_debited yorumu yukarıda — aynı NOT NULL/Hibernate-NULL-INSERT riski).
     @Column(name = "is_free_usage")
     private Integer isFreeUsage = 0;
+
+    // ===== Rapor listesinde kendi hesap adının dondurulması — V12 migration =====
+
+    // Rapor OLUŞTURULDUĞU ANDAKİ kendi hesap adı (canlı user_social_account'a değil, bu ANLIK
+    // değere göre gösterilir — kullanıcı sonradan hesap adını değiştirirse (AccountService
+    // yerinde günceller, INSERT yapmaz) eski raporlar yanlış görünmesin diye). Yalnızca
+    // OWN_ONLY modunda dolar; bu migration'dan önceki raporlarda null.
+    @Column(name = "own_account_name")
+    private String ownAccountName;
 }

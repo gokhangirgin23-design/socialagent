@@ -410,7 +410,7 @@ public final class ContentPrompts {
 
                 Instagram %s içeriği için aşağıdaki alanları JSON formatında üret:
                 - caption: Dikkat çekici, marka kimliğine uygun Instagram caption (max 2200 karakter)
-                - hashtags: 15-20 ilgili hashtag (#ile birlikte, boşlukla ayrılmış)
+                - hashtags: en fazla 5 ilgili hashtag (#ile birlikte, boşlukla ayrılmış)
                 - cta: Etkili bir call-to-action metni
                 - firstComment: İlk yorum önerisi (caption'dan farklı)
                 - suggestedPostTime: Önerilen paylaşım günü ve saati (ör. "Salı 09:00-11:00")

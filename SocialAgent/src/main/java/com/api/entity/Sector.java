@@ -34,6 +34,10 @@ public class Sector {
 	@Column(name = "active")
 	private Integer active;
 
+	// Select listelerindeki gösterim sırası (küçük önce) — V13 migration
+	@Column(name = "display_order")
+	private Integer displayOrder;
+
 	// Kaydın oluşturulma tarihi
 	@Column(name = "created_date")
 	private LocalDateTime createdDate;
