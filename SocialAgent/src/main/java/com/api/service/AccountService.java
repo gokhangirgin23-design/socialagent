@@ -48,8 +48,9 @@ public class AccountService {
 
 	// UserSocialAccount entity -> DTO dönüştürücü
 	private final UserSocialAccountMapper userSocialAccountMapper;
-	
-	//test
+
+	// Hesap adı değişince/silinince Brand DNA cache'ini pasife alır (eski hesaba göre üretim yapılmasın diye)
+	private final AccountDnaCacheService accountDnaCacheService;
 
 	/**
 	 * Kullanıcının kendi sosyal medya hesabını ekler veya günceller.
@@ -106,10 +107,16 @@ public class AccountService {
 		if (!activeRows.isEmpty()) {
 			// Mevcut kaydı yeni hesap adıyla güncelle (D2: tek kayıt korunur)
 			UserSocialAccount existing = activeRows.get(0);
+			// Hesap adı gerçekten değiştiyse eski hesaba göre üretilmiş Brand DNA cache'i geçersizdir
+			// (social_account_id aynı UUID kaldığı için cache key değişmez — elle invalidate şart).
+			boolean nameChanged = !newName.equals(existing.getAccountName());
 			existing.setAccountName(newName);
 			existing.setProfileUrl(newUrl);
 			existing.setUpdatedDate(now);
 			UserSocialAccount saved = userSocialAccountRepository.save(existing);
+			if (nameChanged) {
+				accountDnaCacheService.invalidateAccountDnaCache(userId);
+			}
 			return userSocialAccountMapper.toDto(saved);
 		}
 
@@ -166,6 +173,8 @@ public class AccountService {
 		account.setActive(0);
 		account.setUpdatedDate(LocalDateTime.now());
 		userSocialAccountRepository.save(account);
+		// Hesap kaldırıldığında eski Brand DNA cache'i de pasife al
+		accountDnaCacheService.invalidateAccountDnaCache(userId);
 		return DataResponse.of(ResponseCode.SUCCESS);
 	}
 

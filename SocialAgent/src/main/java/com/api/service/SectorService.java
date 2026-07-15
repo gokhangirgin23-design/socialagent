@@ -47,6 +47,10 @@ public class SectorService {
 	// Subsector entity -> DTO dönüştürücü
 	private final SubsectorMapper subsectorMapper;
 
+	// Sektör/alt sektör değişince Brand DNA cache'ini pasife alır (ContentPrompts.forBrandDna
+	// promptuna sektör bağlamı girdiğinden, sektör değişimi DNA'yı geçersiz kılar)
+	private final AccountDnaCacheService accountDnaCacheService;
+
 	// Sector satırlarını entity'ye çeviren RowMapper
 	private static final RowMapper<Sector> SECTOR_ROW_MAPPER = (rs, rowNum) -> {
 		Sector s = new Sector();
@@ -150,7 +154,10 @@ public class SectorService {
 		user.setUpdatedDate(LocalDateTime.now());
 		userInfoRepository.save(user);
 
-		// 5) Veri döndürülmez, yalnızca başarı kodu
+		// 5) Sektör değişimi Brand DNA'yı geçersiz kılar (prompt sektör bağlamı içeriyor)
+		accountDnaCacheService.invalidateAccountDnaCache(userId);
+
+		// 6) Veri döndürülmez, yalnızca başarı kodu
 		return DataResponse.of(ResponseCode.SUCCESS);
 	}
 
@@ -179,7 +186,10 @@ public class SectorService {
 		user.setUpdatedDate(LocalDateTime.now());
 		userInfoRepository.save(user);
 
-		// 5) Veri döndürülmez, yalnızca başarı kodu
+		// 5) Alt sektör değişimi de Brand DNA'yı geçersiz kılar (prompt sektör bağlamı içeriyor)
+		accountDnaCacheService.invalidateAccountDnaCache(userId);
+
+		// 6) Veri döndürülmez, yalnızca başarı kodu
 		return DataResponse.of(ResponseCode.SUCCESS);
 	}
 

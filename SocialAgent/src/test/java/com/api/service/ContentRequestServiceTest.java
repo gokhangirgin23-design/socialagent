@@ -142,6 +142,52 @@ class ContentRequestServiceTest {
     }
 
     // ============================================================
+    // istek2.md — görsel stil seçimi (Premium/Doğal Üret)
+    // ============================================================
+
+    @Test
+    void visualStyleBelirtilmezseVarsayilanPremiumOlur() {
+        ContentCreateRequest req = sampleRequest("POST", false);
+        when(paymentService.getCreditBalance(userId)).thenReturn(100L);
+        ArgumentCaptor<ContentRequest> savedCaptor = ArgumentCaptor.forClass(ContentRequest.class);
+        when(contentRequestRepository.save(savedCaptor.capture()))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        service.create(userId, req);
+
+        assertEquals(com.api.entity.VisualStyle.PREMIUM, savedCaptor.getValue().getVisualStyle());
+    }
+
+    @Test
+    void gecersizVisualStyleIstegindePremiumaDuserHataFirlatmaz() {
+        ContentCreateRequest req = sampleRequest("POST", false);
+        req.setVisualStyle("gecersiz-deger");
+        when(paymentService.getCreditBalance(userId)).thenReturn(100L);
+        ArgumentCaptor<ContentRequest> savedCaptor = ArgumentCaptor.forClass(ContentRequest.class);
+        when(contentRequestRepository.save(savedCaptor.capture()))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        ContentCreateResponse response = service.create(userId, req);
+
+        assertEquals("QUEUED", response.getStatus());
+        assertEquals(com.api.entity.VisualStyle.PREMIUM, savedCaptor.getValue().getVisualStyle());
+    }
+
+    @Test
+    void naturalVisualStyleIstegindeNaturalOlarakKaydedilir() {
+        ContentCreateRequest req = sampleRequest("POST", false);
+        req.setVisualStyle("natural");
+        when(paymentService.getCreditBalance(userId)).thenReturn(100L);
+        ArgumentCaptor<ContentRequest> savedCaptor = ArgumentCaptor.forClass(ContentRequest.class);
+        when(contentRequestRepository.save(savedCaptor.capture()))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        service.create(userId, req);
+
+        assertEquals(com.api.entity.VisualStyle.NATURAL, savedCaptor.getValue().getVisualStyle());
+    }
+
+    // ============================================================
     // BACKEND-TODO Sorun 2, madde 2.2 — ürün görseli boyut guard'ı + anlamlı hata
     // ============================================================
 

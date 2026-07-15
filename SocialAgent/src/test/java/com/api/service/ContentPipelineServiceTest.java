@@ -174,6 +174,68 @@ class ContentPipelineServiceTest {
 		verify(jdbcTemplate, never()).query(contains("report_request"), any(RowMapper.class), any(Object[].class));
 	}
 
+	@SuppressWarnings("unchecked")
+	@Test
+	void loadExistingAccountPostsGuncelHesapAdiIleFiltrelenir() throws Exception {
+		UUID userId = UUID.randomUUID();
+		UUID socialAccountId = UUID.randomUUID();
+
+		// Cache miss
+		when(jdbcTemplate.queryForList(contains("user_account_dna"), eq(String.class), any(Object[].class)))
+				.thenReturn(List.of());
+
+		// Hesabın DB'deki GÜNCEL adı "yeniHesap" (kullanıcı hesap adını değiştirmiş)
+		ArgumentCaptor<RowMapper<Object>> accountMapper = ArgumentCaptor.forClass(RowMapper.class);
+		when(jdbcTemplate.query(contains("user_social_account"), accountMapper.capture(), any(Object[].class)))
+				.thenAnswer(invocation -> {
+					RowMapper<Object> mapper = accountMapper.getValue();
+					return List.of(mapper.mapRow(
+							mockAccountInfoRow("INSTAGRAM", "yeniHesap", "https://www.instagram.com/yeniHesap/"), 0));
+				});
+
+		// report_request sorgusu yalnızca own_account_name = "yeniHesap" ile çağrılırsa post döner;
+		// filtre yanlış uygulanmış olsaydı (eski davranış) bu stub eşleşmez, sonuç boş kalırdı.
+		ArgumentCaptor<RowMapper<Object>> postMapper = ArgumentCaptor.forClass(RowMapper.class);
+		when(jdbcTemplate.query(contains("report_request"), postMapper.capture(),
+				eq(socialAccountId), eq("yeniHesap"), any()))
+				.thenAnswer(invocation -> {
+					RowMapper<Object> mapper = postMapper.getValue();
+					return List.of(mapper.mapRow(mockPostRow("Yeni hesap gönderisi", null), 0));
+				});
+
+		when(aiAnalysisService.generateBrandDna(anyString())).thenReturn("{\"mainProductOrService\":\"yeni\"}");
+
+		Method resolveAccountDna = ContentPipelineService.class.getDeclaredMethod(
+				"resolveAccountDna", UUID.class, UUID.class, String.class);
+		resolveAccountDna.setAccessible(true);
+		String dna = (String) resolveAccountDna.invoke(service, userId, socialAccountId, null);
+
+		assertEquals("{\"mainProductOrService\":\"yeni\"}", dna);
+		// DB'de doğru filtreyle post bulunduğundan Apify'a hiç gidilmedi
+		verify(apifyClient, never()).fetchPostsByUrls(anyList(), anyInt());
+	}
+
+	@Test
+	void applyContentMetadataYalnizcaBrandDnaYaBagimlidir() throws Exception {
+		// Doğrulama notu (istek1.md madde 5): caption/hashtag/CTA üretimi yalnızca brandDna'ya
+		// bağlıdır — DNA invalidation düzeltmesiyle sektör değişimi sonrası ilk üretimde brandDna
+		// yeniden hesaplandığından, caption de otomatik olarak yeni sektöre uygun üretilir.
+		ContentRequest req = sampleRequest();
+
+		Method applyContentMetadata = ContentPipelineService.class.getDeclaredMethod(
+				"applyContentMetadata", ContentRequest.class, String.class);
+		applyContentMetadata.setAccessible(true);
+
+		ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
+		when(aiAnalysisService.generateContentMetadata(promptCaptor.capture()))
+				.thenReturn("{\"caption\":\"Yeni sektöre uygun caption\"}");
+
+		applyContentMetadata.invoke(service, req, "{\"mainProductOrService\":\"Kuaför hizmeti\"}");
+
+		assertEquals("Yeni sektöre uygun caption", req.getCaption());
+		assertTrue(promptCaptor.getValue().contains("Kuaför hizmeti"));
+	}
+
 	@Test
 	void hesapSecilmediyseDnaHicUretilmez() {
 		ContentRequest req = sampleRequest();
@@ -241,6 +303,14 @@ class ContentPipelineServiceTest {
 		ResultSet rs = mock(ResultSet.class);
 		when(rs.getString("caption")).thenReturn(caption);
 		when(rs.getString("analysis_json")).thenReturn(analysisJson);
+		return rs;
+	}
+
+	private ResultSet mockAccountInfoRow(String platform, String accountName, String profileUrl) throws SQLException {
+		ResultSet rs = mock(ResultSet.class);
+		when(rs.getString("platform")).thenReturn(platform);
+		when(rs.getString("account_name")).thenReturn(accountName);
+		when(rs.getString("profile_url")).thenReturn(profileUrl);
 		return rs;
 	}
 }

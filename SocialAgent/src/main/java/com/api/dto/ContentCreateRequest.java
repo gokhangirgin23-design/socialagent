@@ -17,6 +17,9 @@ public class ContentCreateRequest {
 
     private boolean includeTextInVisual;
 
+    // PREMIUM|NATURAL — opsiyonel; boş/geçersizse ContentRequestService.create PREMIUM'a düşer
+    private String visualStyle;
+
     // NOT: socialAccountId artık istekten alınmaz — kullanıcının bağlı hesabı (varsa) servis
     // katmanında userId'den otomatik bulunur (bkz. ContentRequestService.resolveOwnSocialAccountId).
 }

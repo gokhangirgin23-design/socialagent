@@ -1,5 +1,6 @@
 package com.api.ai;
 
+import com.api.entity.VisualStyle;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -91,11 +92,13 @@ public final class ContentPrompts {
      * @param editInstruction  kullanıcının düzenleme talimatı (null ise ilk üretim)
      * @param sectorContext    kullanıcının sektör/alt sektörü (null olabilir)
      * @param productContext   Gemini Vision'ın ürün görselinden çıkardığı JSON (productType, idealBackground, avoidBackground)
+     * @param visualStyle      PREMIUM (stüdyo kalitesi) veya NATURAL (samimi/UGC); null ise PREMIUM varsayılır
      */
     public static String forVisual(String brandDnaJson,
                                    String contentType, int slideIndex, String slideRole,
                                    boolean includeText, String editInstruction,
-                                   String sectorContext, String productContext) {
+                                   String sectorContext, String productContext,
+                                   VisualStyle visualStyle) {
         StringBuilder sb = new StringBuilder();
 
         // Düzenleme talimatı varsa en üste ve en güçlü biçimde yaz — AI bunu görmezden gelemez
@@ -129,6 +132,22 @@ public final class ContentPrompts {
             sb.append("Görselde SADECE bu sektöre uygun ürün, hizmet veya ortam göster.\n");
             sb.append("Başka sektörden ürün, yiyecek veya nesne ASLA yer almasın.\n");
             sb.append("=== SEKTÖR KISITI SONU ===\n\n");
+        }
+
+        // Görsel stil seçimi: kullanıcının "Premium Üret" / "Doğal Üret" seçimi (default PREMIUM)
+        if (visualStyle == VisualStyle.NATURAL) {
+            sb.append("=== GÖRSEL STİL: DOĞAL ===\n");
+            sb.append("Otantik, samimi, telefonla çekilmiş hissi veren gerçekçi bir görsel üret.\n");
+            sb.append("Aşırı retüş, yapay stüdyo ışığı ve \"stok fotoğraf\" estetiğinden KAÇIN.\n");
+            sb.append("Doğal gün ışığı, gerçek ortam, hafif kusurlu ama sıcak ve güvenilir bir hava olsun.\n");
+            sb.append("UGC (kullanıcı içeriği) tarzına yakın dursun.\n");
+            sb.append("=== STİL SONU ===\n\n");
+        } else {
+            sb.append("=== GÖRSEL STİL: PREMIUM ===\n");
+            sb.append("Yüksek prodüksiyon değerli, profesyonel stüdyo kalitesinde bir görsel üret.\n");
+            sb.append("Kusursuz ışıklandırma, sinematik kompozisyon, reklam kampanyası estetiği.\n");
+            sb.append("Ürün/mekan parlak, cilalı ve premium marka algısı verecek şekilde sunulsun.\n");
+            sb.append("=== STİL SONU ===\n\n");
         }
 
         // Ürün görseli analizi: Gemini Vision'ın belirlediği ürün tipi ve arka plan kısıtları
@@ -166,7 +185,9 @@ public final class ContentPrompts {
             }
 
             // GÖRSEL KİMLİK: DNA'dan görsel stil alanlarını çıkar (productContext olsa da olmasa da)
-            String visualStyle = extractJsonField(brandDnaJson, "visualStyle");
+            // NOT: parametre "visualStyle" (PREMIUM/NATURAL render modu) ile karışmasın diye
+            // DNA'nın kendi betimsel "visualStyle" alanı burada dnaVisualStyleText olarak tutulur.
+            String dnaVisualStyleText = extractJsonField(brandDnaJson, "visualStyle");
             String colorPalette = extractJsonField(brandDnaJson, "colorPalette");
             String typicalBackground = extractJsonField(brandDnaJson, "typicalBackground");
             String typicalAtmosphere = extractJsonField(brandDnaJson, "typicalAtmosphere");
@@ -179,10 +200,10 @@ public final class ContentPrompts {
                     && !signatureBackground.toLowerCase().contains("belirgin değil");
             boolean useSignatureBackground = hasSignatureBackground && Math.random() < 0.28;
 
-            if (visualStyle != null || colorPalette != null || typicalBackground != null
+            if (dnaVisualStyleText != null || colorPalette != null || typicalBackground != null
                     || typicalAtmosphere != null || useSignatureBackground) {
                 sb.append("=== GÖRSEL KİMLİK ===\n");
-                if (visualStyle != null) sb.append("Görsel stil: ").append(visualStyle).append("\n");
+                if (dnaVisualStyleText != null) sb.append("Görsel stil: ").append(dnaVisualStyleText).append("\n");
                 if (colorPalette != null) sb.append("Renk paleti: ").append(colorPalette).append("\n");
                 if (useSignatureBackground) {
                     sb.append("Arka plan (bu üretim için imza varyasyon kullanılacak): ")

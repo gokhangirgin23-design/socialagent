@@ -120,4 +120,11 @@ public class ContentRequest {
     // Bu içerik ücretsiz ilk kullanım hakkıyla mı oluşturuldu? (0/1)
     @Column(name = "is_free_usage", nullable = false)
     private short isFreeUsage = 0;
+
+    // ===== Görsel stil seçimi — V3 migration =====
+
+    // Premium (stüdyo kalitesi) veya Natural (samimi/UGC) görsel stili; default PREMIUM
+    @Enumerated(EnumType.STRING)
+    @Column(name = "visual_style", nullable = false, length = 16)
+    private VisualStyle visualStyle = VisualStyle.PREMIUM;
 }

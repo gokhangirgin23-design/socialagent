@@ -200,9 +200,14 @@ public class ContentPipelineService {
             return cached;
         }
 
-        List<AccountPostRow> posts = loadExistingAccountPosts(socialAccountId, ACCOUNT_DNA_POST_LIMIT);
+        // Güncel hesap adı: eski hesap adına ait postların yeni DNA üretimine sızmaması için
+        // loadExistingAccountPosts'a filtre olarak geçilir (bkz. o metodun yorumu).
+        OwnAccountInfo account = loadOwnAccountInfo(socialAccountId);
+        String currentAccountName = account != null ? account.accountName() : null;
+
+        List<AccountPostRow> posts = loadExistingAccountPosts(socialAccountId, currentAccountName, ACCOUNT_DNA_POST_LIMIT);
         if (posts.isEmpty()) {
-            posts = fetchFreshAccountPosts(socialAccountId, ACCOUNT_DNA_POST_LIMIT);
+            posts = fetchFreshAccountPosts(account, ACCOUNT_DNA_POST_LIMIT);
         }
         if (posts.isEmpty()) {
             log.info("Hesabın hiç gönderisi bulunamadı; DNA'sız devam ediliyor: socialAccountId={}", socialAccountId);
@@ -218,26 +223,50 @@ public class ContentPipelineService {
             return null;
         }
 
-        UserAccountDna row = new UserAccountDna();
-        row.setUserAccountDnaId(UUID.randomUUID());
-        row.setUserId(userId);
-        row.setSocialAccountId(socialAccountId);
-        row.setDnaJson(dna);
-        row.setSourcePostCount(posts.size());
-        row.setActive((short) 1);
+        saveOrReactivateAccountDna(userId, socialAccountId, dna, posts.size());
+        return dna;
+    }
+
+    /**
+     * Üretilen DNA'yı cache'e yazar. user_account_dna(user_id, social_account_id) UNIQUE
+     * olduğundan ve invalidateAccountDnaCache satırı SİLMEYİP yalnızca active=0 yaptığından
+     * (bkz. AccountDnaCacheService), burada düz INSERT yapılırsa pasif satırla çakışıp unique
+     * constraint ihlali oluşur — bu yüzden önce var olan satır (aktif/pasif fark etmez) aranır,
+     * varsa güncellenir (reaktive edilir), yoksa yeni satır eklenir.
+     */
+    private void saveOrReactivateAccountDna(UUID userId, UUID socialAccountId, String dna, int postCount) {
         LocalDateTime now = LocalDateTime.now();
-        row.setCreatedDate(now);
-        row.setUpdatedDate(now);
         try {
-            userAccountDnaRepository.save(row);
+            String existingIdSql = """
+                    SELECT user_account_dna_id FROM user_account_dna
+                    WHERE user_id = ? AND social_account_id = ?
+                    """;
+            List<UUID> existing = jdbcTemplate.queryForList(existingIdSql, UUID.class, userId, socialAccountId);
+            if (!existing.isEmpty()) {
+                jdbcTemplate.update("""
+                        UPDATE user_account_dna
+                        SET dna_json = ?, source_post_count = ?, active = 1, updated_date = ?
+                        WHERE user_account_dna_id = ?
+                        """, dna, postCount, now, existing.get(0));
+            } else {
+                UserAccountDna row = new UserAccountDna();
+                row.setUserAccountDnaId(UUID.randomUUID());
+                row.setUserId(userId);
+                row.setSocialAccountId(socialAccountId);
+                row.setDnaJson(dna);
+                row.setSourcePostCount(postCount);
+                row.setActive((short) 1);
+                row.setCreatedDate(now);
+                row.setUpdatedDate(now);
+                userAccountDnaRepository.save(row);
+            }
             log.info("Hesap DNA üretildi ve cache'lendi: userId={}, socialAccountId={}, postSayısı={}",
-                    userId, socialAccountId, posts.size());
+                    userId, socialAccountId, postCount);
         } catch (Exception ex) {
             // Cache'e yazım başarısız olsa bile bu üretimde DNA kullanılmaya devam eder;
             // yalnızca bir sonraki üretimde tekrar hesaplanır (maliyet, veri kaybı değil).
             log.warn("Hesap DNA cache'e yazılamadı: socialAccountId={}, hata={}", socialAccountId, ex.getMessage());
         }
-        return dna;
     }
 
     private String loadCachedAccountDna(UUID userId, UUID socialAccountId) {
@@ -258,8 +287,12 @@ public class ContentPipelineService {
      * Hesabın DB'de zaten scrape edilmiş son N "OWN" gönderisini (caption + varsa görsel analiz)
      * döner. Belirli bir rapora değil, kullanıcının geçmişteki herhangi bir rapor isteğinde bu
      * hesap seçiliyken çekilmiş postlara bakar (report_request.selected_user_social_account_id).
+     * rr.own_account_name = accountName filtresi, kullanıcı hesap adını değiştirdiğinde ESKİ
+     * hesap adına ait postların yeni DNA üretimine sızmasını engeller (own_account_name o raporun
+     * OLUŞTURULDUĞU ANDAKİ hesap adı snapshot'ıdır). accountName null ise (hesap bulunamadıysa)
+     * hiçbir satır eşleşmez — fetchFreshAccountPosts fallback'i zaten güncel hesaptan çeker.
      */
-    private List<AccountPostRow> loadExistingAccountPosts(UUID socialAccountId, int limit) {
+    private List<AccountPostRow> loadExistingAccountPosts(UUID socialAccountId, String accountName, int limit) {
         String sql = """
                 SELECT sp.caption, pa.analysis_json
                 FROM social_post sp
@@ -267,13 +300,14 @@ public class ContentPipelineService {
                 LEFT JOIN post_analysis pa ON pa.social_post_id = sp.social_post_id
                 WHERE rr.selected_user_social_account_id = ?
                   AND sp.source_type = 'OWN'
+                  AND rr.own_account_name = ?
                 ORDER BY sp.post_date DESC
                 LIMIT ?
                 """;
         try {
             return jdbcTemplate.query(sql, (rs, rowNum) ->
                     new AccountPostRow(rs.getString("caption"), rs.getString("analysis_json")),
-                    socialAccountId, limit);
+                    socialAccountId, accountName, limit);
         } catch (Exception ex) {
             log.warn("Hesabın mevcut gönderileri yüklenemedi: socialAccountId={}, hata={}", socialAccountId, ex.getMessage());
             return List.of();
@@ -300,8 +334,7 @@ public class ContentPipelineService {
      * kurulup rapor pipeline'ının kullandığı aynı AiAnalysisService.analyzeFull(...) ile hem metrik
      * hem görsel analiz üretilir; sonuç yalnızca bu DNA üretimi için bellekte kullanılır.
      */
-    private List<AccountPostRow> fetchFreshAccountPosts(UUID socialAccountId, int limit) {
-        OwnAccountInfo account = loadOwnAccountInfo(socialAccountId);
+    private List<AccountPostRow> fetchFreshAccountPosts(OwnAccountInfo account, int limit) {
         if (account == null || account.profileUrl() == null || account.profileUrl().isBlank()) {
             return List.of();
         }
@@ -466,7 +499,7 @@ public class ContentPipelineService {
             String[] roles = {"HOOK", "CONTENT", "CTA"};
             for (int i = 0; i < roles.length; i++) {
                 String prompt = ContentPrompts.forVisual(brandDna, "CAROUSEL", i, roles[i],
-                        req.isIncludeTextInVisual(), editInstruction, sectorContext, productContext);
+                        req.isIncludeTextInVisual(), editInstruction, sectorContext, productContext, req.getVisualStyle());
                 String referenceImage = editReferenceFor(previousVisualUrls, i, productImageData);
                 String url = generateAndUpload(req, prompt, i, referenceImage);
                 if (url != null) urls.add(url);
@@ -479,7 +512,7 @@ public class ContentPipelineService {
             return new VisualResult(urls, 1);
         } else {
             String prompt = ContentPrompts.forVisual(brandDna, type.name(), 0, null,
-                    req.isIncludeTextInVisual(), editInstruction, sectorContext, productContext);
+                    req.isIncludeTextInVisual(), editInstruction, sectorContext, productContext, req.getVisualStyle());
             String referenceImage = editReferenceFor(previousVisualUrls, 0, productImageData);
             String url = generateAndUpload(req, prompt, 0, referenceImage);
             if (url != null) urls.add(url);
@@ -523,7 +556,7 @@ public class ContentPipelineService {
         if (videoBytes == null) {
             if (!veoVideoService.isActive()) {
                 log.info("Veo pasif; REEL için Gemini görsel fallback: contentRequestId={}", req.getContentRequestId());
-                String imagePrompt = ContentPrompts.forVisual(null, "REEL", 0, null, false, editInstruction, null, null);
+                String imagePrompt = ContentPrompts.forVisual(null, "REEL", 0, null, false, editInstruction, null, null, req.getVisualStyle());
                 return generateAndUpload(req, imagePrompt, 0, null);
             }
             log.warn("Veo video üretilemedi: contentRequestId={}", req.getContentRequestId());

@@ -24,6 +24,7 @@ import com.api.dto.repository.ContentRequestRepository;
 import com.api.entity.ContentRequest;
 import com.api.entity.ContentRequestStatus;
 import com.api.entity.ContentType;
+import com.api.entity.VisualStyle;
 import com.api.messaging.ContentQueueProducer;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -155,6 +156,7 @@ public class ContentRequestService {
         // base64 data URL ise S3'e yükle; DB'de sadece S3 URL saklansın (base64 asla yazılmaz)
         entity.setProductImageUrl(uploadProductImageIfPresent(request.getProductImageUrl(), userId, entity.getContentRequestId()));
         entity.setIncludeTextInVisual(request.isIncludeTextInVisual());
+        entity.setVisualStyle(parseVisualStyle(request.getVisualStyle()));
         entity.setStatus(ContentRequestStatus.PENDING);
         entity.setEditCount(0);
         entity.setAttemptCount(0);
@@ -289,6 +291,18 @@ public class ContentRequestService {
         } catch (IllegalArgumentException ex) {
             throw new ApiException(ResponseCode.VALIDATION_ERROR,
                     "Geçersiz contentType. Kabul edilenler: POST, STORY, CAROUSEL, REEL");
+        }
+    }
+
+    /** Geçersiz/boş visualStyle geriye uyumluluk için hataya düşmeden PREMIUM'a düşer. */
+    private VisualStyle parseVisualStyle(String value) {
+        if (value == null || value.isBlank()) {
+            return VisualStyle.PREMIUM;
+        }
+        try {
+            return VisualStyle.valueOf(value.toUpperCase());
+        } catch (IllegalArgumentException ex) {
+            return VisualStyle.PREMIUM;
         }
     }
 
