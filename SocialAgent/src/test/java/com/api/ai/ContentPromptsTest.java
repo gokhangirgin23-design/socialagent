@@ -22,7 +22,7 @@ class ContentPromptsTest {
                  "humanPresence":"Fotoğraflarda gerçek insan/model bulunmalı — avukat-müvekkil görüşmesi sahneleri gösterilmeli."}
                 """;
 
-        String prompt = ContentPrompts.forVisual(brandDna, "# Rapor", "POST", 0, null,
+        String prompt = ContentPrompts.forVisual(brandDna, "POST", 0, null,
                 false, null, null, null);
 
         assertTrue(prompt.contains("İNSAN/MODEL KULLANIMI"));
@@ -35,7 +35,7 @@ class ContentPromptsTest {
                 {"mainProductOrService":"Hukuk danışmanlığı"}
                 """;
 
-        String prompt = ContentPrompts.forVisual(brandDna, "# Rapor", "POST", 0, null,
+        String prompt = ContentPrompts.forVisual(brandDna, "POST", 0, null,
                 false, null, null, null);
 
         assertTrue(!prompt.contains("İNSAN/MODEL KULLANIMI"));
@@ -43,14 +43,14 @@ class ContentPromptsTest {
 
     @Test
     void brandDnaPromptuHumanPresenceAlaniniIster() {
-        String prompt = ContentPrompts.forBrandDna(null, "# Rapor", null, null);
+        String prompt = ContentPrompts.forBrandDna(null, null, null);
 
         assertTrue(prompt.contains("humanPresence"));
     }
 
     @Test
     void brandDnaPromptuSignatureBackgroundAlaniniIster() {
-        String prompt = ContentPrompts.forBrandDna(null, "# Rapor", null, null);
+        String prompt = ContentPrompts.forBrandDna(null, null, null);
 
         assertTrue(prompt.contains("signatureBackground"));
     }
@@ -69,7 +69,7 @@ class ContentPromptsTest {
                  }}
                 """;
 
-        String prompt = ContentPrompts.forVisual(brandDna, "# Rapor", "POST", 0, null,
+        String prompt = ContentPrompts.forVisual(brandDna, "POST", 0, null,
                 false, null, null, null);
 
         assertTrue(prompt.contains("lighting: doğal ışık"),
@@ -85,7 +85,7 @@ class ContentPromptsTest {
                 """;
 
         for (int i = 0; i < 30; i++) {
-            String prompt = ContentPrompts.forVisual(brandDna, "# Rapor", "POST", 0, null,
+            String prompt = ContentPrompts.forVisual(brandDna, "POST", 0, null,
                     false, null, null, null);
             assertTrue(!prompt.contains("imza varyasyon"));
             assertTrue(prompt.contains("Tipik arka plan: iç mekan"));
@@ -102,7 +102,7 @@ class ContentPromptsTest {
 
         boolean sawSignature = false;
         for (int i = 0; i < 50 && !sawSignature; i++) {
-            String prompt = ContentPrompts.forVisual(brandDna, "# Rapor", "POST", 0, null,
+            String prompt = ContentPrompts.forVisual(brandDna, "POST", 0, null,
                     false, null, null, null);
             if (prompt.contains("imza varyasyon") && prompt.contains("Boğaz manzaralı teras")) {
                 sawSignature = true;

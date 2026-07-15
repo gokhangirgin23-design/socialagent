@@ -16,16 +16,15 @@ public final class ContentPrompts {
 
     /**
      * Brand DNA üretimi için OpenAI prompt'u.
-     * Son N posttaki metrikleri + rapor içeriğini + görsel analiz verilerini alır;
-     * markanın kişiliğini ve görsel kimliğini JSON olarak çıkarır.
+     * Son N posttaki caption'ları + görsel analiz verilerini alır; markanın kişiliğini ve
+     * görsel kimliğini JSON olarak çıkarır. Rapor içeriğiyle hiçbir bağı yok — içerik üretimi
+     * rapordan bağımsızdır (DNA yalnızca hesabın kendi post'larından çıkarılır).
      *
-     * @param postsContext   son 10 postun caption özeti
-     * @param reportContent  rapor Markdown içeriği
+     * @param postsContext   son postların caption özeti
      * @param visualPatterns görsel analizden çıkarılan ürün/stil özeti (null olabilir)
      * @param sectorContext  kullanıcının güncel sektör/alt-sektör adı — mainProductOrService için sert kısıt
      */
-    public static String forBrandDna(String postsContext, String reportContent,
-                                     String visualPatterns, String sectorContext) {
+    public static String forBrandDna(String postsContext, String visualPatterns, String sectorContext) {
         // Sektör bilgisi varsa en başa mutlak kısıt olarak yaz
         String sectorBlock = (sectorContext != null && !sectorContext.isBlank())
                 ? "!!! MUTLAK KISIT — SEKTÖR BİLGİSİ !!!\n"
@@ -42,11 +41,8 @@ public final class ContentPrompts {
                   + "[RAKİP]/[SEKTÖR] etiketliler yalnızca sektör bağlamı ve ilham içindir, markanın kimliği olarak KOPYALANMAZ.\n\n"
                 : "";
         return """
-                %s%s%sBu analiz raporunu incele:
-
-                %s
-
-                Yukarıdaki tüm verilerden yola çıkarak bu markanın Brand DNA'sını çıkar ve JSON formatında üret.
+                %s%s%sYukarıdaki post caption'ları ve görsel analiz verilerinden yola çıkarak bu markanın
+                Brand DNA'sını çıkar ve JSON formatında üret.
 
                 Aşağıdaki alanları oluştur:
                 - mainProductOrService: Markanın SATIŞ YAPTIĞI ANA ürün veya hizmet (spesifik olmalı; ör: "Adana kebap, döner ve ızgara yemekleri" veya "kadın spor ayakkabısı"). Sektör kısıtına uygun olmalı. Bu alan görsel üretimde kritik öneme sahiptir.
@@ -64,24 +60,21 @@ public final class ContentPrompts {
                 - compositionRules: Kompozisyon kuralları (close-up mu, flat-lay mi, lifestyle mı?)
                 - propsAndDecorStyle: Sıkça kullanılan aksesuar/dekor (ör: tahta kesme tahtası, çiçek, kumaş)
                 - designRules: Tasarım kuralları
-                - humanPresence: Analiz raporundaki "Başarı Faktörleri" / "Rakiplerden Öğren" gibi bölümlerde
-                  insan veya model kullanımının etkileşimi artırdığına dair bir bulgu VARSA, bunu somut bir görsel
-                  talimatına çevir (ör: "Fotoğraflarda gerçek insan/model bulunmalı — avukat-müvekkil görüşmesi
-                  sahneleri, samimi ve profesyonel bir etkileşim gösterilmeli"). Rapor bu konuda bir şey söylemiyorsa
-                  veya sektör gereği (ör. mahremiyet, marka tercihi) insansız kompozisyon daha uygunsa "insan
+                - humanPresence: Görsel analiz verilerinde insan veya model kullanımının öne çıktığına dair
+                  bir sinyal VARSA, bunu somut bir görsel talimatına çevir (ör: "Fotoğraflarda gerçek insan/model
+                  bulunmalı — samimi ve profesyonel bir etkileşim gösterilmeli"). Böyle bir sinyal yoksa veya
+                  sektör gereği (ör. mahremiyet, marka tercihi) insansız kompozisyon daha uygunsa "insan
                   kullanılmayacak, sadece ürün/ortam odaklı çekim" yaz. Bu alan ASLA boş bırakılmaz.
                 - preferredContentTypes: Tercih edilen içerik türleri
                 - avoid: Kesinlikle KAÇINILMASI GEREKENLER — yanlış ürün, yanlış renk, yanlış ortam gibi
                 - improvementGoals: Gelişim hedefleri
 
                 ÖNEMLI: mainProductOrService, visualStyle, humanPresence ve signatureBackground alanları görsel
-                üretim için kullanılacak; mümkün olduğunca spesifik ve detaylı doldur. humanPresence'ı doldururken
-                özellikle rapordaki "Başarı Faktörleri" ve "Rakiplerden Öğren" bölümlerini dikkatle tara — bu
-                bölümler genelde raporun sonunda yer alır, atlama. signatureBackground'ı doldururken [KENDİ]
-                etiketli post analizlerindeki azınlık ama tekrarlı/belirgin arka plan varyasyonlarına dikkat et.
-                Eksik bilgi varsa analiz raporundan ve görsel verilerden çıkarım yap.
+                üretim için kullanılacak; mümkün olduğunca spesifik ve detaylı doldur. signatureBackground'ı
+                doldururken [KENDİ] etiketli post analizlerindeki azınlık ama tekrarlı/belirgin arka plan
+                varyasyonlarına dikkat et. Eksik bilgi varsa post caption'larından ve görsel verilerden çıkarım yap.
                 JSON dışında açıklama yazma.
-                """.formatted(sectorBlock, posts, visuals, reportContent);
+                """.formatted(sectorBlock, posts, visuals);
     }
 
     /**
@@ -91,7 +84,6 @@ public final class ContentPrompts {
      * sectorContext varsa sektör kısıtı brand DNA'dan önce en güçlü biçimde enjekte edilir.
      *
      * @param brandDnaJson     Brand DNA JSON (null ise markalamadan bağımsız üretilir)
-     * @param reportContent    rapor içeriği (gelişim önerileri alınır)
      * @param contentType      POST|STORY|CAROUSEL|REEL
      * @param slideIndex       carousel için slayt numarası (0 = tek görsel)
      * @param slideRole        carousel için slayt rolü (HOOK|CONTENT|CTA)
@@ -100,7 +92,7 @@ public final class ContentPrompts {
      * @param sectorContext    kullanıcının sektör/alt sektörü (null olabilir)
      * @param productContext   Gemini Vision'ın ürün görselinden çıkardığı JSON (productType, idealBackground, avoidBackground)
      */
-    public static String forVisual(String brandDnaJson, String reportContent,
+    public static String forVisual(String brandDnaJson,
                                    String contentType, int slideIndex, String slideRole,
                                    boolean includeText, String editInstruction,
                                    String sectorContext, String productContext) {
@@ -212,17 +204,6 @@ public final class ContentPrompts {
             }
         }
 
-        if (reportContent != null && !reportContent.isBlank()) {
-            // Raporun asıl aksiyon önerileri ("Başarı Faktörleri", "İçerik Önerileri" gibi bölümler)
-            // genelde özet/karşılaştırma tablosundan SONRA gelir; eski 1000 karakterlik sınır bu
-            // bölümlere hiç ulaşmadan raporu kesiyordu (ör. "insan/model kullanımı" tavsiyesi görsel
-            // üretim prompt'una hiç girmiyordu). 3000 karakter çoğu raporun tamamını kapsar.
-            String reportSnippet = reportContent.length() > 3000
-                    ? reportContent.substring(0, 3000) + "..."
-                    : reportContent;
-            sb.append("Gelişim raporundan uygulanacak öneriler:\n").append(reportSnippet).append("\n\n");
-        }
-
         // Format bazlı talimat
         String formatLabel = switch (contentType.toUpperCase()) {
             case "STORY" -> "Instagram Story (9:16 dikey format)";
@@ -311,12 +292,11 @@ public final class ContentPrompts {
      * sectorContext varsa sektör kısıtı brand DNA'dan önce enjekte edilir.
      *
      * @param brandDnaJson    Brand DNA JSON (null olabilir)
-     * @param reportContent   rapor içeriği (gelişim önerileri alınır)
      * @param editInstruction kullanıcının düzenleme talimatı (null ise ilk üretim)
      * @param sectorContext   kullanıcının sektör/alt sektörü (null olabilir)
      * @param productContext  Gemini Vision'ın ürün görselinden çıkardığı JSON (null olabilir)
      */
-    public static String forVideo(String brandDnaJson, String reportContent,
+    public static String forVideo(String brandDnaJson,
                                   String editInstruction, String sectorContext, String productContext) {
         StringBuilder sb = new StringBuilder();
 
@@ -373,14 +353,6 @@ public final class ContentPrompts {
             }
         }
 
-        if (reportContent != null && !reportContent.isBlank()) {
-            // bkz. forVisual() — aynı sebeple sınır yükseltildi (aksiyon önerileri raporun sonunda)
-            String snippet = reportContent.length() > 3000
-                    ? reportContent.substring(0, 3000) + "..."
-                    : reportContent;
-            sb.append("Gelişim raporundaki önerileri uygula. Rapor özeti:\n").append(snippet).append("\n\n");
-        }
-
         sb.append("Instagram Reel için 9:16 dikey formatta, maksimum 30 saniyelik kısa bir ürün tanıtım videosu oluştur.\n");
         sb.append("Video akıcı, dinamik ve estetik olmalı; modern geçiş efektleri kullanılabilir.\n");
         sb.append("Ürünü veya marka kimliğini görsel olarak güçlü biçimde vurgula.\n");
@@ -397,18 +369,14 @@ public final class ContentPrompts {
      * JSON çıktı döner.
      *
      * @param brandDnaJson Brand DNA JSON (null olabilir)
-     * @param reportSnippet rapor özeti
      * @param contentType içerik tipi
      */
-    public static String forContentMetadata(String brandDnaJson, String reportSnippet, String contentType) {
+    public static String forContentMetadata(String brandDnaJson, String contentType) {
         String dnaSection = (brandDnaJson != null && !brandDnaJson.isBlank())
                 ? "Markanın Brand DNA'sı:\n" + brandDnaJson + "\n\n"
                 : "";
         return """
-                %sGelişim raporu özeti:
-                %s
-
-                Instagram %s içeriği için aşağıdaki alanları JSON formatında üret:
+                %sInstagram %s içeriği için aşağıdaki alanları JSON formatında üret:
                 - caption: Dikkat çekici, marka kimliğine uygun Instagram caption (max 2200 karakter)
                 - hashtags: en fazla 5 ilgili hashtag (#ile birlikte, boşlukla ayrılmış)
                 - cta: Etkili bir call-to-action metni
@@ -416,6 +384,6 @@ public final class ContentPrompts {
                 - suggestedPostTime: Önerilen paylaşım günü ve saati (ör. "Salı 09:00-11:00")
 
                 JSON dışında açıklama yazma.
-                """.formatted(dnaSection, reportSnippet, contentType);
+                """.formatted(dnaSection, contentType);
     }
 }

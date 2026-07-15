@@ -2,10 +2,7 @@ package com.api.service;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -16,12 +13,17 @@ import com.api.ai.ContentPrompts;
 import com.api.ai.GeminiImageService;
 import com.api.ai.OpenAiImageService;
 import com.api.ai.VeoVideoService;
+import com.api.apify.ApifyClient;
+import com.api.apify.ApifyPost;
 import com.api.config.AppProperties;
 import com.api.config.CreditCatalog;
 import com.api.dto.repository.ContentRequestRepository;
+import com.api.dto.repository.UserAccountDnaRepository;
 import com.api.entity.ContentRequest;
 import com.api.entity.ContentRequestStatus;
 import com.api.entity.ContentType;
+import com.api.entity.SocialPost;
+import com.api.entity.UserAccountDna;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -33,13 +35,16 @@ import lombok.extern.slf4j.Slf4j;
  * ContentWorker bu servisi çağırır; @Transactional DEĞİL (dış API çağrıları uzun sürebilir).
  * Status güncellemeleri bağımsız auto-commit'tir (ScrapePipelineService ile aynı felsefe).
  *
+ * İçerik üretimi RAPORDAN TAMAMEN BAĞIMSIZDIR (bkz. ICERIK-RAPOR-AYRISTIRMA-SPEC.md) — rapor
+ * içeriği hiçbir prompt'a enjekte edilmez. Brand DNA rapora değil kullanıcının bağlı sosyal
+ * hesabına bağlıdır (user_account_dna, bkz. resolveAccountDna).
+ *
  * Akış:
  *   1) content_request yükle → PROCESSING
- *   2) Rapor içeriğini yükle (report.report_content)
- *   3) Brand DNA üret / önbellekten al (OpenAI)
- *   4) Görsel üret (Gemini Image) → S3'e yükle
- *   5) Caption + hashtag + CTA üret (OpenAI)
- *   6) Kaydet → COMPLETED veya FAILED
+ *   2) socialAccountId doluysa Brand DNA üret / önbellekten al (OpenAI) — boşsa DNA'sız devam
+ *   3) Görsel üret (Gemini Image) → S3'e yükle
+ *   4) Caption + hashtag + CTA üret (OpenAI)
+ *   5) Kaydet → COMPLETED veya FAILED
  */
 @Slf4j
 @Service
@@ -47,6 +52,7 @@ import lombok.extern.slf4j.Slf4j;
 public class ContentPipelineService {
 
     private final ContentRequestRepository contentRequestRepository;
+    private final UserAccountDnaRepository userAccountDnaRepository;
     private final JdbcTemplate jdbcTemplate;
     private final AiAnalysisService aiAnalysisService;
     private final OpenAiImageService openAiImageService;
@@ -55,6 +61,7 @@ public class ContentPipelineService {
     private final S3UploadService s3UploadService;
     private final PaymentService paymentService;
     private final AppProperties appProperties;
+    private final ApifyClient apifyClient;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -71,35 +78,20 @@ public class ContentPipelineService {
         markProcessing(req);
 
         try {
-            String reportContent = loadReportContent(req.getReportId());
-            if (reportContent == null || reportContent.isBlank()) {
-                log.warn("Rapor içeriği bulunamadı: reportId={}", req.getReportId());
-                markFinished(req, ContentRequestStatus.FAILED, "Rapor içeriği bulunamadı");
-                return;
-            }
-
             // Kullanıcının güncel sektör/alt sektörünü DB'den çek (görsel üretimde sert kısıt)
             String sectorContext = loadUserSectorContext(req.getUserId());
             log.info("Sektör bağlamı yüklendi: contentRequestId={}, sektör={}", contentRequestId, sectorContext);
-            // SORUN 1, madde 1.3 — SectorRelevanceFilter'ın subsector-aware overload'ı için
-            String subsectorName = loadUserSubsectorName(req.getUserId());
 
-            // Brand DNA: kendi önbelleğinde varsa kullan; yoksa aynı rapora ait başka bir
-            // content_request'in DNA'sını ara (aynı raporun DNA'sı değişmez — yeniden üretim
-            // gereksiz maliyet); o da yoksa üret.
+            // Brand DNA: içerik üretimi rapordan tamamen bağımsızdır (bkz. sınıf yorumu).
+            // socialAccountId doluysa hesap bazlı DNA cache'i kullanılır/üretilir (bkz. resolveAccountDna);
+            // boşsa DNA hiç üretilmez, prompt'lara DNA ile ilgili hiçbir şey eklenmez.
+            // Aynı content_request için (edit akışında yeniden işleme) DNA zaten üretildiyse tekrar üretilmez.
             String brandDna = req.getBrandDnaJson();
-            if (brandDna == null || brandDna.isBlank()) {
-                brandDna = loadCachedBrandDna(req.getReportId());
+            if ((brandDna == null || brandDna.isBlank()) && req.getSocialAccountId() != null) {
+                brandDna = resolveAccountDna(req.getUserId(), req.getSocialAccountId(), sectorContext);
                 if (brandDna != null) {
-                    log.info("Rapor bazlı Brand DNA cache'ten kullanıldı (AI çağrısı atlandı): reportId={}", req.getReportId());
                     req.setBrandDnaJson(brandDna);
                     saveQuiet(req);
-                } else {
-                    brandDna = generateBrandDna(req, reportContent, sectorContext, subsectorName);
-                    if (brandDna != null) {
-                        req.setBrandDnaJson(brandDna);
-                        saveQuiet(req);
-                    }
                 }
             }
 
@@ -127,7 +119,7 @@ public class ContentPipelineService {
                     : List.of();
 
             // Görsel üretim + S3 yükleme (productImageData ile — S3 URL değil)
-            VisualResult visual = generateAndUploadVisuals(req, brandDna, reportContent, sectorContext, productContext, productImageData, previousVisualUrls);
+            VisualResult visual = generateAndUploadVisuals(req, brandDna, sectorContext, productContext, productImageData, previousVisualUrls);
 
             // Ürün görseli kullanıldı; DB'den temizle
             if (req.getProductImageUrl() != null) {
@@ -149,7 +141,7 @@ public class ContentPipelineService {
             req.setVisualUrls(toJsonArray(visual.urls()));
 
             // Caption + hashtag + CTA
-            applyContentMetadata(req, brandDna, reportContent);
+            applyContentMetadata(req, brandDna);
 
             markFinished(req, ContentRequestStatus.COMPLETED, null);
             log.info("İçerik üretimi tamamlandı: contentRequestId={}", contentRequestId);
@@ -179,44 +171,217 @@ public class ContentPipelineService {
     // Brand DNA
     // ============================================================
 
-    private String generateBrandDna(ContentRequest req, String reportContent, String sectorContext, String subsectorName) {
-        // Kullanıcının kendi hesabına ait son 10 post caption'ını al
-        String postsContext = loadOwnPostsCaptions(req.getReportId());
-        // Görsel analiz verilerini al (ürün kategorisi, atmosfer, renkler, çekim stili)
-        String visualPatterns = loadVisualPatterns(req.getReportId(), subsectorName);
-        String prompt = ContentPrompts.forBrandDna(postsContext, reportContent, visualPatterns, sectorContext);
+    // Spec (ICERIK-RAPOR-AYRISTIRMA-SPEC.md §2.3): hesap DNA'sı yalnızca son 5 gönderiden çıkarılır
+    private static final int ACCOUNT_DNA_POST_LIMIT = 5;
+
+    // Hesap post satırı: caption + varsa (DB'den veya taze hesaplanmış) görsel/metrik analiz JSON'u
+    private record AccountPostRow(String caption, String analysisJson) {
+    }
+
+    // user_social_account'tan okunan, Apify çağrısı için gereken minimum hesap bilgisi
+    private record OwnAccountInfo(String platform, String accountName, String profileUrl) {
+    }
+
+    /**
+     * Hesap bazlı Brand DNA cache akışı (spec §2.3).
+     * 1) user_account_dna'da (userId, socialAccountId) kaydı varsa direkt döner — başka hiçbir
+     *    şey çalıştırılmaz (ne DB post sorgusu ne Apify ne AI çağrısı).
+     * 2) Yoksa: DB'de zaten scrape edilmiş son 5 OWN gönderi kullanılır; hiç yoksa Apify'dan taze
+     *    çekilir (bu taze gönderiler social_post'a YAZILMAZ — yalnızca DNA üretimi için bellekte
+     *    kullanılır, bkz. fetchFreshAccountPosts).
+     * 3) Hiç gönderi bulunamazsa DNA'sız devam edilir, cache kaydı açılmaz.
+     * 4) Bulunan gönderilerden DNA üretilip user_account_dna'ya kalıcı olarak cache'lenir.
+     */
+    private String resolveAccountDna(UUID userId, UUID socialAccountId, String sectorContext) {
+        String cached = loadCachedAccountDna(userId, socialAccountId);
+        if (cached != null) {
+            log.info("Hesap DNA cache'ten kullanıldı (AI çağrısı atlandı): userId={}, socialAccountId={}",
+                    userId, socialAccountId);
+            return cached;
+        }
+
+        List<AccountPostRow> posts = loadExistingAccountPosts(socialAccountId, ACCOUNT_DNA_POST_LIMIT);
+        if (posts.isEmpty()) {
+            posts = fetchFreshAccountPosts(socialAccountId, ACCOUNT_DNA_POST_LIMIT);
+        }
+        if (posts.isEmpty()) {
+            log.info("Hesabın hiç gönderisi bulunamadı; DNA'sız devam ediliyor: socialAccountId={}", socialAccountId);
+            return null;
+        }
+
+        String postsContext = buildPostsContext(posts);
+        String visualPatterns = buildVisualPatterns(posts);
+        String prompt = ContentPrompts.forBrandDna(postsContext, visualPatterns, sectorContext);
         String dna = aiAnalysisService.generateBrandDna(prompt);
-        if (dna != null) {
-            log.info("Brand DNA üretildi: contentRequestId={}", req.getContentRequestId());
-        } else {
-            log.info("Brand DNA üretilemedi (AI kapalı veya hata); atlanıyor: contentRequestId={}",
-                    req.getContentRequestId());
+        if (dna == null) {
+            log.info("Hesap DNA üretilemedi (AI kapalı veya hata); atlanıyor: socialAccountId={}", socialAccountId);
+            return null;
+        }
+
+        UserAccountDna row = new UserAccountDna();
+        row.setUserAccountDnaId(UUID.randomUUID());
+        row.setUserId(userId);
+        row.setSocialAccountId(socialAccountId);
+        row.setDnaJson(dna);
+        row.setSourcePostCount(posts.size());
+        row.setActive((short) 1);
+        LocalDateTime now = LocalDateTime.now();
+        row.setCreatedDate(now);
+        row.setUpdatedDate(now);
+        try {
+            userAccountDnaRepository.save(row);
+            log.info("Hesap DNA üretildi ve cache'lendi: userId={}, socialAccountId={}, postSayısı={}",
+                    userId, socialAccountId, posts.size());
+        } catch (Exception ex) {
+            // Cache'e yazım başarısız olsa bile bu üretimde DNA kullanılmaya devam eder;
+            // yalnızca bir sonraki üretimde tekrar hesaplanır (maliyet, veri kaybı değil).
+            log.warn("Hesap DNA cache'e yazılamadı: socialAccountId={}, hata={}", socialAccountId, ex.getMessage());
         }
         return dna;
     }
 
-    /**
-     * Aynı rapora ait, daha önce üretilmiş Brand DNA'yı arar (rapor bazlı yeniden kullanım — maliyet).
-     * Aynı rapordan açılan farklı içerik istekleri (POST/STORY/CAROUSEL vb.) DNA'yı paylaşabilir;
-     * bulunursa AI çağrısı hiç yapılmaz.
-     */
-    private String loadCachedBrandDna(UUID reportId) {
+    private String loadCachedAccountDna(UUID userId, UUID socialAccountId) {
         String sql = """
-                SELECT cr.brand_dna_json
-                FROM content_request cr
-                WHERE cr.report_id = ?
-                  AND cr.brand_dna_json IS NOT NULL
-                  AND cr.active = 1
-                ORDER BY cr.created_date DESC
-                LIMIT 1
+                SELECT dna_json FROM user_account_dna
+                WHERE user_id = ? AND social_account_id = ? AND active = 1
                 """;
         try {
-            List<String> rows = jdbcTemplate.queryForList(sql, String.class, reportId);
+            List<String> rows = jdbcTemplate.queryForList(sql, String.class, userId, socialAccountId);
             return rows.isEmpty() ? null : rows.get(0);
         } catch (Exception ex) {
-            log.warn("Rapor bazlı Brand DNA cache sorgusu başarısız: reportId={}, hata={}", reportId, ex.getMessage());
+            log.warn("Hesap DNA cache sorgusu başarısız: socialAccountId={}, hata={}", socialAccountId, ex.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Hesabın DB'de zaten scrape edilmiş son N "OWN" gönderisini (caption + varsa görsel analiz)
+     * döner. Belirli bir rapora değil, kullanıcının geçmişteki herhangi bir rapor isteğinde bu
+     * hesap seçiliyken çekilmiş postlara bakar (report_request.selected_user_social_account_id).
+     */
+    private List<AccountPostRow> loadExistingAccountPosts(UUID socialAccountId, int limit) {
+        String sql = """
+                SELECT sp.caption, pa.analysis_json
+                FROM social_post sp
+                JOIN report_request rr ON rr.request_id = sp.request_id
+                LEFT JOIN post_analysis pa ON pa.social_post_id = sp.social_post_id
+                WHERE rr.selected_user_social_account_id = ?
+                  AND sp.source_type = 'OWN'
+                ORDER BY sp.post_date DESC
+                LIMIT ?
+                """;
+        try {
+            return jdbcTemplate.query(sql, (rs, rowNum) ->
+                    new AccountPostRow(rs.getString("caption"), rs.getString("analysis_json")),
+                    socialAccountId, limit);
+        } catch (Exception ex) {
+            log.warn("Hesabın mevcut gönderileri yüklenemedi: socialAccountId={}, hata={}", socialAccountId, ex.getMessage());
+            return List.of();
+        }
+    }
+
+    private OwnAccountInfo loadOwnAccountInfo(UUID socialAccountId) {
+        String sql = """
+                SELECT platform, account_name, profile_url
+                FROM user_social_account
+                WHERE user_social_account_id = ? AND active = 1
+                """;
+        List<OwnAccountInfo> rows = jdbcTemplate.query(sql, (rs, rowNum) ->
+                new OwnAccountInfo(rs.getString("platform"), rs.getString("account_name"), rs.getString("profile_url")),
+                socialAccountId);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    /**
+     * DB'de hiç gönderisi bulunamayan hesap için Apify'dan taze son N gönderi çeker. Rapor
+     * pipeline'ının aksine bu gönderiler social_post'a YAZILMAZ (spec kapsam dışı — yeni bir
+     * persistence akışı eklemek; social_post.request_id NOT NULL olduğundan rapor'suz satır açmak
+     * şema değişikliği gerektirir). Bunun yerine geçici (persist edilmeyen) SocialPost nesneleri
+     * kurulup rapor pipeline'ının kullandığı aynı AiAnalysisService.analyzeFull(...) ile hem metrik
+     * hem görsel analiz üretilir; sonuç yalnızca bu DNA üretimi için bellekte kullanılır.
+     */
+    private List<AccountPostRow> fetchFreshAccountPosts(UUID socialAccountId, int limit) {
+        OwnAccountInfo account = loadOwnAccountInfo(socialAccountId);
+        if (account == null || account.profileUrl() == null || account.profileUrl().isBlank()) {
+            return List.of();
+        }
+        List<ApifyPost> fetched = apifyClient.fetchPostsByUrls(List.of(account.profileUrl()), limit);
+        List<AccountPostRow> rows = new ArrayList<>();
+        for (ApifyPost post : fetched) {
+            if (rows.size() >= limit) break;
+            SocialPost transientPost = new SocialPost();
+            transientPost.setCaption(post.caption());
+            transientPost.setMediaUrl(post.mediaUrl());
+            transientPost.setMediaType(post.mediaType());
+            transientPost.setResultJson(post.rawJson());
+            String analysisJson = aiAnalysisService.analyzeFull(transientPost);
+            rows.add(new AccountPostRow(post.caption(), analysisJson));
+        }
+        return rows;
+    }
+
+    // Post caption'larını "Post 1: ..." formatında birleştirir
+    private String buildPostsContext(List<AccountPostRow> posts) {
+        List<String> captions = posts.stream()
+                .map(AccountPostRow::caption)
+                .filter(c -> c != null && !c.isBlank())
+                .toList();
+        if (captions.isEmpty()) return null;
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < captions.size(); i++) {
+            sb.append("Post ").append(i + 1).append(": ").append(captions.get(i)).append("\n");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Görsel analiz JSON'larından (analyzeFull -> "visual" alanı) ürün kategorisi, atmosfer,
+     * renk ve çekim stili özetini çeker. Bu akışta tüm postlar kullanıcının kendi hesabına ait
+     * olduğundan (OWN) her satır [KENDİ] etiketiyle işaretlenir.
+     */
+    private String buildVisualPatterns(List<AccountPostRow> posts) {
+        StringBuilder sb = new StringBuilder();
+        int count = 0;
+        for (AccountPostRow row : posts) {
+            if (row.analysisJson() == null || row.analysisJson().isBlank()) continue;
+            try {
+                JsonNode visual = objectMapper.readTree(row.analysisJson()).path("visual");
+                if (visual.isMissingNode() || visual.isNull()) continue;
+
+                String specificProduct = textField(visual, "specificProduct");
+                String productCategory = textField(visual, "productCategory");
+                String atmosphere = textField(visual, "atmosphere");
+                String shootingStyle = textField(visual, "shootingStyle");
+                String lightingStyle = textField(visual, "lightingStyle");
+                String backgroundType = textField(visual, "backgroundType");
+                String composition = textField(visual, "composition");
+                String colorPalette = arrayField(visual, "colorPalette");
+                String propsAndDecor = arrayField(visual, "propsAndDecor");
+                String visualThemes = arrayField(visual, "visualThemes");
+                String sceneDescription = textField(visual, "sceneDescription");
+
+                // En az bir değer varsa ekle
+                if (productCategory == null && specificProduct == null && atmosphere == null) continue;
+
+                count++;
+                sb.append("Görsel ").append(count).append(" [KENDİ]: ");
+                if (specificProduct != null) sb.append("Ürün=").append(specificProduct).append(", ");
+                if (productCategory != null) sb.append("Kategori=").append(productCategory).append(", ");
+                if (atmosphere != null) sb.append("Atmosfer=").append(atmosphere).append(", ");
+                if (shootingStyle != null) sb.append("Çekim=").append(shootingStyle).append(", ");
+                if (lightingStyle != null) sb.append("Işık=").append(lightingStyle).append(", ");
+                if (backgroundType != null) sb.append("Arka plan=").append(backgroundType).append(", ");
+                if (colorPalette != null) sb.append("Renkler=").append(colorPalette).append(", ");
+                if (propsAndDecor != null) sb.append("Dekor=").append(propsAndDecor).append(", ");
+                if (visualThemes != null) sb.append("Temalar=").append(visualThemes).append(", ");
+                if (composition != null) sb.append("Kompozisyon=").append(composition).append(", ");
+                if (sceneDescription != null) sb.append("Sahne=").append(sceneDescription);
+                sb.append("\n");
+            } catch (Exception ex) {
+                log.warn("Hesap görsel analiz satırı ayrıştırılamadı; atlanıyor: hata={}", ex.getMessage());
+            }
+        }
+        return sb.isEmpty() ? null : sb.toString();
     }
 
     /**
@@ -261,200 +426,6 @@ public class ContentPipelineService {
         return null;
     }
 
-    /**
-     * Kullanıcının güncel alt sektör adını döndürür (yoksa null). SORUN 1, madde 1.3 —
-     * loadVisualPatterns/findIrrelevantSectorAccounts'taki subsector-aware SectorRelevanceFilter
-     * çağrısı için kullanılır.
-     */
-    private String loadUserSubsectorName(UUID userId) {
-        String sql = """
-                SELECT ss.name
-                FROM user_info ui, subsector ss
-                WHERE ui.subsector_id = ss.subsector_id
-                  AND ui.user_id = ?
-                """;
-        try {
-            List<String> rows = jdbcTemplate.queryForList(sql, String.class, userId);
-            return rows.isEmpty() ? null : rows.get(0);
-        } catch (Exception ex) {
-            log.warn("Alt sektör adı yüklenemedi: hata={}", ex.getMessage());
-            return null;
-        }
-    }
-
-    private String loadOwnPostsCaptions(UUID reportId) {
-        // report_id → report.request_id → social_post (OWN) son 10 post caption'ı
-        String sql = """
-                SELECT sp.caption
-                FROM social_post sp
-                JOIN report r ON r.request_id = sp.request_id
-                WHERE r.report_id = ?
-                  AND sp.source_type = 'OWN'
-                  AND sp.caption IS NOT NULL
-                ORDER BY sp.post_date DESC
-                LIMIT 10
-                """;
-        try {
-            List<String> captions = jdbcTemplate.queryForList(sql, String.class, reportId);
-            if (captions.isEmpty()) return null;
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < captions.size(); i++) {
-                sb.append("Post ").append(i + 1).append(": ").append(captions.get(i)).append("\n");
-            }
-            return sb.toString();
-        } catch (Exception ex) {
-            log.warn("OWN post caption'ları yüklenemedi: hata={}", ex.getMessage());
-            return null;
-        }
-    }
-
-    // Görsel analiz sorgu satırı: analysis_json + kaynak (OWN|MONITORED|SECTOR) + sektör hesap adı
-    private record VisualPatternRow(String analysisJson, String sourceType, String sectorAccountName) {
-    }
-
-    /**
-     * SECTOR hesapları arasında, gerçek konusu (productCategory) diğer hiçbir sektör hesabıyla
-     * örtüşmeyen (Apify'ın keyword aramasıyla yanlışlıkla eşleştirdiği alakasız bir hesap
-     * olması muhtemel) hesap adlarını döner — bkz. SectorRelevanceFilter.
-     */
-    private Set<String> findIrrelevantSectorAccounts(UUID reportId, String subsectorName) {
-        String sql = """
-                SELECT sp.sector_account_name, pa.analysis_json
-                FROM post_analysis pa, social_post sp, report r
-                WHERE pa.social_post_id = sp.social_post_id
-                  AND sp.request_id = r.request_id
-                  AND r.report_id = ?
-                  AND sp.source_type = 'SECTOR'
-                  AND sp.sector_account_name IS NOT NULL
-                  AND pa.analysis_json IS NOT NULL
-                """;
-        try {
-            List<String[]> rows = jdbcTemplate.query(sql, (rs, rowNum) ->
-                    new String[]{rs.getString("sector_account_name"), rs.getString("analysis_json")}, reportId);
-            Map<String, List<String>> categoriesByAccount = new LinkedHashMap<>();
-            for (String[] row : rows) {
-                String category = SectorRelevanceFilter.extractProductCategory(row[1]);
-                if (category != null) {
-                    categoriesByAccount.computeIfAbsent(row[0], k -> new ArrayList<>()).add(category);
-                }
-            }
-            // SORUN 1, madde 1.3 — alt sektör token'larıyla örtüşen hesap kesin alakalı sayılır
-            Set<String> subsectorTokens = SectorRelevanceFilter.tokenize(subsectorName);
-            Set<String> irrelevant = SectorRelevanceFilter.findIrrelevantAccounts(categoriesByAccount, subsectorTokens);
-            if (!irrelevant.isEmpty()) {
-                log.warn("Sektör aramasında alakasız hesap(lar) tespit edildi, Brand DNA'dan dışlanıyor: reportId={}, hesaplar={}",
-                        reportId, irrelevant);
-            }
-            return irrelevant;
-        } catch (Exception ex) {
-            log.warn("Sektör hesap alaka analizi başarısız (atlanmadan devam edilir): reportId={}, hata={}",
-                    reportId, ex.getMessage());
-            return Set.of();
-        }
-    }
-
-    /**
-     * Görsel analizden ürün kategorisi, atmosfer, renk ve çekim stili özetini çeker.
-     * Brand DNA'nın mainProductOrService alanını beslemek için kullanılır.
-     * Hem OWN hem SECTOR + MONITORED post_analysis kayıtlarından çeker; her satır
-     * KENDİ/RAKİP/SEKTÖR etiketiyle işaretlenir (Brand DNA yalnızca KENDİ'den kimlik alsın diye).
-     */
-    private String loadVisualPatterns(UUID reportId, String subsectorName) {
-        // Apify'ın sektör aramasıyla bulduğu, gerçek konusu diğer sektör hesaplarıyla hiç
-        // örtüşmeyen (alakasız) hesapları önceden tespit et — bkz. SectorRelevanceFilter.
-        Set<String> irrelevantSectorAccounts = findIrrelevantSectorAccounts(reportId, subsectorName);
-
-        // analysis_json + source_type çek (OWN + SECTOR + MONITORED).
-        // KENDİ postları her zaman önce sıralanır (source_type = 'OWN' DESC), sonra tarih DESC —
-        // aksi halde çok sayıda rakip/sektör postu olan bir raporda, KENDİ'nin az sayıdaki postu
-        // sırf daha eski tarihli olduğu için LIMIT 15'in dışında kalabilirdi. KENDİ, DNA'nın ana
-        // kimlik kaynağı olduğundan (bkz. sınıf yorumu) asla rakip verisiyle dışarı itilmemeli.
-        String sql = """
-                SELECT pa.analysis_json, sp.source_type, sp.sector_account_name
-                FROM post_analysis pa, social_post sp, report r
-                WHERE pa.social_post_id = sp.social_post_id
-                  AND sp.request_id = r.request_id
-                  AND r.report_id = ?
-                  AND pa.analysis_json IS NOT NULL
-                ORDER BY (sp.source_type = 'OWN') DESC, sp.post_date DESC
-                LIMIT 15
-                """;
-        try {
-            List<VisualPatternRow> rows = jdbcTemplate.query(sql,
-                    (rs, rowNum) -> new VisualPatternRow(rs.getString("analysis_json"), rs.getString("source_type"),
-                            rs.getString("sector_account_name")),
-                    reportId);
-            if (rows.isEmpty()) return null;
-
-            StringBuilder sb = new StringBuilder();
-            int count = 0;
-            for (VisualPatternRow row : rows) {
-                if (row.analysisJson() == null || row.analysisJson().isBlank()) continue;
-                if ("SECTOR".equals(row.sourceType()) && irrelevantSectorAccounts.contains(row.sectorAccountName())) {
-                    continue; // Apify'ın yanlış eşleştirdiği alakasız sektör hesabı — DNA'ya karışmasın
-                }
-                try {
-                    JsonNode visual = objectMapper.readTree(row.analysisJson()).path("visual");
-                    if (visual.isMissingNode() || visual.isNull()) continue;
-
-                    String specificProduct = textField(visual, "specificProduct");
-                    String productCategory = textField(visual, "productCategory");
-                    String atmosphere = textField(visual, "atmosphere");
-                    String shootingStyle = textField(visual, "shootingStyle");
-                    String lightingStyle = textField(visual, "lightingStyle");
-                    String backgroundType = textField(visual, "backgroundType");
-                    String composition = textField(visual, "composition");
-                    String colorPalette = arrayField(visual, "colorPalette");
-                    String propsAndDecor = arrayField(visual, "propsAndDecor");
-                    // sceneDescription/visualThemes daha önce hiç çıkarılmıyordu — backgroundType gibi
-                    // tek kelimelik alanların kaçırdığı ayırt edici detaylar (ör. "Boğaz manzaralı teras")
-                    // genelde bu iki alanda yer alır; DNA'nın "typicalBackground"ı çoğunluk deseninin
-                    // (ör. "restoran iç mekan") gölgesinde bırakabileceği azınlık ama marka-tanımlayıcı
-                    // sinyalleri kaybetmemek için eklendi.
-                    String visualThemes = arrayField(visual, "visualThemes");
-                    String sceneDescription = textField(visual, "sceneDescription");
-
-                    // En az bir değer varsa ekle
-                    if (productCategory == null && specificProduct == null && atmosphere == null) continue;
-
-                    count++;
-                    sb.append("Görsel ").append(count).append(" ").append(sourceLabel(row.sourceType())).append(": ");
-                    if (specificProduct != null) sb.append("Ürün=").append(specificProduct).append(", ");
-                    if (productCategory != null) sb.append("Kategori=").append(productCategory).append(", ");
-                    if (atmosphere != null) sb.append("Atmosfer=").append(atmosphere).append(", ");
-                    if (shootingStyle != null) sb.append("Çekim=").append(shootingStyle).append(", ");
-                    if (lightingStyle != null) sb.append("Işık=").append(lightingStyle).append(", ");
-                    if (backgroundType != null) sb.append("Arka plan=").append(backgroundType).append(", ");
-                    if (colorPalette != null) sb.append("Renkler=").append(colorPalette).append(", ");
-                    if (propsAndDecor != null) sb.append("Dekor=").append(propsAndDecor).append(", ");
-                    if (visualThemes != null) sb.append("Temalar=").append(visualThemes).append(", ");
-                    if (composition != null) sb.append("Kompozisyon=").append(composition).append(", ");
-                    if (sceneDescription != null) sb.append("Sahne=").append(sceneDescription);
-                    sb.append("\n");
-                } catch (Exception ex) {
-                    log.warn("Görsel analiz satırı ayrıştırılamadı; atlanıyor: hata={}", ex.getMessage());
-                    continue;
-                }
-                if (count >= 10) break;
-            }
-            return sb.isEmpty() ? null : sb.toString();
-        } catch (Exception ex) {
-            log.warn("Görsel analiz verileri yüklenemedi: hata={}", ex.getMessage());
-            return null;
-        }
-    }
-
-    // social_post.source_type -> Brand DNA satırı etiketi (Madde 7)
-    private String sourceLabel(String sourceType) {
-        if (sourceType == null) return "";
-        return switch (sourceType) {
-            case "OWN" -> "[KENDİ]";
-            case "MONITORED" -> "[RAKİP]";
-            case "SECTOR" -> "[SEKTÖR]";
-            default -> "";
-        };
-    }
-
     // JSON string alanı null-safe çeker
     private String textField(JsonNode node, String fieldName) {
         JsonNode value = node.path(fieldName);
@@ -485,7 +456,7 @@ public class ContentPipelineService {
     }
 
     private VisualResult generateAndUploadVisuals(ContentRequest req, String brandDna,
-            String reportContent, String sectorContext, String productContext, String productImageData,
+            String sectorContext, String productContext, String productImageData,
             List<String> previousVisualUrls) {
         ContentType type = req.getContentType();
         List<String> urls = new ArrayList<>();
@@ -494,7 +465,7 @@ public class ContentPipelineService {
         if (type == ContentType.CAROUSEL) {
             String[] roles = {"HOOK", "CONTENT", "CTA"};
             for (int i = 0; i < roles.length; i++) {
-                String prompt = ContentPrompts.forVisual(brandDna, reportContent, "CAROUSEL", i, roles[i],
+                String prompt = ContentPrompts.forVisual(brandDna, "CAROUSEL", i, roles[i],
                         req.isIncludeTextInVisual(), editInstruction, sectorContext, productContext);
                 String referenceImage = editReferenceFor(previousVisualUrls, i, productImageData);
                 String url = generateAndUpload(req, prompt, i, referenceImage);
@@ -502,12 +473,12 @@ public class ContentPipelineService {
             }
             return new VisualResult(urls, roles.length);
         } else if (type == ContentType.REEL) {
-            String prompt = ContentPrompts.forVideo(brandDna, reportContent, editInstruction, sectorContext, productContext);
+            String prompt = ContentPrompts.forVideo(brandDna, editInstruction, sectorContext, productContext);
             String url = generateAndUploadVideo(req, prompt, editInstruction, productImageData);
             if (url != null) urls.add(url);
             return new VisualResult(urls, 1);
         } else {
-            String prompt = ContentPrompts.forVisual(brandDna, reportContent, type.name(), 0, null,
+            String prompt = ContentPrompts.forVisual(brandDna, type.name(), 0, null,
                     req.isIncludeTextInVisual(), editInstruction, sectorContext, productContext);
             String referenceImage = editReferenceFor(previousVisualUrls, 0, productImageData);
             String url = generateAndUpload(req, prompt, 0, referenceImage);
@@ -552,7 +523,7 @@ public class ContentPipelineService {
         if (videoBytes == null) {
             if (!veoVideoService.isActive()) {
                 log.info("Veo pasif; REEL için Gemini görsel fallback: contentRequestId={}", req.getContentRequestId());
-                String imagePrompt = ContentPrompts.forVisual(null, null, "REEL", 0, null, false, editInstruction, null, null);
+                String imagePrompt = ContentPrompts.forVisual(null, "REEL", 0, null, false, editInstruction, null, null);
                 return generateAndUpload(req, imagePrompt, 0, null);
             }
             log.warn("Veo video üretilemedi: contentRequestId={}", req.getContentRequestId());
@@ -592,13 +563,8 @@ public class ContentPipelineService {
     // Caption + metadata
     // ============================================================
 
-    private void applyContentMetadata(ContentRequest req, String brandDna, String reportContent) {
-        // bkz. ContentPrompts.forVisual() yorumu — raporun aksiyon önerileri genelde özet/tablodan
-        // sonra gelir, düşük bir karakter sınırı bunlara hiç ulaşmadan raporu keser.
-        String reportSnippet = reportContent.length() > 3000
-                ? reportContent.substring(0, 3000) + "..."
-                : reportContent;
-        String prompt = ContentPrompts.forContentMetadata(brandDna, reportSnippet, req.getContentType().name());
+    private void applyContentMetadata(ContentRequest req, String brandDna) {
+        String prompt = ContentPrompts.forContentMetadata(brandDna, req.getContentType().name());
         String metadataJson = aiAnalysisService.generateContentMetadata(prompt);
         if (metadataJson == null) {
             log.info("Content metadata üretilemedi; atlanıyor: contentRequestId={}", req.getContentRequestId());
@@ -614,21 +580,6 @@ public class ContentPipelineService {
         } catch (Exception ex) {
             log.warn("Content metadata JSON ayrıştırılamadı; ham metin caption'a yazılıyor: hata={}", ex.getMessage());
             req.setCaption(metadataJson);
-        }
-    }
-
-    // ============================================================
-    // Rapor içeriği yükleme
-    // ============================================================
-
-    private String loadReportContent(UUID reportId) {
-        String sql = "SELECT report_content FROM report WHERE report_id = ?";
-        try {
-            List<String> rows = jdbcTemplate.queryForList(sql, String.class, reportId);
-            return rows.isEmpty() ? null : rows.get(0);
-        } catch (Exception ex) {
-            log.error("Rapor içeriği yüklenemedi: reportId={}, hata={}", reportId, ex.getMessage());
-            return null;
         }
     }
 

@@ -33,7 +33,9 @@ import lombok.extern.slf4j.Slf4j;
 
 /**
  * İçerik üretim isteği iş mantığı.
- * Rapor bazlı görsel + caption üretim isteklerini yönetir.
+ * Görsel + caption üretim isteklerini yönetir — rapordan bağımsızdır (bkz.
+ * ICERIK-RAPOR-AYRISTIRMA-SPEC.md); yalnızca kullanıcının opsiyonel bağlı hesabına (socialAccountId)
+ * referans verir, DNA akışı ContentPipelineService'te hesap bazlı cache üzerinden yürür.
  * Service interface yok (CLAUDE.md Madde 1); concrete @Service.
  */
 @Slf4j
@@ -58,25 +60,24 @@ public class ContentRequestService {
 
     /**
      * Kullanılabilir içerik tiplerini, kredi maliyetlerini ve kullanıcının kredi bakiyesini döner.
-     * reportId verilirse (opsiyonel) POST/STORY için "bu rapordan ücretsiz üretilebilir mi" bilgisi
-     * de hesaplanır (V11 — ücretsiz ilk kullanım, bkz. FreeUsageService).
+     * POST/STORY için ücretsiz ilk kullanım hakkı bilgisi de hesaplanır (V11 — bkz. FreeUsageService).
+     * İçerik üretimi rapordan bağımsız olduğundan bu kontrol rapor varlığına bakmaz.
      * Endpoint: POST /content/available-types
      */
-    public Map<String, Object> availableTypes(UUID userId, UUID reportId) {
+    public Map<String, Object> availableTypes(UUID userId) {
         long creditBalance = paymentService.getCreditBalance(userId);
         boolean paymentEnabled = appProperties.getPayment().isEnabled();
 
         // Carousel: kullanıcı hiç kredi paketi satın almadıysa (ücretsiz deneme döneminde) kilitli —
-        // ücretsiz hakka DAHİL DEĞİL, sadece gerçek kredi satın alınca açılır. Belirli bir rapora
-        // bağlı değil (reportId'den bağımsız, kullanıcı seviyesinde bir kısıt).
+        // ücretsiz hakka DAHİL DEĞİL, sadece gerçek kredi satın alınca açılır.
         boolean carouselLocked = paymentEnabled && !freeUsageService.hasEverPurchased(userId);
 
         List<Map<String, Object>> types = List.of(
                 typeEntry("POST", "Post", CreditCatalog.POST_CREDIT_COST,
-                        reportId != null && paymentEnabled && freeUsageService.isFreeContentAvailable(userId, reportId, ContentType.POST),
+                        paymentEnabled && freeUsageService.isFreeContentAvailable(userId, ContentType.POST),
                         false, null),
                 typeEntry("STORY", "Story", CreditCatalog.STORY_CREDIT_COST,
-                        reportId != null && paymentEnabled && freeUsageService.isFreeContentAvailable(userId, reportId, ContentType.STORY),
+                        paymentEnabled && freeUsageService.isFreeContentAvailable(userId, ContentType.STORY),
                         false, null),
                 typeEntry("CAROUSEL", "Carousel", CreditCatalog.CAROUSEL_CREDIT_COST,
                         false, carouselLocked, carouselLocked ? "İlk kredi paketini satın alınca açılır" : null),
@@ -118,8 +119,8 @@ public class ContentRequestService {
                     "Görsel üzerine yazı ekleme özelliği şu an kullanılamıyor.");
         }
 
-        // Rapor kullanıcıya ait mi?
-        validateReportOwnership(userId, request.getReportId());
+        // Hesap seçildiyse (opsiyonel) bu hesabın kullanıcıya ait olduğunu doğrula
+        validateAccountOwnership(userId, request.getSocialAccountId());
 
         int creditCost = CreditCatalog.creditCostFor(contentType);
         UUID newContentRequestId = UUID.randomUUID();
@@ -130,11 +131,10 @@ public class ContentRequestService {
         // yalnızca biri gerçekten ücretsiz sayılır.
         boolean useFree = false;
         if (appProperties.getPayment().isEnabled()) {
-            if (freeUsageService.isFreeContentAvailable(userId, request.getReportId(), contentType)
+            if (freeUsageService.isFreeContentAvailable(userId, contentType)
                     && freeUsageService.tryConsumeFreeContent(userId, newContentRequestId)) {
                 useFree = true;
-                log.info("Ücretsiz ilk içerik hakkı kullanılıyor: userId={}, reportId={}, contentType={}",
-                        userId, request.getReportId(), contentType);
+                log.info("Ücretsiz ilk içerik hakkı kullanılıyor: userId={}, contentType={}", userId, contentType);
             } else {
                 long creditBalance = paymentService.getCreditBalance(userId);
                 if (creditBalance < creditCost) {
@@ -148,7 +148,7 @@ public class ContentRequestService {
         ContentRequest entity = new ContentRequest();
         entity.setContentRequestId(newContentRequestId);
         entity.setUserId(userId);
-        entity.setReportId(request.getReportId());
+        entity.setSocialAccountId(request.getSocialAccountId());
         entity.setContentType(contentType);
         // base64 data URL ise S3'e yükle; DB'de sadece S3 URL saklansın (base64 asla yazılmaz)
         entity.setProductImageUrl(uploadProductImageIfPresent(request.getProductImageUrl(), userId, entity.getContentRequestId()));
@@ -165,8 +165,8 @@ public class ContentRequestService {
         contentRequestRepository.save(entity);
         contentQueueProducer.publish(entity.getContentRequestId());
 
-        log.info("İçerik isteği oluşturuldu: id={}, userId={}, reportId={}, type={}, creditCost={}, ücretsiz={}",
-                entity.getContentRequestId(), userId, request.getReportId(), contentType, creditCost, useFree);
+        log.info("İçerik isteği oluşturuldu: id={}, userId={}, socialAccountId={}, type={}, creditCost={}, ücretsiz={}",
+                entity.getContentRequestId(), userId, request.getSocialAccountId(), contentType, creditCost, useFree);
 
         return ContentCreateResponse.queued(entity.getContentRequestId(), useFree ? 0 : creditCost, useFree);
     }
@@ -215,7 +215,7 @@ public class ContentRequestService {
         // visual_urls ve product_image_url base64 data URL içerebilir (MB boyutunda) —
         // liste görünümü için gereksiz, sadece detail endpoint dönsün
         String sql = """
-                SELECT content_request_id, report_id, content_type, status,
+                SELECT content_request_id, social_account_id, content_type, status,
                        include_text_in_visual, edit_instruction,
                        edit_count, caption,
                        created_date, process_finished_date, process_error
@@ -237,7 +237,7 @@ public class ContentRequestService {
      */
     public ContentRequestDto detail(UUID userId, UUID contentRequestId) {
         String sql = """
-                SELECT content_request_id, report_id, content_type, status,
+                SELECT content_request_id, social_account_id, content_type, status,
                        product_image_url, include_text_in_visual, edit_instruction,
                        edit_count, visual_urls, caption, hashtags, cta,
                        first_comment, suggested_post_time,
@@ -265,15 +265,18 @@ public class ContentRequestService {
         return entity;
     }
 
-    private void validateReportOwnership(UUID userId, UUID reportId) {
+    /** socialAccountId doluysa bu hesabın kullanıcıya ait aktif bir hesap olduğunu doğrular. */
+    private void validateAccountOwnership(UUID userId, UUID socialAccountId) {
+        if (socialAccountId == null) {
+            return;
+        }
         String sql = """
-                SELECT COUNT(*) FROM report r
-                JOIN report_request rr ON rr.request_id = r.request_id
-                WHERE r.report_id = ? AND rr.user_id = ?
+                SELECT COUNT(*) FROM user_social_account
+                WHERE user_social_account_id = ? AND user_id = ? AND active = 1
                 """;
-        Integer count = jdbcTemplate.queryForObject(sql, Integer.class, reportId, userId);
+        Integer count = jdbcTemplate.queryForObject(sql, Integer.class, socialAccountId, userId);
         if (count == null || count == 0) {
-            throw new ApiException(ResponseCode.NOT_FOUND, "Rapor bulunamadı.");
+            throw new ApiException(ResponseCode.NOT_FOUND, "Hesap bulunamadı.");
         }
     }
 
@@ -290,7 +293,7 @@ public class ContentRequestService {
     private ContentRequestDto mapListRow(java.sql.ResultSet rs) throws java.sql.SQLException {
         ContentRequestDto dto = new ContentRequestDto();
         dto.setContentRequestId((UUID) rs.getObject("content_request_id"));
-        dto.setReportId((UUID) rs.getObject("report_id"));
+        dto.setSocialAccountId((UUID) rs.getObject("social_account_id"));
         dto.setContentType(rs.getString("content_type"));
         dto.setStatus(rs.getString("status"));
         dto.setIncludeTextInVisual(rs.getBoolean("include_text_in_visual"));

@@ -1,7 +1,6 @@
 package com.api.dto;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -11,9 +10,6 @@ import java.util.UUID;
 @Setter
 public class ContentCreateRequest {
 
-    @NotNull(message = "reportId boş olamaz")
-    private UUID reportId;
-
     // POST|STORY|CAROUSEL|REEL
     @NotBlank(message = "contentType boş olamaz")
     private String contentType;
@@ -22,4 +18,7 @@ public class ContentCreateRequest {
     private String productImageUrl;
 
     private boolean includeTextInVisual;
+
+    // Kullanıcının kendi bağlı sosyal hesabı (opsiyonel) — doluysa içerik hesap DNA'sıyla üretilir
+    private UUID socialAccountId;
 }

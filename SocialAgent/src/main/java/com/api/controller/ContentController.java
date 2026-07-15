@@ -26,10 +26,10 @@ import lombok.RequiredArgsConstructor;
 
 /**
  * İçerik üretim endpoint'leri.
- * Rapor bazlı görsel + caption üretimi; "Görsel Üretimlerim" sayfa verisi.
- * Hepsi POST (CLAUDE.md Madde 2); JWT zorunlu.
+ * Görsel + caption üretimi; rapordan bağımsızdır (bkz. ICERIK-RAPOR-AYRISTIRMA-SPEC.md).
+ * "Görsel Üretimlerim" sayfa verisi. Hepsi POST (CLAUDE.md Madde 2); JWT zorunlu.
  */
-@Tag(name = "İçerik Üretimi", description = "Rapor bazlı görsel ve caption üretimi")
+@Tag(name = "İçerik Üretimi", description = "Görsel ve caption üretimi (rapordan bağımsız)")
 @RestController
 @RequestMapping("/content")
 @RequiredArgsConstructor
@@ -42,21 +42,21 @@ public class ContentController {
      * Endpoint: POST /content/available-types
      */
     @Operation(summary = "İçerik tipleri ve fiyatlar",
-            description = "Kullanılabilir içerik tiplerini, birim fiyatlarını ve kullanıcı bakiyesini döner. "
-                    + "reportId verilirse (opsiyonel) o rapor için ücretsiz ilk kullanım hakkı bilgisi de döner.")
+            description = "Kullanılabilir içerik tiplerini, birim fiyatlarını, kullanıcı bakiyesini ve ücretsiz "
+                    + "ilk kullanım hakkı bilgisini döner (artık rapordan bağımsız).")
     @PostMapping("/available-types")
-    public DataResponse<Map<String, Object>> availableTypes(@RequestBody(required = false) AvailableTypesRequest request) {
+    public DataResponse<Map<String, Object>> availableTypes() {
         UUID userId = SecurityUtil.getCurrentUserId();
-        UUID reportId = request != null ? request.getReportId() : null;
-        return DataResponse.success(contentRequestService.availableTypes(userId, reportId));
+        return DataResponse.success(contentRequestService.availableTypes(userId));
     }
 
     /**
-     * Rapor üzerinden yeni içerik üretim isteği başlatır.
+     * Yeni içerik üretim isteği başlatır (rapordan bağımsız).
      * Endpoint: POST /content/create
      */
     @Operation(summary = "İçerik üretim isteği oluştur",
-            description = "Seçilen rapor ve içerik tipine göre görsel + caption üretimini başlatır.")
+            description = "Seçilen içerik tipine göre görsel + caption üretimini başlatır. socialAccountId "
+                    + "opsiyoneldir; doluysa üretim kullanıcının hesap DNA'sıyla kişiselleştirilir.")
     @PostMapping("/create")
     public DataResponse<ContentCreateResponse> create(@Valid @RequestBody ContentCreateRequest request) {
         UUID userId = SecurityUtil.getCurrentUserId();
@@ -114,12 +114,5 @@ public class ContentController {
         private UUID contentRequestId;
         public UUID getContentRequestId() { return contentRequestId; }
         public void setContentRequestId(UUID contentRequestId) { this.contentRequestId = contentRequestId; }
-    }
-
-    // İç DTO — yalnızca bu controller'da kullanılır (reportId opsiyonel)
-    public static class AvailableTypesRequest {
-        private UUID reportId;
-        public UUID getReportId() { return reportId; }
-        public void setReportId(UUID reportId) { this.reportId = reportId; }
     }
 }

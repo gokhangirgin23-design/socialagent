@@ -15,8 +15,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * Ücretsiz ilk kullanım hakkı (V11 migration): kullanıcı başına 1 rapor + (o rapora sıralı bağlı)
- * 1 post/story hakkı. Kredi sistemine (PaymentService/user_payment) hiç dokunmaz — kontrol ve
+ * Ücretsiz ilk kullanım hakkı (V11 migration): kullanıcı başına 1 rapor + 1 post/story hakkı.
+ * İki hak birbirinden BAĞIMSIZDIR — içerik üretimi rapordan bağımsız olduğundan (bkz.
+ * ICERIK-RAPOR-AYRISTIRMA-SPEC.md), ücretsiz post/story hakkı rapor üretilmiş olmasını şart
+ * koşmaz. Kredi sistemine (PaymentService/user_payment) hiç dokunmaz — kontrol ve
  * kayıt tamamen user_free_usage tablosundan yapılır. Service interface yok (CLAUDE.md Madde 1).
  *
  * Rapor tarafı: report_request'in active_lock_key UNIQUE kısıtı (E7 fix) kullanıcı başına
@@ -75,25 +77,20 @@ public class FreeUsageService {
     }
 
     /**
-     * Ücretsiz içerik (post/story) hakkı bu reportId (report.report_id) için kullanılabilir mi?
-     * SADECE ücretsiz üretilen raporun kendisinden, SADECE POST/STORY için (Carousel/Reel hariç).
+     * Ücretsiz içerik (post/story) hakkı kullanılabilir mi? SADECE POST/STORY için (Carousel/Reel
+     * hariç). İçerik üretimi artık rapordan bağımsız olduğundan bu kontrol raporun varlığına/
+     * eşleşmesine ASLA bakmaz — yalnızca kullanıcının bu hakkı daha önce kullanıp kullanmadığına
+     * bakar (rapor üretmemiş bir kullanıcı da ücretsiz post/story üretebilir).
      */
-    public boolean isFreeContentAvailable(UUID userId, UUID reportId, ContentType contentType) {
+    public boolean isFreeContentAvailable(UUID userId, ContentType contentType) {
         if (contentType != ContentType.POST && contentType != ContentType.STORY) {
             return false;
         }
         UserFreeUsage row = repository.findById(userId).orElse(null);
-        if (row == null || row.getFreeReportRequestId() == null) {
+        if (row == null) {
             return false;
         }
-        if (row.getFreeContentUsed() != null && row.getFreeContentUsed() == 1) {
-            return false;
-        }
-        Integer count = jdbcTemplate.queryForObject("""
-                SELECT COUNT(*) FROM report
-                WHERE report_id = ? AND request_id = ?
-                """, Integer.class, reportId, row.getFreeReportRequestId());
-        return count != null && count > 0;
+        return row.getFreeContentUsed() == null || row.getFreeContentUsed() == 0;
     }
 
     /**

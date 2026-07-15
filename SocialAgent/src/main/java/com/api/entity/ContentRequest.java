@@ -29,9 +29,13 @@ public class ContentRequest {
     @Column(name = "user_id", nullable = false)
     private UUID userId;
 
-    // report.report_id ile bağlantı
-    @Column(name = "report_id", nullable = false)
+    // report.report_id ile bağlantı — opsiyonel: içerik üretimi artık rapordan bağımsız
+    @Column(name = "report_id")
     private UUID reportId;
+
+    // user_social_account.user_social_account_id ile bağlantı — opsiyonel; doluysa hesap DNA'sı kullanılır
+    @Column(name = "social_account_id")
+    private UUID socialAccountId;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "content_type", nullable = false, length = 20)

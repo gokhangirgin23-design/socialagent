@@ -12,7 +12,7 @@ import java.util.UUID;
 public class ContentRequestDto {
 
     private UUID contentRequestId;
-    private UUID reportId;
+    private UUID socialAccountId;
     private String contentType;
     private String status;
     private String productImageUrl;
