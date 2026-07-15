@@ -21,8 +21,10 @@ import com.api.entity.ContentType;
 import com.api.entity.UserFreeUsage;
 
 /**
- * V11 — Ücretsiz ilk kullanım hakkı (1 rapor + sıralı bağlı 1 post/story, Carousel hariç).
- * Spring'siz birim testi (DB gerektirmez, JdbcTemplate/repository mock'lanır).
+ * V11 — Ücretsiz ilk kullanım hakkı (1 rapor + 1 post/story, Carousel hariç).
+ * ICERIK-RAPOR-AYRISTIRMA-SPEC.md §2.4/§2.5 ile içerik hakkı rapor varlığından bağımsız hale
+ * geldi — bu testler o davranışı doğrular (rapor üretmemiş kullanıcı da ücretsiz post/story
+ * üretebilmeli). Spring'siz birim testi (DB gerektirmez, JdbcTemplate/repository mock'lanır).
  */
 class FreeUsageServiceTest {
 
@@ -31,8 +33,6 @@ class FreeUsageServiceTest {
     private FreeUsageService service;
 
     private final UUID userId = UUID.randomUUID();
-    private final UUID reportId = UUID.randomUUID();
-    private final UUID freeReportRequestId = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
@@ -44,8 +44,8 @@ class FreeUsageServiceTest {
     @Test
     void carouselIcinUcretsizHakHicKullanilamaz() {
         // DB'ye hiç gidilmeden (repository çağrılmadan) false dönmeli — Carousel her zaman hariç
-        assertFalse(service.isFreeContentAvailable(userId, reportId, ContentType.CAROUSEL));
-        assertFalse(service.isFreeContentAvailable(userId, reportId, ContentType.REEL));
+        assertFalse(service.isFreeContentAvailable(userId, ContentType.CAROUSEL));
+        assertFalse(service.isFreeContentAvailable(userId, ContentType.REEL));
         verify(repository, never()).findById(any());
     }
 
@@ -74,53 +74,33 @@ class FreeUsageServiceTest {
     }
 
     @Test
-    void raporHakkiHenuzKullanilmadiysaIcerikHakkiDaKullanilamaz() {
-        // free_report_request_id null = kullanıcı hiç ücretsiz rapor üretmemiş — içerik hakkı
-        // sıralı bağımlı olduğundan bu durumda da kullanılamaz
+    void raporUretmemisKullaniciDaUcretsizPostStoryHakkiniKullanabilir() {
+        // Spec: içerik üretimi rapordan bağımsız — free_report_request_id hiç set edilmemiş
+        // (kullanıcı hiç rapor üretmemiş) olsa bile free_content_used=0 ise hak kullanılabilir.
         UserFreeUsage row = new UserFreeUsage();
         row.setUserId(userId);
+        row.setFreeContentUsed(0);
         when(repository.findById(userId)).thenReturn(Optional.of(row));
-        assertFalse(service.isFreeContentAvailable(userId, reportId, ContentType.POST));
+
+        assertTrue(service.isFreeContentAvailable(userId, ContentType.POST));
+        assertTrue(service.isFreeContentAvailable(userId, ContentType.STORY));
+        // Rapor tablosuna hiç sorgu atılmadı
+        verify(jdbcTemplate, never()).queryForObject(any(String.class), eq(Integer.class), any(), any());
     }
 
     @Test
     void icerikHakkiZatenKullanilmissaTekrarKullanilamaz() {
         UserFreeUsage row = new UserFreeUsage();
         row.setUserId(userId);
-        row.setFreeReportRequestId(freeReportRequestId);
         row.setFreeContentUsed(1);
         when(repository.findById(userId)).thenReturn(Optional.of(row));
-        assertFalse(service.isFreeContentAvailable(userId, reportId, ContentType.STORY));
+        assertFalse(service.isFreeContentAvailable(userId, ContentType.STORY));
     }
 
-    @SuppressWarnings("unchecked")
     @Test
-    void farkliBirRapordanIcerikUcretsizUretilemez() {
-        // free_report_request_id dolu ama sorgulanan reportId o rapora ait DEĞİL (COUNT=0)
-        UserFreeUsage row = new UserFreeUsage();
-        row.setUserId(userId);
-        row.setFreeReportRequestId(freeReportRequestId);
-        row.setFreeContentUsed(0);
-        when(repository.findById(userId)).thenReturn(Optional.of(row));
-        when(jdbcTemplate.queryForObject(any(String.class), eq(Integer.class), any(), any()))
-                .thenReturn(0);
-
-        assertFalse(service.isFreeContentAvailable(userId, reportId, ContentType.POST));
-    }
-
-    @SuppressWarnings("unchecked")
-    @Test
-    void ucretsizUretilenRapordanPostVeyaStoryUretilebilir() {
-        UserFreeUsage row = new UserFreeUsage();
-        row.setUserId(userId);
-        row.setFreeReportRequestId(freeReportRequestId);
-        row.setFreeContentUsed(0);
-        when(repository.findById(userId)).thenReturn(Optional.of(row));
-        when(jdbcTemplate.queryForObject(any(String.class), eq(Integer.class), any(), any()))
-                .thenReturn(1);
-
-        assertTrue(service.isFreeContentAvailable(userId, reportId, ContentType.POST));
-        assertTrue(service.isFreeContentAvailable(userId, reportId, ContentType.STORY));
+    void satirYokkenIcerikHakkiKullanilamaz() {
+        when(repository.findById(userId)).thenReturn(Optional.empty());
+        assertFalse(service.isFreeContentAvailable(userId, ContentType.POST));
     }
 
     @Test

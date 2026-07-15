@@ -30,8 +30,11 @@ import com.api.messaging.ContentQueueProducer;
 
 /**
  * ContentRequestService için Spring'siz birim testi (DB/queue/S3 gerektirmez).
- * Doğrulanan davranış (FAZ CREDIT — Madde 1): includeTextInVisual=true istekte hata döner,
- * false istekte akış normal devam eder.
+ * Doğrulanan davranışlar:
+ *  - FAZ CREDIT Madde 1: includeTextInVisual=true istekte hata döner, false istekte akış devam eder.
+ *  - ICERIK-RAPOR-AYRISTIRMA-SPEC.md §2.5: request'te reportId alanı yok, create() rapor servisine/
+ *    tablosuna hiç sorgu atmıyor (jdbcTemplate.queryForObject hiç çağrılmıyor — sadece socialAccountId
+ *    doluysa hesap sahiplik sorgusu çalışır).
  */
 class ContentRequestServiceTest {
 
@@ -45,7 +48,7 @@ class ContentRequestServiceTest {
     private ContentRequestService service;
 
     private final UUID userId = UUID.randomUUID();
-    private final UUID reportId = UUID.randomUUID();
+    private final UUID socialAccountId = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
@@ -62,7 +65,6 @@ class ContentRequestServiceTest {
 
     private ContentCreateRequest sampleRequest(String contentType, boolean includeText) {
         ContentCreateRequest req = new ContentCreateRequest();
-        req.setReportId(reportId);
         req.setContentType(contentType);
         req.setIncludeTextInVisual(includeText);
         return req;
@@ -79,13 +81,10 @@ class ContentRequestServiceTest {
         verify(contentQueueProducer, never()).publish(any());
     }
 
-    @SuppressWarnings("unchecked")
     @Test
     void yazisizGorselIstegiNormalAkisaDevamEder() {
         ContentCreateRequest req = sampleRequest("POST", false);
         when(paymentService.getCreditBalance(userId)).thenReturn(100L);
-        // Rapor sahiplik kontrolü: kullanıcıya ait rapor bulunuyor
-        when(jdbcTemplate.queryForObject(anyString(), any(Class.class), any(), any())).thenReturn(1);
         when(contentRequestRepository.save(any(ContentRequest.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
 
@@ -95,18 +94,57 @@ class ContentRequestServiceTest {
         verify(contentQueueProducer).publish(any());
     }
 
+    @Test
+    void raporAlaniOlmayanIstekRaporServisineHicSorguAtmaz() {
+        // Spec kabul kriteri #1/#4: reportId alanı DTO'da yok; socialAccountId de boşsa
+        // jdbcTemplate hiç çağrılmaz (rapor/hesap sahiplik sorgusu tetiklenmez).
+        ContentCreateRequest req = sampleRequest("POST", false);
+        when(paymentService.getCreditBalance(userId)).thenReturn(100L);
+        when(contentRequestRepository.save(any(ContentRequest.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        service.create(userId, req);
+
+        verify(jdbcTemplate, never()).queryForObject(anyString(), any(Class.class), any(), any());
+    }
+
+    @Test
+    void socialAccountIdDoluysaHesapSahiplikSorgusuCalisirVeKaydedilir() {
+        ContentCreateRequest req = sampleRequest("POST", false);
+        req.setSocialAccountId(socialAccountId);
+        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), any(), any())).thenReturn(1);
+        when(paymentService.getCreditBalance(userId)).thenReturn(100L);
+        when(contentRequestRepository.save(any(ContentRequest.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        ContentCreateResponse response = service.create(userId, req);
+
+        assertEquals("QUEUED", response.getStatus());
+        verify(jdbcTemplate).queryForObject(anyString(), eq(Integer.class), eq(socialAccountId), eq(userId));
+    }
+
+    @Test
+    void baskaKullaniciyaAitHesapSecilirseNotFoundDoner() {
+        ContentCreateRequest req = sampleRequest("POST", false);
+        req.setSocialAccountId(socialAccountId);
+        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), any(), any())).thenReturn(0);
+
+        ApiException ex = assertThrows(ApiException.class, () -> service.create(userId, req));
+
+        assertEquals("Hesap bulunamadı.", ex.getMessage());
+        verify(contentRequestRepository, never()).save(any());
+    }
+
     // ============================================================
     // BACKEND-TODO Sorun 2, madde 2.2 — ürün görseli boyut guard'ı + anlamlı hata
     // ============================================================
 
-    @SuppressWarnings("unchecked")
     @Test
     void cokBuyukUrunGorseliValidationErrorDoner() {
         ContentCreateRequest req = sampleRequest("POST", false);
         // 11 MB'lık (10 MB sınırının üstünde) rastgele bayt, base64 data-URL olarak
         byte[] oversized = new byte[11 * 1024 * 1024];
         req.setProductImageUrl("data:image/jpeg;base64," + java.util.Base64.getEncoder().encodeToString(oversized));
-        when(jdbcTemplate.queryForObject(anyString(), any(Class.class), any(), any())).thenReturn(1);
         when(paymentService.getCreditBalance(userId)).thenReturn(100L);
 
         ApiException ex = assertThrows(ApiException.class, () -> service.create(userId, req));
@@ -116,12 +154,10 @@ class ContentRequestServiceTest {
         verify(contentQueueProducer, never()).publish(any());
     }
 
-    @SuppressWarnings("unchecked")
     @Test
     void bozukBase64UrunGorseliValidationErrorDoner() {
         ContentCreateRequest req = sampleRequest("POST", false);
         req.setProductImageUrl("data:image/jpeg;base64,!!! gecersiz base64 !!!");
-        when(jdbcTemplate.queryForObject(anyString(), any(Class.class), any(), any())).thenReturn(1);
         when(paymentService.getCreditBalance(userId)).thenReturn(100L);
 
         ApiException ex = assertThrows(ApiException.class, () -> service.create(userId, req));
@@ -130,12 +166,10 @@ class ContentRequestServiceTest {
         verify(contentRequestRepository, never()).save(any());
     }
 
-    @SuppressWarnings("unchecked")
     @Test
     void virgulsuzDataUrlValidationErrorDoner() {
         ContentCreateRequest req = sampleRequest("POST", false);
         req.setProductImageUrl("data:image/jpeg;base64");
-        when(jdbcTemplate.queryForObject(anyString(), any(Class.class), any(), any())).thenReturn(1);
         when(paymentService.getCreditBalance(userId)).thenReturn(100L);
 
         ApiException ex = assertThrows(ApiException.class, () -> service.create(userId, req));
@@ -148,12 +182,10 @@ class ContentRequestServiceTest {
     // V11 — Ücretsiz ilk kullanım hakkı
     // ============================================================
 
-    @SuppressWarnings("unchecked")
     @Test
     void ucretsizIcerikHakkiVarsaKrediKontroluAtlanir() {
         ContentCreateRequest req = sampleRequest("POST", false);
-        when(jdbcTemplate.queryForObject(anyString(), any(Class.class), any(), any())).thenReturn(1);
-        when(freeUsageService.isFreeContentAvailable(eq(userId), eq(reportId), any())).thenReturn(true);
+        when(freeUsageService.isFreeContentAvailable(eq(userId), any())).thenReturn(true);
         when(freeUsageService.tryConsumeFreeContent(eq(userId), any())).thenReturn(true);
         when(contentRequestRepository.save(any(ContentRequest.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
@@ -167,13 +199,11 @@ class ContentRequestServiceTest {
         verify(paymentService, never()).getCreditBalance(any());
     }
 
-    @SuppressWarnings("unchecked")
     @Test
     void ucretsizHakYaristaKaybedilirseNormalKrediAkisinaDoner() {
         // isFreeContentAvailable true ama tryConsumeFreeContent (atomik UPDATE) yarışta kaybeder (false)
         ContentCreateRequest req = sampleRequest("POST", false);
-        when(jdbcTemplate.queryForObject(anyString(), any(Class.class), any(), any())).thenReturn(1);
-        when(freeUsageService.isFreeContentAvailable(eq(userId), eq(reportId), any())).thenReturn(true);
+        when(freeUsageService.isFreeContentAvailable(eq(userId), any())).thenReturn(true);
         when(freeUsageService.tryConsumeFreeContent(eq(userId), any())).thenReturn(false);
         when(paymentService.getCreditBalance(userId)).thenReturn(100L);
         when(contentRequestRepository.save(any(ContentRequest.class)))
@@ -184,6 +214,21 @@ class ContentRequestServiceTest {
         assertEquals("QUEUED", response.getStatus());
         assertEquals(Boolean.FALSE, response.getFreeUsage());
         verify(paymentService).getCreditBalance(userId);
+    }
+
+    @Test
+    void raporUretmemisKullaniciUcretsizPostUretebilir() {
+        // Spec §2.4/§2.5: free içerik hakkı artık rapor varlığına şart koşulmuyor.
+        // Bu senaryoda create() reportId'siz çağrılıyor ve free hak yine de kullanılabiliyor.
+        ContentCreateRequest req = sampleRequest("POST", false);
+        when(freeUsageService.isFreeContentAvailable(userId, ContentType.POST)).thenReturn(true);
+        when(freeUsageService.tryConsumeFreeContent(eq(userId), any())).thenReturn(true);
+        when(contentRequestRepository.save(any(ContentRequest.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        ContentCreateResponse response = service.create(userId, req);
+
+        assertEquals(Boolean.TRUE, response.getFreeUsage());
     }
 
     // ============================================================
@@ -200,11 +245,11 @@ class ContentRequestServiceTest {
     @Test
     void availableTypesFreeRaporVeHicSatinAlmaYokkenPostStoryUcretsizCarouselKilitli() {
         when(paymentService.getCreditBalance(userId)).thenReturn(0L);
-        when(freeUsageService.isFreeContentAvailable(userId, reportId, ContentType.POST)).thenReturn(true);
-        when(freeUsageService.isFreeContentAvailable(userId, reportId, ContentType.STORY)).thenReturn(true);
+        when(freeUsageService.isFreeContentAvailable(userId, ContentType.POST)).thenReturn(true);
+        when(freeUsageService.isFreeContentAvailable(userId, ContentType.STORY)).thenReturn(true);
         when(freeUsageService.hasEverPurchased(userId)).thenReturn(false);
 
-        Map<String, Object> result = service.availableTypes(userId, reportId);
+        Map<String, Object> result = service.availableTypes(userId);
 
         assertEquals(Boolean.TRUE, findType(result, "POST").get("free"));
         assertEquals(Boolean.TRUE, findType(result, "STORY").get("free"));
@@ -217,11 +262,11 @@ class ContentRequestServiceTest {
     void availableTypesFreeIcerikTuketildiktenSonraPostVeStoryUcretliGorunur() {
         // free_content_used=1 senaryosu: FreeUsageService artık ikisi için de false döner.
         when(paymentService.getCreditBalance(userId)).thenReturn(50L);
-        when(freeUsageService.isFreeContentAvailable(userId, reportId, ContentType.POST)).thenReturn(false);
-        when(freeUsageService.isFreeContentAvailable(userId, reportId, ContentType.STORY)).thenReturn(false);
+        when(freeUsageService.isFreeContentAvailable(userId, ContentType.POST)).thenReturn(false);
+        when(freeUsageService.isFreeContentAvailable(userId, ContentType.STORY)).thenReturn(false);
         when(freeUsageService.hasEverPurchased(userId)).thenReturn(false);
 
-        Map<String, Object> result = service.availableTypes(userId, reportId);
+        Map<String, Object> result = service.availableTypes(userId);
 
         assertEquals(Boolean.FALSE, findType(result, "POST").get("free"));
         assertEquals(Boolean.FALSE, findType(result, "STORY").get("free"));
@@ -232,19 +277,17 @@ class ContentRequestServiceTest {
         when(paymentService.getCreditBalance(userId)).thenReturn(50L);
         when(freeUsageService.hasEverPurchased(userId)).thenReturn(true);
 
-        Map<String, Object> result = service.availableTypes(userId, reportId);
+        Map<String, Object> result = service.availableTypes(userId);
 
         assertEquals(Boolean.FALSE, findType(result, "CAROUSEL").get("disabled"));
     }
 
-    @SuppressWarnings("unchecked")
     @Test
     void createIleFreeIcerikZatenTuketilmisseIkinciUretimYetersizKredideInsufficientDoner() {
         // availableTypes'ta free=false görülen durumun create() tarafındaki karşılığı: free akışa
         // hiç girilmez (tryConsumeFreeContent çağrılmaz), doğrudan kredi kontrolüne düşer.
         ContentCreateRequest req = sampleRequest("POST", false);
-        when(jdbcTemplate.queryForObject(anyString(), any(Class.class), any(), any())).thenReturn(1);
-        when(freeUsageService.isFreeContentAvailable(eq(userId), eq(reportId), any())).thenReturn(false);
+        when(freeUsageService.isFreeContentAvailable(eq(userId), any())).thenReturn(false);
         when(paymentService.getCreditBalance(userId)).thenReturn(0L);
 
         ContentCreateResponse response = service.create(userId, req);
@@ -253,14 +296,12 @@ class ContentRequestServiceTest {
         verify(freeUsageService, never()).tryConsumeFreeContent(any(), any());
     }
 
-    @SuppressWarnings("unchecked")
     @Test
     void createIleCarouselDenemesindeUcretsizHakDevreyeGirmezYetersizKredideInsufficientDoner() {
         // Ücretsiz hak SADECE 1 post veya 1 story — Carousel'e asla uygulanmaz (kural bozulmamalı,
         // bkz. FreeUsageService.isFreeContentAvailable'ın kendi CAROUSEL/REEL filtresi de ayrıca
         // FreeUsageServiceTest.carouselIcinUcretsizHakHicKullanilamaz'da doğrulanıyor).
         ContentCreateRequest req = sampleRequest("CAROUSEL", false);
-        when(jdbcTemplate.queryForObject(anyString(), any(Class.class), any(), any())).thenReturn(1);
         when(paymentService.getCreditBalance(userId)).thenReturn(0L);
 
         ContentCreateResponse response = service.create(userId, req);
