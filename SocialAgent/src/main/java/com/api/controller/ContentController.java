@@ -55,8 +55,8 @@ public class ContentController {
      * Endpoint: POST /content/create
      */
     @Operation(summary = "İçerik üretim isteği oluştur",
-            description = "Seçilen içerik tipine göre görsel + caption üretimini başlatır. socialAccountId "
-                    + "opsiyoneldir; doluysa üretim kullanıcının hesap DNA'sıyla kişiselleştirilir.")
+            description = "Seçilen içerik tipine göre görsel + caption üretimini başlatır. Kullanıcının "
+                    + "bağlı hesabı varsa üretim otomatik olarak hesap DNA'sıyla kişiselleştirilir.")
     @PostMapping("/create")
     public DataResponse<ContentCreateResponse> create(@Valid @RequestBody ContentCreateRequest request) {
         UUID userId = SecurityUtil.getCurrentUserId();

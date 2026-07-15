@@ -17,6 +17,7 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import com.api.common.ApiException;
@@ -33,8 +34,9 @@ import com.api.messaging.ContentQueueProducer;
  * Doğrulanan davranışlar:
  *  - FAZ CREDIT Madde 1: includeTextInVisual=true istekte hata döner, false istekte akış devam eder.
  *  - ICERIK-RAPOR-AYRISTIRMA-SPEC.md §2.5: request'te reportId alanı yok, create() rapor servisine/
- *    tablosuna hiç sorgu atmıyor (jdbcTemplate.queryForObject hiç çağrılmıyor — sadece socialAccountId
- *    doluysa hesap sahiplik sorgusu çalışır).
+ *    tablosuna hiç sorgu atmıyor (jdbcTemplate.queryForObject hiç çağrılmıyor).
+ *  - Kullanıcının bağlı hesabı varsa/yoksa create() bunu userId'den otomatik bulur
+ *    (resolveOwnSocialAccountId) — istekten socialAccountId alınmaz, kullanıcıya sorulmaz.
  */
 class ContentRequestServiceTest {
 
@@ -96,8 +98,9 @@ class ContentRequestServiceTest {
 
     @Test
     void raporAlaniOlmayanIstekRaporServisineHicSorguAtmaz() {
-        // Spec kabul kriteri #1/#4: reportId alanı DTO'da yok; socialAccountId de boşsa
-        // jdbcTemplate hiç çağrılmaz (rapor/hesap sahiplik sorgusu tetiklenmez).
+        // Spec kabul kriteri #1/#4: reportId alanı DTO'da yok; create() rapor tablosuna/servisine
+        // hiç sorgu atmaz (jdbcTemplate.queryForObject hiç çağrılmaz — yalnızca hesap otomatik
+        // bulma sorgusu, queryForList, çalışır).
         ContentCreateRequest req = sampleRequest("POST", false);
         when(paymentService.getCreditBalance(userId)).thenReturn(100L);
         when(contentRequestRepository.save(any(ContentRequest.class)))
@@ -109,30 +112,33 @@ class ContentRequestServiceTest {
     }
 
     @Test
-    void socialAccountIdDoluysaHesapSahiplikSorgusuCalisirVeKaydedilir() {
+    void kullanicininBagliHesabiVarsaOtomatikOlarakContentRequestEBaglanir() {
         ContentCreateRequest req = sampleRequest("POST", false);
-        req.setSocialAccountId(socialAccountId);
-        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), any(), any())).thenReturn(1);
+        when(jdbcTemplate.queryForList(anyString(), eq(UUID.class), eq(userId))).thenReturn(List.of(socialAccountId));
         when(paymentService.getCreditBalance(userId)).thenReturn(100L);
-        when(contentRequestRepository.save(any(ContentRequest.class)))
+        ArgumentCaptor<ContentRequest> savedCaptor = ArgumentCaptor.forClass(ContentRequest.class);
+        when(contentRequestRepository.save(savedCaptor.capture()))
                 .thenAnswer(inv -> inv.getArgument(0));
 
         ContentCreateResponse response = service.create(userId, req);
 
         assertEquals("QUEUED", response.getStatus());
-        verify(jdbcTemplate).queryForObject(anyString(), eq(Integer.class), eq(socialAccountId), eq(userId));
+        assertEquals(socialAccountId, savedCaptor.getValue().getSocialAccountId());
     }
 
     @Test
-    void baskaKullaniciyaAitHesapSecilirseNotFoundDoner() {
+    void kullanicininBagliHesabiYoksaSocialAccountIdNullKaydedilir() {
         ContentCreateRequest req = sampleRequest("POST", false);
-        req.setSocialAccountId(socialAccountId);
-        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), any(), any())).thenReturn(0);
+        when(jdbcTemplate.queryForList(anyString(), eq(UUID.class), eq(userId))).thenReturn(List.of());
+        when(paymentService.getCreditBalance(userId)).thenReturn(100L);
+        ArgumentCaptor<ContentRequest> savedCaptor = ArgumentCaptor.forClass(ContentRequest.class);
+        when(contentRequestRepository.save(savedCaptor.capture()))
+                .thenAnswer(inv -> inv.getArgument(0));
 
-        ApiException ex = assertThrows(ApiException.class, () -> service.create(userId, req));
+        ContentCreateResponse response = service.create(userId, req);
 
-        assertEquals("Hesap bulunamadı.", ex.getMessage());
-        verify(contentRequestRepository, never()).save(any());
+        assertEquals("QUEUED", response.getStatus());
+        assertEquals(null, savedCaptor.getValue().getSocialAccountId());
     }
 
     // ============================================================

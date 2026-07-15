@@ -34,8 +34,9 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * İçerik üretim isteği iş mantığı.
  * Görsel + caption üretim isteklerini yönetir — rapordan bağımsızdır (bkz.
- * ICERIK-RAPOR-AYRISTIRMA-SPEC.md); yalnızca kullanıcının opsiyonel bağlı hesabına (socialAccountId)
- * referans verir, DNA akışı ContentPipelineService'te hesap bazlı cache üzerinden yürür.
+ * ICERIK-RAPOR-AYRISTIRMA-SPEC.md). Kullanıcının bağlı hesabı (D2: en fazla tek hesap) varsa
+ * kullanıcıya sormadan otomatik olarak content_request'e bağlanır (bkz.
+ * resolveOwnSocialAccountId); DNA akışı ContentPipelineService'te bu hesap üzerinden yürür.
  * Service interface yok (CLAUDE.md Madde 1); concrete @Service.
  */
 @Slf4j
@@ -119,8 +120,9 @@ public class ContentRequestService {
                     "Görsel üzerine yazı ekleme özelliği şu an kullanılamıyor.");
         }
 
-        // Hesap seçildiyse (opsiyonel) bu hesabın kullanıcıya ait olduğunu doğrula
-        validateAccountOwnership(userId, request.getSocialAccountId());
+        // Kullanıcının bağlı kendi hesabı varsa otomatik bulunur (D2: en fazla tek hesap) —
+        // kullanıcıya sorulmaz, doluysa DNA akışı ContentPipelineService'te devreye girer.
+        UUID socialAccountId = resolveOwnSocialAccountId(userId);
 
         int creditCost = CreditCatalog.creditCostFor(contentType);
         UUID newContentRequestId = UUID.randomUUID();
@@ -148,7 +150,7 @@ public class ContentRequestService {
         ContentRequest entity = new ContentRequest();
         entity.setContentRequestId(newContentRequestId);
         entity.setUserId(userId);
-        entity.setSocialAccountId(request.getSocialAccountId());
+        entity.setSocialAccountId(socialAccountId);
         entity.setContentType(contentType);
         // base64 data URL ise S3'e yükle; DB'de sadece S3 URL saklansın (base64 asla yazılmaz)
         entity.setProductImageUrl(uploadProductImageIfPresent(request.getProductImageUrl(), userId, entity.getContentRequestId()));
@@ -166,7 +168,7 @@ public class ContentRequestService {
         contentQueueProducer.publish(entity.getContentRequestId());
 
         log.info("İçerik isteği oluşturuldu: id={}, userId={}, socialAccountId={}, type={}, creditCost={}, ücretsiz={}",
-                entity.getContentRequestId(), userId, request.getSocialAccountId(), contentType, creditCost, useFree);
+                entity.getContentRequestId(), userId, socialAccountId, contentType, creditCost, useFree);
 
         return ContentCreateResponse.queued(entity.getContentRequestId(), useFree ? 0 : creditCost, useFree);
     }
@@ -265,19 +267,20 @@ public class ContentRequestService {
         return entity;
     }
 
-    /** socialAccountId doluysa bu hesabın kullanıcıya ait aktif bir hesap olduğunu doğrular. */
-    private void validateAccountOwnership(UUID userId, UUID socialAccountId) {
-        if (socialAccountId == null) {
-            return;
-        }
+    /**
+     * Kullanıcının aktif kendi hesabını otomatik bulur (D2: kullanıcı başına en fazla tek hesap,
+     * bkz. AccountService/user_social_account). userId zaten JWT'den geldiği için ayrıca bir
+     * sahiplik kontrolüne gerek yok — sorgu doğrudan bu kullanıcıya scope'lanmış.
+     * Hesap yoksa null döner; içerik DNA'sız üretilmeye devam eder.
+     */
+    private UUID resolveOwnSocialAccountId(UUID userId) {
         String sql = """
-                SELECT COUNT(*) FROM user_social_account
-                WHERE user_social_account_id = ? AND user_id = ? AND active = 1
+                SELECT user_social_account_id FROM user_social_account
+                WHERE user_id = ? AND active = 1
+                LIMIT 1
                 """;
-        Integer count = jdbcTemplate.queryForObject(sql, Integer.class, socialAccountId, userId);
-        if (count == null || count == 0) {
-            throw new ApiException(ResponseCode.NOT_FOUND, "Hesap bulunamadı.");
-        }
+        List<UUID> rows = jdbcTemplate.queryForList(sql, UUID.class, userId);
+        return rows.isEmpty() ? null : rows.get(0);
     }
 
     private ContentType parseContentType(String value) {

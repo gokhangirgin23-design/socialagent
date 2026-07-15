@@ -4,8 +4,6 @@ import jakarta.validation.constraints.NotBlank;
 import lombok.Getter;
 import lombok.Setter;
 
-import java.util.UUID;
-
 @Getter
 @Setter
 public class ContentCreateRequest {
@@ -19,6 +17,6 @@ public class ContentCreateRequest {
 
     private boolean includeTextInVisual;
 
-    // Kullanıcının kendi bağlı sosyal hesabı (opsiyonel) — doluysa içerik hesap DNA'sıyla üretilir
-    private UUID socialAccountId;
+    // NOT: socialAccountId artık istekten alınmaz — kullanıcının bağlı hesabı (varsa) servis
+    // katmanında userId'den otomatik bulunur (bkz. ContentRequestService.resolveOwnSocialAccountId).
 }
