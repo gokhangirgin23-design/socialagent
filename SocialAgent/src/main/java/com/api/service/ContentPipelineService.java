@@ -83,13 +83,23 @@ public class ContentPipelineService {
             log.info("Sektör bağlamı yüklendi: contentRequestId={}, sektör={}", contentRequestId, sectorContext);
 
             // Brand DNA: içerik üretimi rapordan tamamen bağımsızdır (bkz. sınıf yorumu).
-            // socialAccountId doluysa hesap bazlı DNA cache'i kullanılır/üretilir (bkz. resolveAccountDna);
-            // boşsa DNA hiç üretilmez, prompt'lara DNA ile ilgili hiçbir şey eklenmez.
-            // Aynı content_request için (edit akışında yeniden işleme) DNA zaten üretildiyse tekrar üretilmez.
-            String brandDna = req.getBrandDnaJson();
-            if ((brandDna == null || brandDna.isBlank()) && req.getSocialAccountId() != null) {
+            // socialAccountId doluysa hesap bazlı DNA cache'i her process() çağrısında (ilk üretim
+            // VEYA edit akışında yeniden işleme) resolveAccountDna üzerinden KONTROL EDİLİR — DNA
+            // değişmediyse tek bir ucuz cache SELECT'i dışında maliyeti yoktur (bkz.
+            // loadCachedAccountDna), ama AccountDnaCacheService.invalidateAccountDnaCache hesap adı/
+            // sektör/alt sektör değişiminde cache'i pasife aldıysa burada otomatik yeniden üretilir.
+            // ÖNEMLİ: eskiden brandDnaJson content_request'e ilk üretimde donduruluyor ve edit()
+            // akışında hiç sorgulanmadan doğrudan tekrar kullanılıyordu — bu, hesap/sektör değişimi
+            // SONRASI yapılan bir "Düzenle" isteğinin invalidation'dan hiç etkilenmemesine (eski
+            // caption/görsel kimliğinin sonsuza dek kalıcı olmasına) yol açıyordu. Artık her
+            // process() çağrısı güncel DNA'yı sorar; yalnızca bu sefer üretilemezse (ör. AI geçici
+            // hata veya hiç post bulunamaması) content_request'teki önceki DNA'ya düşülür.
+            String brandDna = null;
+            if (req.getSocialAccountId() != null) {
                 brandDna = resolveAccountDna(req.getUserId(), req.getSocialAccountId(), sectorContext);
-                if (brandDna != null) {
+                if (brandDna == null) {
+                    brandDna = req.getBrandDnaJson();
+                } else if (!brandDna.equals(req.getBrandDnaJson())) {
                     req.setBrandDnaJson(brandDna);
                     saveQuiet(req);
                 }

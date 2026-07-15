@@ -38,6 +38,7 @@ import com.api.config.AppProperties;
 import com.api.dto.repository.ContentRequestRepository;
 import com.api.dto.repository.UserAccountDnaRepository;
 import com.api.entity.ContentRequest;
+import com.api.entity.ContentRequestStatus;
 import com.api.entity.ContentType;
 import com.api.entity.UserAccountDna;
 
@@ -172,6 +173,39 @@ class ContentPipelineServiceTest {
 		verify(userAccountDnaRepository, never()).save(any());
 		// DB'de post sorgusu (report_request join'i) hiç çalışmadı — cache hit'te başka hiçbir şey yapılmaz
 		verify(jdbcTemplate, never()).query(contains("report_request"), any(RowMapper.class), any(Object[].class));
+	}
+
+	@Test
+	void editAkisindaHesapSektorDegisimiSonrasiGuncelDnaKullanilirEskiDondurulenDegil() throws Exception {
+		// Regresyon: eskiden content_request.brand_dna_json ilk üretimde donduruluyor ve edit()
+		// akışında hiç sorgulanmadan doğrudan tekrar kullanılıyordu — bu, hesap/sektör değişimi
+		// SONRASI yapılan bir "Düzenle" isteğinin AccountDnaCacheService.invalidateAccountDnaCache
+		// invalidation'ından hiç etkilenmemesine yol açıyordu (kullanıcı hâlâ eski sektörün
+		// caption/görsel kimliğini görüyordu). process() artık her çağrıda güncel DNA'yı kontrol eder.
+		UUID userId = UUID.randomUUID();
+		UUID socialAccountId = UUID.randomUUID();
+
+		ContentRequest req = sampleRequest();
+		req.setUserId(userId);
+		req.setSocialAccountId(socialAccountId);
+		req.setBrandDnaJson("{\"mainProductOrService\":\"ESKİ ürün\"}"); // ilk üretimden kalan eski DNA
+		req.setEditInstruction("rengi mavi yap"); // edit akışını simüle eder
+		req.setStatus(ContentRequestStatus.PENDING);
+
+		when(contentRequestRepository.findById(req.getContentRequestId())).thenReturn(Optional.of(req));
+		when(contentRequestRepository.save(any(ContentRequest.class))).thenAnswer(inv -> inv.getArgument(0));
+
+		// Cache HIT: invalidation sonrası (başka bir üretimde) zaten yeniden üretilmiş güncel DNA
+		when(jdbcTemplate.queryForList(contains("user_account_dna"), eq(String.class), any(Object[].class)))
+				.thenReturn(List.of("{\"mainProductOrService\":\"YENİ ürün\"}"));
+
+		ArgumentCaptor<String> metadataPromptCaptor = ArgumentCaptor.forClass(String.class);
+		when(aiAnalysisService.generateContentMetadata(metadataPromptCaptor.capture())).thenReturn(null);
+
+		service.process(req.getContentRequestId());
+
+		assertEquals("{\"mainProductOrService\":\"YENİ ürün\"}", req.getBrandDnaJson());
+		assertTrue(metadataPromptCaptor.getValue().contains("YENİ ürün"));
 	}
 
 	@SuppressWarnings("unchecked")
