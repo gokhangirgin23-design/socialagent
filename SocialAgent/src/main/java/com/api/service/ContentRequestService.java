@@ -6,6 +6,7 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -276,9 +277,13 @@ public class ContentRequestService {
      * Hesap yoksa null döner; içerik DNA'sız üretilmeye devam eder.
      */
     private UUID resolveOwnSocialAccountId(UUID userId) {
+        // ORDER BY updated_date DESC: D2 (tek hesap) kuralı ihlal edilip (yarış durumu/eski veri
+        // nedeniyle) birden fazla aktif satır kalmışsa, en güncel (kullanıcının en son bağladığı)
+        // hesap seçilir — aksi halde içerik üretimi hâlâ eski hesaba göre kişiselleştirilebilir.
         String sql = """
                 SELECT user_social_account_id FROM user_social_account
                 WHERE user_id = ? AND active = 1
+                ORDER BY updated_date DESC
                 LIMIT 1
                 """;
         List<UUID> rows = jdbcTemplate.queryForList(sql, UUID.class, userId);
@@ -287,7 +292,7 @@ public class ContentRequestService {
 
     private ContentType parseContentType(String value) {
         try {
-            return ContentType.valueOf(value.toUpperCase());
+            return ContentType.valueOf(value.toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException ex) {
             throw new ApiException(ResponseCode.VALIDATION_ERROR,
                     "Geçersiz contentType. Kabul edilenler: POST, STORY, CAROUSEL, REEL");
@@ -300,7 +305,10 @@ public class ContentRequestService {
             return VisualStyle.PREMIUM;
         }
         try {
-            return VisualStyle.valueOf(value.toUpperCase());
+            // Locale.ROOT şart: Türkçe locale'de "premium".toUpperCase() "PREMİUM" üretir ve
+            // enum sabiti ASCII "PREMIUM" ile eşleşmez (yalnızca PREMIUM fallback'i sayesinde
+            // görünmez kalır — "natural" gibi başka değerlerde gerçek bir eşleşme hatası olurdu).
+            return VisualStyle.valueOf(value.toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException ex) {
             return VisualStyle.PREMIUM;
         }

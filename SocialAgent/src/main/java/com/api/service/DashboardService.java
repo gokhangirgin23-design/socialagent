@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -533,7 +534,7 @@ public class DashboardService {
 
     private String formatLabel(String mediaType) {
         if (mediaType == null) return "";
-        return switch (mediaType.toUpperCase()) {
+        return switch (mediaType.toUpperCase(Locale.ROOT)) {
             case "VIDEO" -> "Video / Reel";
             case "IMAGE" -> "Fotoğraf";
             case "CAROUSEL" -> "Çoklu Gönderi (Carousel)";

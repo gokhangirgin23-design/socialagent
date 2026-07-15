@@ -9,6 +9,7 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import org.springframework.http.MediaType;
@@ -167,8 +168,8 @@ public class VeoVideoService {
                     return instance;
                 }
                 base64 = Base64.getEncoder().encodeToString(dlResp.body());
-                if (productImageUrl.toLowerCase().contains(".png")) mimeType = "image/png";
-                else if (productImageUrl.toLowerCase().contains(".webp")) mimeType = "image/webp";
+                if (productImageUrl.toLowerCase(Locale.ROOT).contains(".png")) mimeType = "image/png";
+                else if (productImageUrl.toLowerCase(Locale.ROOT).contains(".webp")) mimeType = "image/webp";
             }
 
             instance.put("image", Map.of("bytesBase64Encoded", base64, "mimeType", mimeType));

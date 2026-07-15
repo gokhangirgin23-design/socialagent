@@ -6,6 +6,7 @@ import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 import com.api.entity.UserPayment;
@@ -491,10 +492,13 @@ public class ReportRequestService {
      * Kullanıcının aktif kendi sosyal hesabının id'sini döndürür; yoksa null.
      */
     private UUID findOwnAccountId(UUID userId) {
+        // ORDER BY updated_date DESC: D2 (tek hesap) kuralı ihlal edilip birden fazla aktif satır
+        // kalmışsa en güncel hesap seçilir (bkz. AccountService/ContentRequestService aynı desen).
         String sql = """
                 SELECT user_social_account_id
                 FROM user_social_account
                 WHERE user_id = ? AND active = 1
+                ORDER BY updated_date DESC
                 LIMIT 1
                 """;
         List<UUID> rows = jdbcTemplate.query(sql,
@@ -571,7 +575,9 @@ public class ReportRequestService {
      */
     private AnalysisMode parseAnalysisMode(String value) {
         try {
-            return AnalysisMode.valueOf(value.toUpperCase());
+            // Locale.ROOT şart: Türkçe locale'de "competitor_only".toUpperCase() "COMPETİTOR_ONLY"
+            // üretir ve ASCII enum sabitiyle eşleşmez.
+            return AnalysisMode.valueOf(value.toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
             throw new ApiException(ResponseCode.VALIDATION_ERROR,
                     "Geçersiz reportType değeri: " + value + ". Geçerli değerler: NONE, OWN_ONLY, COMPETITOR_ONLY");

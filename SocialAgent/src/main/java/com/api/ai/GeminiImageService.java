@@ -6,6 +6,7 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import org.springframework.http.MediaType;
@@ -184,7 +185,7 @@ public class GeminiImageService {
     }
 
     private String detectMimeType(String url) {
-        String lower = url.toLowerCase();
+        String lower = url.toLowerCase(Locale.ROOT);
         if (lower.contains(".png")) return "image/png";
         if (lower.contains(".gif")) return "image/gif";
         if (lower.contains(".webp")) return "image/webp";

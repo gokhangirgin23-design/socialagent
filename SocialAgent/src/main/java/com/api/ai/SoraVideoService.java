@@ -1,5 +1,6 @@
 package com.api.ai;
 
+import java.util.Locale;
 import java.util.Map;
 
 import org.springframework.http.MediaType;
@@ -137,7 +138,7 @@ public class SoraVideoService {
 
             log.debug("Sora polling: id={}, status={}, attempt={}/{}", videoId, status, i + 1, MAX_POLL);
 
-            switch (status.toLowerCase()) {
+            switch (status.toLowerCase(Locale.ROOT)) {
                 case "completed" -> { return downloadContent(videoId); }
                 case "failed"    -> {
                     log.error("Sora video başarısız: id={}", videoId);

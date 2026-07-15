@@ -3,6 +3,7 @@ package com.api.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -79,6 +80,24 @@ class AccountServiceTest {
 	}
 
 	@Test
+	void hesapAdiDegisincaAyniKullaniciPlatformIcinFazlaAktifSatirlarTemizlenir() throws Exception {
+		// D2 kendi-onarımı: yarış durumu/eski veri nedeniyle "existing" dışında başka aktif satır
+		// kalmışsa (bkz. V5 migration'ın açıklaması), addOwnAccount her çağrıda bunu temizler —
+		// aksi halde resolveOwnSocialAccountId gibi sorgular hâlâ eski hesabı seçebilir.
+		UUID userId = UUID.randomUUID();
+		UUID socialAccountId = UUID.randomUUID();
+		stubExistingAccountLookup(userId, socialAccountId, "eskiHesap");
+
+		AddOwnAccountRequest req = new AddOwnAccountRequest();
+		req.setPlatform("instagram");
+		req.setAccountName("yeniHesap");
+
+		service.addOwnAccount(userId, req);
+
+		verify(jdbcTemplate).update(anyString(), any(), eq(userId), eq("INSTAGRAM"), eq(socialAccountId));
+	}
+
+	@Test
 	void hesapAdiAyniKalirsaDnaCacheInvalidateEdilmez() throws Exception {
 		UUID userId = UUID.randomUUID();
 		UUID socialAccountId = UUID.randomUUID();
@@ -94,19 +113,28 @@ class AccountServiceTest {
 	}
 
 	@Test
-	void hesapSilinincaDnaCacheInvalidateEdilir() throws Exception {
+	void hesapSilinincaDnaCacheInvalidateEdilir() {
 		UUID userId = UUID.randomUUID();
-		UUID socialAccountId = UUID.randomUUID();
 
-		when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(Object[].class)))
-				.thenAnswer(invocation -> {
-					RowMapper<Object> mapper = invocation.getArgument(1);
-					return List.of(mapper.mapRow(mockAccountRow(socialAccountId, userId, "hesap"), 0));
-				});
+		// removeOwnAccount artık toplu UPDATE kullanıyor (D2 kendi-onarımı — birden fazla aktif
+		// satır kalmışsa hepsini pasife alır); en az 1 satır etkilendiyse başarı sayılır.
+		when(jdbcTemplate.update(anyString(), any(), eq(userId))).thenReturn(1);
 
 		service.removeOwnAccount(userId);
 
 		verify(accountDnaCacheService, times(1)).invalidateAccountDnaCache(userId);
+	}
+
+	@Test
+	void aktifHesapYoksaSilmeNotFoundFirlatirVeDnaCacheDokunulmaz() {
+		UUID userId = UUID.randomUUID();
+
+		when(jdbcTemplate.update(anyString(), any(), eq(userId))).thenReturn(0);
+
+		org.junit.jupiter.api.Assertions.assertThrows(
+				com.api.common.ApiException.class, () -> service.removeOwnAccount(userId));
+
+		verify(accountDnaCacheService, never()).invalidateAccountDnaCache(any());
 	}
 
 	/**

@@ -1,5 +1,7 @@
 package com.api.ai;
 
+import java.util.Locale;
+
 import com.api.entity.VisualStyle;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -196,8 +198,8 @@ public final class ContentPrompts {
             // Her üretimde typicalBackground'ı ezmesin diye yaklaşık 3-4 üretimden 1'inde devreye girer.
             String signatureBackground = extractJsonField(brandDnaJson, "signatureBackground");
             boolean hasSignatureBackground = signatureBackground != null && !signatureBackground.isBlank()
-                    && !signatureBackground.toLowerCase().contains("yok")
-                    && !signatureBackground.toLowerCase().contains("belirgin değil");
+                    && !signatureBackground.toLowerCase(Locale.ROOT).contains("yok")
+                    && !signatureBackground.toLowerCase(Locale.ROOT).contains("belirgin değil");
             boolean useSignatureBackground = hasSignatureBackground && Math.random() < 0.28;
 
             if (dnaVisualStyleText != null || colorPalette != null || typicalBackground != null
@@ -226,7 +228,7 @@ public final class ContentPrompts {
         }
 
         // Format bazlı talimat
-        String formatLabel = switch (contentType.toUpperCase()) {
+        String formatLabel = switch (contentType.toUpperCase(Locale.ROOT)) {
             case "STORY" -> "Instagram Story (9:16 dikey format)";
             case "CAROUSEL" -> "Instagram Carousel slaydı (" + slideRole + " — slayt " + (slideIndex + 1) + ")";
             case "REEL" -> "Instagram Reel kapak görseli (9:16 dikey format — portrait)";
@@ -253,11 +255,11 @@ public final class ContentPrompts {
 
         // avoidList'teki anahtar kelimeleri içeren seçenekleri elenmiş liste dışında bırak
         String[] avoidTokens = (avoidList != null && !avoidList.isBlank())
-                ? avoidList.toLowerCase().split(",") : new String[0];
+                ? avoidList.toLowerCase(Locale.ROOT).split(",") : new String[0];
 
         java.util.List<String> valid = new java.util.ArrayList<>();
         for (String opt : options) {
-            String lower = opt.toLowerCase();
+            String lower = opt.toLowerCase(Locale.ROOT);
             boolean blocked = false;
             for (String avoid : avoidTokens) {
                 String token = avoid.trim();

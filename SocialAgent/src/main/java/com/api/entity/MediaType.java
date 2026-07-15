@@ -1,5 +1,7 @@
 package com.api.entity;
 
+import java.util.Locale;
+
 /**
  * Sosyal medya gönderisinin medya türü (CLAUDE.md Bölüm 6).
  * AI yönlendirmesinde kullanılır (FAZ 6): TEXT -> OpenAI, IMAGE/VIDEO/CAROUSEL -> Gemini Vision.
@@ -30,8 +32,9 @@ public enum MediaType {
 		if (raw == null || raw.isBlank()) {
 			return TEXT;
 		}
-		// Karşılaştırmayı büyük harfe normalize et
-		String v = raw.trim().toUpperCase();
+		// Karşılaştırmayı büyük harfe normalize et — Locale.ROOT şart: Türkçe locale'de
+		// "video".toUpperCase() "VİDEO" (noktalı İ) üretir ve aşağıdaki ASCII "VIDEO" hiç eşleşmez.
+		String v = raw.trim().toUpperCase(Locale.ROOT);
 		// Instagram galeri tipleri -> CAROUSEL
 		if (v.contains("SIDECAR") || v.contains("CAROUSEL") || v.contains("GALLERY")) {
 			return CAROUSEL;

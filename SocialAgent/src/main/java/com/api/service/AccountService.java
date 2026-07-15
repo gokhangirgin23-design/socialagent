@@ -2,6 +2,7 @@ package com.api.service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -63,7 +64,9 @@ public class AccountService {
 	@Transactional
 	public UserSocialAccountDto addOwnAccount(UUID userId, AddOwnAccountRequest req) {
 		LocalDateTime now = LocalDateTime.now();
-		String platformNorm = req.getPlatform().toUpperCase();
+		// Locale.ROOT şart: Türkçe JVM locale'inde "instagram".toUpperCase() "İNSTAGRAM" (noktalı İ)
+		// üretir ve Platform.INSTAGRAM.name() / DB'deki ASCII "INSTAGRAM" ile hiç eşleşmez.
+		String platformNorm = req.getPlatform().toUpperCase(Locale.ROOT);
 		String newName = req.getAccountName();
 		String newUrl = buildProfileUrl(platformNorm, newName);
 
@@ -82,11 +85,14 @@ public class AccountService {
 		}
 
 		// 2) Kullanıcının bu platform için farklı aktif kaydı var mı? → güncelle (değiştirme)
+		// ORDER BY updated_date DESC: D2 (tek hesap) kuralı ihlal edilip (yarış durumu/eski veri
+		// nedeniyle) birden fazla aktif satır kalmışsa, en güncel olanı deterministik seçilir.
 		String existingActiveSql = """
 				SELECT user_social_account_id, user_id, platform, account_name, profile_url,
 				       active, created_date, updated_date
 				FROM user_social_account
 				WHERE user_id = ? AND platform = ? AND active = 1
+				ORDER BY updated_date DESC
 				LIMIT 1
 				""";
 		List<UserSocialAccount> activeRows = jdbcTemplate.query(existingActiveSql, (rs, rowNum) -> {
@@ -114,6 +120,20 @@ public class AccountService {
 			existing.setProfileUrl(newUrl);
 			existing.setUpdatedDate(now);
 			UserSocialAccount saved = userSocialAccountRepository.save(existing);
+
+			// D2 kendi-onarım: bu kullanıcı+platform için "existing" dışında başka aktif satır
+			// kalmışsa (yarış durumu veya bu fix'ten önceki eski veri) burada temizlenir — aksi
+			// halde içerik üretimi/resolveOwnSocialAccountId hâlâ eski (yanlış) hesabı seçebilir.
+			int cleaned = jdbcTemplate.update("""
+					UPDATE user_social_account
+					SET active = 0, updated_date = ?
+					WHERE user_id = ? AND platform = ? AND active = 1 AND user_social_account_id <> ?
+					""", now, userId, platformNorm, existing.getUserSocialAccountId());
+			if (cleaned > 0) {
+				log.warn("D2 (tek hesap) ihlali onarıldı: userId={}, platform={}, pasife alınan fazla aktif satır={}",
+						userId, platformNorm, cleaned);
+			}
+
 			if (nameChanged) {
 				accountDnaCacheService.invalidateAccountDnaCache(userId);
 			}
@@ -137,42 +157,24 @@ public class AccountService {
 	/**
 	 * Kullanıcının aktif kendi hesabını kaldırır (soft delete).
 	 * Kayıt bulunamazsa NOT_FOUND döner.
+	 * Tek satır bulup güncellemek yerine toplu UPDATE kullanılır: D2 (tek hesap) kuralı ihlal
+	 * edilip (yarış durumu/eski veri nedeniyle) birden fazla aktif satır kalmış olsa bile HEPSİ
+	 * pasife alınır — aksi halde arta kalan bir "hayalet" aktif satır, kaldırma sonrası bile
+	 * içerik üretiminde yanlış hesabın seçilmesine yol açabilir.
 	 * Endpoint: POST /account/own/remove
 	 */
 	@Transactional
 	public DataResponse<Void> removeOwnAccount(UUID userId) {
-		// Kullanıcının aktif kendi hesabını bul
-		String findSql = """
-				SELECT user_social_account_id, user_id, platform, account_name, profile_url,
-				       active, created_date, updated_date
-				FROM user_social_account
+		int updated = jdbcTemplate.update("""
+				UPDATE user_social_account
+				SET active = 0, updated_date = ?
 				WHERE user_id = ? AND active = 1
-				LIMIT 1
-				""";
-		List<UserSocialAccount> rows = jdbcTemplate.query(findSql, (rs, rowNum) -> {
-			UserSocialAccount a = new UserSocialAccount();
-			a.setUserSocialAccountId(rs.getObject("user_social_account_id", UUID.class));
-			a.setUserId(rs.getObject("user_id", UUID.class));
-			a.setPlatform(rs.getString("platform"));
-			a.setAccountName(rs.getString("account_name"));
-			a.setProfileUrl(rs.getString("profile_url"));
-			a.setActive(rs.getObject("active", Integer.class));
-			if (rs.getTimestamp("created_date") != null)
-				a.setCreatedDate(rs.getTimestamp("created_date").toLocalDateTime());
-			if (rs.getTimestamp("updated_date") != null)
-				a.setUpdatedDate(rs.getTimestamp("updated_date").toLocalDateTime());
-			return a;
-		}, userId);
+				""", LocalDateTime.now(), userId);
 
-		if (rows.isEmpty()) {
+		if (updated == 0) {
 			throw new ApiException(ResponseCode.NOT_FOUND, "Silinecek aktif kendi hesabı bulunamadı");
 		}
 
-		// Soft delete
-		UserSocialAccount account = rows.get(0);
-		account.setActive(0);
-		account.setUpdatedDate(LocalDateTime.now());
-		userSocialAccountRepository.save(account);
 		// Hesap kaldırıldığında eski Brand DNA cache'i de pasife al
 		accountDnaCacheService.invalidateAccountDnaCache(userId);
 		return DataResponse.of(ResponseCode.SUCCESS);
@@ -185,11 +187,13 @@ public class AccountService {
 	@Transactional(readOnly = true)
 	public UserSocialAccountDto getOwnAccount(UUID userId) {
 		// Kullanıcının aktif hesabını native sorgu ile çek (D2: tek hesap)
+		// ORDER BY updated_date DESC: birden fazla aktif satır kalmışsa en güncel olan seçilir.
 		String sql = """
 				SELECT user_social_account_id, user_id, platform, account_name, profile_url,
 				       active, created_date, updated_date
 				FROM user_social_account
 				WHERE user_id = ? AND active = 1
+				ORDER BY updated_date DESC
 				LIMIT 1
 				""";
 		List<UserSocialAccount> rows = jdbcTemplate.query(sql, (rs, rowNum) -> {
@@ -228,7 +232,9 @@ public class AccountService {
 	public MonitoredAccountDto addMonitoredAccount(UUID userId, AddMonitoredAccountRequest req) {
 		LocalDateTime now = LocalDateTime.now();
 		// Platform büyük harf normalize et
-		String platformNorm = req.getPlatform().toUpperCase();
+		// Locale.ROOT şart: Türkçe JVM locale'inde "instagram".toUpperCase() "İNSTAGRAM" (noktalı İ)
+		// üretir ve Platform.INSTAGRAM.name() / DB'deki ASCII "INSTAGRAM" ile hiç eşleşmez.
+		String platformNorm = req.getPlatform().toUpperCase(Locale.ROOT);
 		String accountName = req.getAccountName();
 
 		// 0) Kullanıcının aktif izlenen hesap sayısı ≤ 5 kontrolü (backend guard)
