@@ -85,15 +85,17 @@ app:
     # Aktör id'leri yolda "~" ile yazılır (apify~actor-name)
     profile-actor-id: ${APIFY_PROFILE_ACTOR:apify~instagram-search-scraper}
     post-actor-id: ${APIFY_POST_ACTOR:apify~instagram-post-scraper}
-    # Sektör top-N (D1 -> 5) ve hesap başına son gönderi (-> 5)
+    # Sektör top-N (D1 -> 5) ve hesap başına son gönderi (-> 5, artık yalnızca SECTOR dışı eski kullanım)
     top-profiles-limit: ${APIFY_TOP_PROFILES:5}
     recent-posts-limit: ${APIFY_RECENT_POSTS:5}
-    # Hedef tipine göre post limiti: kendi hesabı 10, rakip hesap 2 (rapor süresini kısaltmak için)
-    # Kendi post penceresi 5→10 büyütüldü (Sur Balık vakası): Brand DNA'ya daha geniş bir örneklem
-    # sağlar, imza varyasyonların (bkz. signatureBackground) gerçek bir desen mi tek seferlik mi
-    # olduğunu ayırt etmeye yardımcı olur. Rakip/sektör limitleri kasıtlı olarak değiştirilmedi.
-    own-posts-limit: ${APIFY_OWN_POSTS:10}
+    # Geliştirme 2 — hedef tipine göre post limiti: kendi hesabı 5, rakip hesap 2, sektör hesabı
+    # (başına) 3. own-posts-limit 10→5'e geri çekildi (Sur Balık vakasındaki 5→10 büyütmesi geri
+    # alındı — otomatik BOTH/OWN_ONLY modunda "kendi son 5 postu" kuralına uymak için).
+    # ⚠️ VPS'te APIFY_OWN_POSTS env değişkeni set edilmişse bu default'u ezer; deployment'ta manuel
+    # olarak kaldırılması/5 yapılması gerekir (bkz. yapılacaklar raporu 2.3 notu).
+    own-posts-limit: ${APIFY_OWN_POSTS:5}
     competitor-posts-limit: ${APIFY_COMPETITOR_POSTS:2}
+    sector-posts-limit: ${APIFY_SECTOR_POSTS:3}
     # run-sync okuma zaman aşımı (sn)
     timeout-seconds: ${APIFY_TIMEOUT_SECONDS:120}
   # ===== FAZ 5: Worker (RabbitMQ consumer) =====

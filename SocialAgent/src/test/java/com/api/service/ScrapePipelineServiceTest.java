@@ -135,6 +135,27 @@ class ScrapePipelineServiceTest {
     }
 
     // ============================================================
+    // Geliştirme 2 — SECTOR hedefinde yeni sector-posts-limit kullanılır
+    // ============================================================
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void sektorHedefindeYeniSectorPostsLimitKullanilir() {
+        // AppProperties varsayılanı: sectorPostsLimit=3 (own=5, competitor=2'den ayrı bir alan) —
+        // recentLimitFor artık SECTOR için eski recent-posts-limit (5) yerine bunu okumalı.
+        when(reportRequestRepository.findById(requestId)).thenReturn(Optional.of(request()));
+        ScrapeTarget sectorTarget = ScrapeTarget.sector("INSTAGRAM", "https://www.instagram.com/sektor_hesap/");
+        when(targetResolver.resolve(any(ReportRequest.class))).thenReturn(List.of(sectorTarget));
+        when(socialPostService.isRecentlyAnalyzed(any(ScrapeTarget.class))).thenReturn(false);
+        when(apifyClient.fetchPostsByUrls(any(List.class), anyInt())).thenReturn(List.of(samplePost("p1")));
+        when(reportPipelineService.generateReport(eq(requestId))).thenReturn(true);
+
+        pipeline.processRequest(requestId);
+
+        verify(apifyClient).fetchPostsByUrls(any(List.class), eq(3));
+    }
+
+    // ============================================================
     // V11 — Ücretsiz ilk kullanım: gerçek kredi düşümü ASLA denenmemeli
     // ============================================================
 

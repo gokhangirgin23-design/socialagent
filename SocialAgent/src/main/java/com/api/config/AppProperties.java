@@ -104,12 +104,17 @@ public class AppProperties {
 		private String postActorId = "apify~instagram-post-scraper";
 		// Sektör "top N" profil sayısı (D1 -> 5)
 		private int topProfilesLimit = 5;
-		// Hesap başına çekilecek son gönderi sayısı (SECTOR hedefleri için; -> 5)
+		// Hesap başına çekilecek son gönderi sayısı (eski genel ayar — Geliştirme 2'den beri SECTOR
+		// hedefleri için kullanılmıyor, bkz. sectorPostsLimit; başka bir yerde kullanılmadığından dokunulmadı)
 		private int recentPostsLimit = 5;
-		// Kendi hesabı için çekilecek son gönderi sayısı (-> 5)
+		// Kendi hesabı için çekilecek son gönderi sayısı (Geliştirme 2 -> 5)
 		private int ownPostsLimit = 5;
 		// Rakip (monitored) hesap başına çekilecek son gönderi sayısı (-> 2; rapor süresini kısaltmak için)
 		private int competitorPostsLimit = 2;
+		// Geliştirme 2: sektör hesabı başına çekilecek son gönderi sayısı (-> 3; own=5 + sektör
+		// top5*3 ile toplam veri hacmini makul tutmak için recentPostsLimit'ten ayrıştırıldı —
+		// AI analizi sıralı (post başına 1 çağrı) çalıştığından 5 yerine 3 seçildi)
+		private int sectorPostsLimit = 3;
 		// run-sync uzun sürebileceğinden okuma zaman aşımı (sn)
 		private long timeoutSeconds = 120;
 

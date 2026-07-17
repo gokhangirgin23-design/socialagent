@@ -41,7 +41,8 @@ public class ReportRequestController {
      * Kredi yeterliyse istek kuyruğa basılır (data.insufficientCredits=false).
      * Yetersizse data.insufficientCredits=true + data.requiredCredits + data.creditBalance döner;
      * kullanıcı /payment/packages üzerinden paket satın almaya yönlendirilir.
-     * reportType kullanıcı tarafından açıkça seçilir.
+     * Geliştirme 2: reportType artık body'den okunmaz; mod (BOTH/OWN_ONLY) hesap/rakip durumuna
+     * göre backend'de otomatik belirlenir (bkz. ReportRequestService.createRequest).
      */
     @Operation(summary = "Rapor isteği oluştur (kredi kapılı)", description = "Kredi yeterliyse isteği kuyruğa basar (data.insufficientCredits=false); yetersizse data.insufficientCredits=true + data.requiredCredits + data.creditBalance döner.")
     @PostMapping("/create")
@@ -66,10 +67,12 @@ public class ReportRequestController {
     }
 
     /**
-     * Kullanıcının hangi analiz türlerini seçebileceğini döndürür (frontend için).
-     * Frontend bu bilgiyle seçilemeyen seçenekleri devre dışı bırakır.
+     * Rapor oluşturmanın kredi maliyeti, ücretsiz hak durumu, bakiye ve oluşturulabilirlik
+     * (canCreate/blockReason) bilgisini tek nesnede döndürür (frontend için).
+     * Geliştirme 2: UI'da tip seçimi yok; frontend bu bilgiyle tek "Raporu oluştur" butonunu
+     * gösterir/gizler ve engelliyse blockReason'ı kullanıcıya gösterir.
      */
-    @Operation(summary = "Seçilebilir analiz tipleri", description = "Kullanıcının hesap durumuna göre seçilebilen analiz tiplerini kredi maliyeti ve kredi bakiyesiyle döndürür.")
+    @Operation(summary = "Rapor oluşturma durumu", description = "Kullanıcının rapor oluşturup oluşturamayacağını, kredi maliyetini, ücretsiz hakkı ve bakiyesini döndürür.")
     @PostMapping("/available-types")
     public DataResponse<AvailableTypesResponseDto> availableTypes() {
         UUID userId = SecurityUtil.getCurrentUserId();

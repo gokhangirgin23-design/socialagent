@@ -1,19 +1,19 @@
 package com.api.dto;
 
-import jakarta.validation.constraints.NotBlank;
 import lombok.Getter;
 import lombok.Setter;
 
 /**
  * Yeni rapor isteği oluşturma body'si (POST /report-request/create).
- * reportType kullanıcı tarafından açıkça seçilir; hesap doluluk durumuna göre otomatik belirlenmez.
+ * Geliştirme 2: reportType artık kullanıcıdan alınmaz — hesap/rakip durumuna göre backend
+ * otomatik belirler (bkz. ReportRequestService.createRequest). Alan yalnızca eski istemcilerle
+ * geriye uyumluluk için DTO'da bırakıldı; gönderilse de OKUNMAZ.
  * userId JWT'den alınır, istekten okunmaz (CLAUDE.md Madde 4).
  */
 @Getter
 @Setter
 public class CreateReportRequestDto {
 
-    // Analiz türü: OWN_ONLY | COMPETITOR_ONLY | BOTH | NONE (zorunlu, kullanıcı seçer)
-    @NotBlank(message = "reportType zorunludur")
+    // ARTIK KULLANILMIYOR — geriye uyumluluk için DTO'da duruyor, backend bu alanı okumaz.
     private String reportType;
 }

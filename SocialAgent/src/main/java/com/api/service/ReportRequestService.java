@@ -45,15 +45,15 @@ import lombok.extern.slf4j.Slf4j;
  * Rapor isteği oluşturma, listeleme ve seçilebilirlik iş mantığı.
  * Service interface yok (CLAUDE.md Madde 1); concrete @Service.
  *
- * Temel akış:
- *   1) reportType kullanıcı tarafından açıkça seçilir (otomatik belirlenmez).
+ * Temel akış (Geliştirme 2 — tek tip rapor + otomatik mod seçimi):
+ *   1) reportType artık kullanıcıdan ALINMAZ; kendi/rakip hesap durumuna göre backend otomatik belirler.
  *   2) İstek tabloya eklenir, ardından direkt kuyruğa basılır (scheduler yok).
  *   3) Kuyruk FIFO mantığıyla çalışır; worker pipeline'ı tetikler.
  *
- * Doğrulama:
- *   - OWN_ONLY / BOTH seçilmişse kullanıcının aktif kendi hesabı olmalı.
- *   - COMPETITOR_ONLY / BOTH seçilmişse en az bir izlenen hesap olmalı.
- *   - NONE / OWN_ONLY seçilmişse sektör seçili olmalı (hashtag araştırması için).
+ * Mod otomatik belirleme kuralları:
+ *   - Kullanıcının aktif kendi hesabı YOKSA → engellenir, hiçbir kayıt oluşturulmaz.
+ *   - Kendi hesabı VAR + en az 1 izlenen rakip hesap VARSA → mode = BOTH.
+ *   - Kendi hesabı VAR + rakip hesap YOKSA → mode = OWN_ONLY; bu durumda sektör seçili olmalı.
  *
  * Lookup'lar JdbcTemplate native + text-block SQL + "?" (CLAUDE.md Madde 6).
  * Insert JPA save, güncelleme (queue_pushed flag) native UPDATE.
@@ -90,10 +90,11 @@ public class ReportRequestService {
 
     /**
      * Yeni rapor isteği oluşturur (FAZ CREDIT — kredi kapısı).
-     * reportType istekten gelir; hesap doluluk durumuna göre OTOMATİK BELİRLENMEZ.
+     * Geliştirme 2: reportType istekten OKUNMAZ; mod hesap/rakip durumuna göre otomatik belirlenir.
      *
      * Akış:
-     *   1) Validasyon (mod, hesap, sektör) — eskisiyle aynı.
+     *   1) Validasyon + mod otomatik belirleme (kendi hesap zorunlu; rakip varsa BOTH, yoksa
+     *      OWN_ONLY + sektör zorunlu).
      *   2) Kredi YETERLİ ise: rapor isteği oluştur + kuyruğa bas (kredi düşümü COMPLETED'de yapılır, #40).
      *   3) Kredi YETERSİZ ise: rapor isteği OLUŞTURULMAZ; insufficientCredits=true + requiredCredits
      *      + creditBalance döner (kullanıcı /payment/packages üzerinden paket satın almalıdır).
@@ -103,27 +104,22 @@ public class ReportRequestService {
     @Transactional
     public ReportRequestDto createRequest(UUID userId, CreateReportRequestDto req) {
 
-        // 1) Validasyon (mod, hesap, sektör)
-        AnalysisMode mode = parseAnalysisMode(req.getReportType());
-        if (mode == AnalysisMode.BOTH) {
+        // 1) Mod otomatik belirleme — kendi hesap yoksa hiçbir kayıt oluşturulmadan/kredi
+        // kontrolüne girilmeden anında engellenir.
+        UUID ownAccountId = findOwnAccountId(userId);
+        if (ownAccountId == null) {
             throw new ApiException(ResponseCode.VALIDATION_ERROR,
-                    "BOTH modu desteklenmemektedir. Geçerli tipler: NONE, OWN_ONLY, COMPETITOR_ONLY");
+                    "Rapor oluşturmak için önce kendi hesabınızı eklemelisiniz.");
         }
-        UUID ownAccountId = null;
-        if (mode == AnalysisMode.OWN_ONLY) {
-            ownAccountId = findOwnAccountId(userId);
-            if (ownAccountId == null) {
+        AnalysisMode mode;
+        if (hasMonitoredAccounts(userId)) {
+            mode = AnalysisMode.BOTH;
+        } else {
+            mode = AnalysisMode.OWN_ONLY;
+            if (!hasSectorSelected(userId)) {
                 throw new ApiException(ResponseCode.VALIDATION_ERROR,
-                        "OWN_ONLY modu için aktif kendi hesabınız bulunmamaktadır. Önce hesap ekleyin.");
+                        "Sektör analizi için önce sektör seçmelisiniz.");
             }
-        }
-        if (mode == AnalysisMode.COMPETITOR_ONLY && !hasMonitoredAccounts(userId)) {
-            throw new ApiException(ResponseCode.VALIDATION_ERROR,
-                    "COMPETITOR_ONLY modu için izlenen rakip hesap bulunmamaktadır. Önce rakip hesap ekleyin.");
-        }
-        if ((mode == AnalysisMode.NONE || mode == AnalysisMode.OWN_ONLY) && !hasSectorSelected(userId)) {
-            throw new ApiException(ResponseCode.VALIDATION_ERROR,
-                    "Sektör araştırması için önce sektör seçilmelidir.");
         }
 
         // 2) Ödeme kapısı kapalıysa kredi kontrolü atlanır; doğrudan istek oluşturulur (PAYMENT_ENABLED=false)
@@ -396,38 +392,38 @@ public class ReportRequestService {
     }
 
     /**
-     * Kullanıcının seçebileceği analiz türlerini fiyat + cüzdan bakiyesiyle döndürür.
-     * NONE daima listelenir; OWN_ONLY kendi hesabı varsa, COMPETITOR_ONLY rakip hesabı varsa eklenir.
+     * Rapor oluşturmanın kredi maliyetini, ücretsiz hak durumunu, bakiyeyi ve
+     * oluşturulabilirlik (canCreate/blockReason) bilgisini tek nesnede döndürür.
+     * Geliştirme 2: UI'da artık tip seçimi yok — mod backend'de otomatik belirlendiğinden
+     * bu uç yalnızca "oluşturabilir miyim, ne kadara" bilgisini taşır; createRequest'teki
+     * validasyon kurallarıyla BİREBİR aynı mantığı yansıtır.
      * Endpoint: POST /report-request/available-types
      */
     @Transactional(readOnly = true)
     public AvailableTypesResponseDto getAnalysisSelectability(UUID userId) {
         boolean hasOwn = findOwnAccountId(userId) != null;
-        boolean hasMonitored = hasMonitoredAccounts(userId);
         long creditBalance = paymentService.getCreditBalance(userId);
-        // V11: ücretsiz hak varsa TÜM tipler ücretsiz gösterilir (fiyat tipten bağımsız sabit —
-        // hangi tipi seçerse seçsin ilk üretimi ücretsizdir)
+        // V11: ücretsiz hak varsa fiyat tipten bağımsız sabit olduğundan mod farketmeksizin true
         boolean freeAvailable = appProperties.getPayment().isEnabled() && freeUsageService.isFreeReportAvailable(userId);
+        // Tüm modlarda tek fiyat (ReportPriceResolver) — hangi mod geçildiği sonucu değiştirmez
+        int creditCost = reportPriceResolver.creditCostFor(AnalysisMode.OWN_ONLY);
 
-        List<AvailableTypesResponseDto.ReportTypeOption> types = new ArrayList<>();
-        // NONE: sektör analizi — her zaman seçilebilir
-        types.add(new AvailableTypesResponseDto.ReportTypeOption(
-                "NONE", "Sektör analizi", reportPriceResolver.creditCostFor(AnalysisMode.NONE), freeAvailable));
-        // OWN_ONLY: kendi hesabı varsa seçilebilir
-        if (hasOwn) {
-            types.add(new AvailableTypesResponseDto.ReportTypeOption(
-                    "OWN_ONLY", "Kendi Hesabım ile Sektör Analizi", reportPriceResolver.creditCostFor(AnalysisMode.OWN_ONLY), freeAvailable));
-        }
-        // COMPETITOR_ONLY: en az 1 rakip hesabı varsa seçilebilir
-        if (hasMonitored) {
-            types.add(new AvailableTypesResponseDto.ReportTypeOption(
-                    "COMPETITOR_ONLY", "Rakip hesap analizi",
-                    reportPriceResolver.creditCostFor(AnalysisMode.COMPETITOR_ONLY), freeAvailable));
+        boolean canCreate = true;
+        String blockReason = null;
+        if (!hasOwn) {
+            canCreate = false;
+            blockReason = "Rapor oluşturmak için önce kendi hesabınızı eklemelisiniz.";
+        } else if (!hasMonitoredAccounts(userId) && !hasSectorSelected(userId)) {
+            canCreate = false;
+            blockReason = "Sektör analizi için önce sektör seçmelisiniz.";
         }
 
         return AvailableTypesResponseDto.builder()
+                .creditCost(creditCost)
+                .free(freeAvailable)
                 .creditBalance(creditBalance)
-                .types(types)
+                .canCreate(canCreate)
+                .blockReason(blockReason)
                 .build();
     }
 
