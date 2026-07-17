@@ -6,6 +6,12 @@
 -- NOT: Bu dosya eski V1-V13 migration'larının tek şema/tohum halinde
 -- birleştirilmiş (squash) hâlidir; eski dosyalar artık yoktur
 -- (spectiqs-gelistirme-paketi Ek Görev — konsolidasyon, 2026-07-14).
+-- İKİNCİ squash (2026-07-17, "rakip hesap" özelliğinin kaldırılması): eski
+-- V1-V5'in tek şema/tohum halinde birleştirilmiş hâli — monitored_account,
+-- user_monitored_account tabloları ve social_post.monitored_account_id
+-- kolonu tamamen kaldırıldı (izlenen/rakip hesap özelliği tümden kalktı).
+-- content_request/user_account_dna eski V2/V3'ün nihai hâliyle doğrudan
+-- yaratılır (ALTER TABLE replay edilmez).
 -- ============================================================
 
 -- ============================================================
@@ -81,35 +87,10 @@ CREATE TABLE user_social_account (
 );
 CREATE INDEX idx_usa_user_id ON user_social_account (user_id);
 
--- Global izlenen hesap havuzu
-CREATE TABLE monitored_account (
-    monitored_account_id  UUID PRIMARY KEY,
-    platform              VARCHAR(50)  NOT NULL,
-    account_name          VARCHAR(255) NOT NULL,
-    profile_url           VARCHAR(1000),  -- platforma göre otomatik üretilir (INSTAGRAM şimdilik)
-    active                INTEGER NOT NULL DEFAULT 1,
-    created_date          TIMESTAMP,
-    updated_date          TIMESTAMP,
-    CONSTRAINT uq_ma_platform_account UNIQUE (platform, account_name)
-);
-
--- Kullanıcı <-> izlenen hesap eşleşmesi
--- NOT: DB-level UNIQUE(user_id, monitored_account_id) kasıtlı olarak yok;
--- kullanıcı rakip hesabı silip tekrar eklediğinde inactive kayıt kalabiliyor,
--- service katmanı bunu UPDATE ile yönetir (DB constraint kesin engel oluşturuyordu).
-CREATE TABLE user_monitored_account (
-    user_monitored_account_id  UUID PRIMARY KEY,
-    user_id                    UUID NOT NULL,
-    monitored_account_id       UUID NOT NULL,
-    active                     INTEGER NOT NULL DEFAULT 1,
-    created_date               TIMESTAMP,
-    updated_date               TIMESTAMP
-);
-CREATE INDEX idx_uma_user_id ON user_monitored_account (user_id);
-CREATE INDEX idx_uma_monitored_id ON user_monitored_account (monitored_account_id);
-
 -- Rapor isteği (scheduler yok; istek oluşunca direkt kuyruğa basılır)
--- report_type: OWN_ONLY | COMPETITOR_ONLY | NONE
+-- report_type: OWN_ONLY | NONE (Geliştirme 2 — rakip hesap özelliği kaldırıldığından
+--   COMPETITOR_ONLY/BOTH artık üretilmez; NONE de create() üzerinden üretilemez, geriye
+--   dönük/teknik bir değer olarak enum'da durur)
 -- queue_pushed: 0 = kuyruğa basılmadı, 1 = basıldı
 -- selected_user_social_account_id: OWN_ONLY modunda kullanıcının seçilen kendi hesabı
 --
@@ -168,13 +149,12 @@ CREATE INDEX idx_report_request_credit_debited ON report_request (status, credit
 
 -- Çekilen sosyal medya gönderileri
 -- request_id: bağlı rapor isteği
--- source_type: OWN | MONITORED | SECTOR  (kaynak ayrımı bu kolondan)
+-- source_type: OWN | SECTOR  (Geliştirme 2 — rakip hesap kaldırıldığından MONITORED artık üretilmez)
 -- result_json: Apify ham JSON (OpenAI analiz promptuna ham veri)
 CREATE TABLE social_post (
     social_post_id        UUID PRIMARY KEY,
     request_id            UUID NOT NULL,
-    monitored_account_id  UUID,            -- nullable (yalnız MONITORED)
-    source_type           VARCHAR(20),     -- OWN | MONITORED | SECTOR
+    source_type           VARCHAR(20),     -- OWN | SECTOR
     sector_account_name   VARCHAR(255),    -- nullable (yalnız SECTOR hesabı adı)
     platform              VARCHAR(50)  NOT NULL,
     platform_post_id      VARCHAR(255) NOT NULL,
@@ -194,7 +174,6 @@ CREATE TABLE social_post (
     CONSTRAINT uq_social_post_platform_postid UNIQUE (platform, platform_post_id)
 );
 CREATE INDEX idx_social_post_request_id ON social_post (request_id);
-CREATE INDEX idx_social_post_monitored_id ON social_post (monitored_account_id);
 -- Rapor sorgusu kaynak bazlı gruplama yapar (request_id + source_type)
 CREATE INDEX idx_social_post_request_source ON social_post (request_id, source_type);
 
@@ -273,7 +252,8 @@ CREATE TABLE user_payment (
 -- payment_status  : INITIATED | PENDING | SUCCESS | FAILED | EXPIRED
 -- merchant_oid    : PayTR sipariş no (idempotensi anahtarı, UNIQUE)
 -- processed       : bakiye bu satır için işlendi mi (0/1)
--- pending_*       : ödeme tamamlanınca oluşturulacak rapor isteğinin niyeti (deficit akışı)
+-- pending_*       : ödeme tamamlanınca oluşturulacak rapor isteğinin niyeti (deficit akışı) —
+--   pending_report_type Geliştirme 2 sonrası yalnızca OWN_ONLY/NONE değeri taşır
 -- report_id       : ödeme tamamlanıp rapor üretilince ScrapePipelineService tarafından doldurulur
 -- amount/currency : NOT NULL DEĞİL (eski V4/V5) — DEBIT/REFUND kredi hareketlerinde TL tutarı/para
 --   birimi kavramı yok; writeCreditMovementLog() bu alanları hiç set etmez, Hibernate INSERT'i tüm
@@ -322,21 +302,41 @@ CREATE INDEX idx_upl_status         ON user_payment_log (payment_status);
 CREATE INDEX idx_upl_report_request ON user_payment_log (report_request_id);
 CREATE INDEX idx_upl_report_id      ON user_payment_log (report_id);
 
+-- Hesap bazlı Brand DNA cache (eski V2): artık rapora değil, kullanıcının bağlı sosyal hesabına
+-- bağlanır. İlk içerik üretiminde hesabın son 5 gönderisinden bir kez çıkarılır, sonra hep bu
+-- satırdan okunur.
+CREATE TABLE user_account_dna (
+    user_account_dna_id UUID          PRIMARY KEY,
+    user_id              UUID          NOT NULL,
+    social_account_id    UUID          NOT NULL,           -- user_social_account.user_social_account_id
+    dna_json              TEXT          NOT NULL,           -- AI'dan dönen Brand DNA JSON
+    source_post_count     INTEGER       NOT NULL DEFAULT 0, -- analiz edilen gönderi sayısı (<=5)
+    active                 SMALLINT      NOT NULL DEFAULT 1,
+    created_date            TIMESTAMP,
+    updated_date             TIMESTAMP,
+    CONSTRAINT uq_user_account_dna UNIQUE (user_id, social_account_id)
+);
+CREATE INDEX idx_user_account_dna_user ON user_account_dna(user_id);
+
 -- İçerik üretimi tablosu
--- Kullanıcı bir rapor üzerinden görsel/caption üretim isteği açar;
+-- Kullanıcı bir rapor üzerinden görsel/caption üretim isteği açar (report_id opsiyonel — eski V2
+-- ile içerik üretimi rapordan bağımsız hale geldi, hesap bazlı üretim social_account_id ile);
 -- worker üretimi asenkron yapar, durum bu tabloda izlenir.
+-- visual_style: "Premium Üret" / "Doğal Üret" (eski V3, default PREMIUM).
 -- credit_debited/credit_debit_error/credit_debit_attempts: kredi düşümü mutabakatı (eski V6).
 -- is_free_usage: bu içerik ücretsiz ilk kullanım hakkıyla mı oluşturuldu (eski V11).
 CREATE TABLE content_request (
     content_request_id      UUID            PRIMARY KEY,
     user_id                 UUID            NOT NULL,
-    report_id               UUID            NOT NULL,           -- report.report_id bağlantısı
+    report_id               UUID,                              -- report.report_id bağlantısı (opsiyonel)
+    social_account_id       UUID,                              -- user_social_account.user_social_account_id (opsiyonel)
     content_type            VARCHAR(20)     NOT NULL,           -- POST|STORY|CAROUSEL|REEL|ALL
     product_image_url       TEXT,                              -- kullanıcının yüklediği ürün görseli
     include_text_in_visual  BOOLEAN         NOT NULL DEFAULT FALSE,
     edit_instruction        TEXT,                              -- son düzenleme açıklaması (yeniden kuyruğa basılınca güncellenir)
     edit_count              INTEGER         NOT NULL DEFAULT 0, -- max edit-limit (config) hakkı
     status                  VARCHAR(20)     NOT NULL DEFAULT 'PENDING', -- PENDING|PROCESSING|COMPLETED|FAILED
+    visual_style             VARCHAR(16)     NOT NULL DEFAULT 'PREMIUM',
     brand_dna_json          TEXT,                              -- OpenAI'dan üretilen Brand DNA (yeniden kullanılır)
     visual_urls              TEXT,                              -- JSON array; S3 URL'leri
     caption                  TEXT,

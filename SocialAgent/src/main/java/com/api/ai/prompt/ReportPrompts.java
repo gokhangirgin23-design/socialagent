@@ -11,12 +11,12 @@ import com.api.dto.AccountReportRow;
  *   → Token verimliliği (150 post satırı yerine 5-10 hesap özeti)
  *   → Daha yapısal ve karşılaştırılabilir veri
  *
- * analysisMode'a göre iki rapor tipi:
- *   - OWN_ONLY / BOTH → Karşılaştırmalı: kendi hesabı vs. rakip/sektör
- *   - NONE / COMPETITOR_ONLY → Başarı faktörü: nerede ve neden başarılı
+ * analysisMode'a göre iki rapor tipi (rakip hesap özelliği kaldırıldığından yalnızca bu ikisi kaldı):
+ *   - OWN_ONLY → Karşılaştırmalı: kendi hesabı vs. sektör
+ *   - NONE     → Başarı faktörü: nerede ve neden başarılı
  *
  * Başlıklar: Özet | İçerik Önerileri | Hashtag Önerileri | Paylaşım Takvimi |
- *            Rakiplerden Öğren | Aksiyon Planı
+ *            Sektörden Öğren | Aksiyon Planı
  */
 public final class ReportPrompts {
 
@@ -28,7 +28,7 @@ public final class ReportPrompts {
 			işine ait hesap bazlı istatistikler veriliyor (her hesap için: ortalama beğeni, içerik tipi
 			dağılımı, reel oranı, insan/model kullanımı, ürün odaklılık, açıklama tonu, görsel temalar vb.).
 
-			Veriler; kullanıcının KENDİ hesabı ile rakip/sektör hesaplarını içermektedir.
+			Veriler; kullanıcının KENDİ hesabı ile sektör hesaplarını içermektedir.
 			Karşılaştırmalı bir Türkçe rapor üret.
 
 			Çıktı kuralları:
@@ -54,7 +54,7 @@ public final class ReportPrompts {
 			## ✍️ Açıklama (Caption) Stratejisi
 			## #️⃣ Hashtag Önerileri
 			## 📅 Paylaşım Takvimi
-			## 🔍 Rakiplerden Öğren
+			## 🔍 Sektörden Öğren
 			## 🚀 Aksiyon Planı
 
 			Notlar:
@@ -93,7 +93,7 @@ public final class ReportPrompts {
 			## ✍️ Açıklama (Caption) Stratejisi
 			## #️⃣ Hashtag Önerileri
 			## 📅 Paylaşım Takvimi
-			## 🔍 Rakiplerden Öğren
+			## 🔍 Sektörden Öğren
 			## 🚀 Aksiyon Planı
 
 			Notlar:
@@ -112,7 +112,7 @@ public final class ReportPrompts {
 	 * @return OpenAI'a verilecek prompt
 	 */
 	public static String forJob(List<AccountReportRow> summaries, String analysisMode, String sectorName, String subsectorName) {
-		boolean isComparison = "OWN_ONLY".equals(analysisMode) || "BOTH".equals(analysisMode);
+		boolean isComparison = "OWN_ONLY".equals(analysisMode);
 		String systemRule = isComparison ? COMPARISON_RULE : SUCCESS_FACTOR_RULE;
 
 		StringBuilder sb = new StringBuilder();
@@ -155,7 +155,7 @@ public final class ReportPrompts {
 
 	/**
 	 * Hesap bazlı özetlerden dashboard structured insight JSON prompt'u üretir.
-	 * Çıktı: {"topInsight":"...","competitorFinding":"...","recommendation":"...","actionPlan":["..."]}
+	 * Çıktı: {"topInsight":"...","sectorFinding":"...","recommendation":"...","actionPlan":["..."]}
 	 *
 	 * @param sectorName rapor isteğinde donmuş (V10 snapshot) sektör adı; yoksa null
 	 * @param subsectorName rapor isteğinde donmuş (V10 snapshot) alt sektör adı; yoksa null
@@ -175,7 +175,7 @@ public final class ReportPrompts {
 				Aşağıdaki Instagram analiz istatistiklerine dayanarak kullanıcıya kısa ve yapısal bir içgörü özeti üret.
 
 				SADECE aşağıdaki JSON formatında yanıt ver (Markdown, açıklama veya kod bloğu EKLEME):
-				{"topInsight":"En önemli tek bulgu (1-2 cümle)","competitorFinding":"Rakip/sektör karşılaştırmasından kritik bulgu (1-2 cümle)","recommendation":"En öncelikli uygulama önerisi (1-2 cümle)","actionPlan":["Aksiyon 1","Aksiyon 2","Aksiyon 3"]}
+				{"topInsight":"En önemli tek bulgu (1-2 cümle)","sectorFinding":"Sektör karşılaştırmasından kritik bulgu (1-2 cümle)","recommendation":"En öncelikli uygulama önerisi (1-2 cümle)","actionPlan":["Aksiyon 1","Aksiyon 2","Aksiyon 3"]}
 
 				%sAnaliz modu: %s
 				Veriler:

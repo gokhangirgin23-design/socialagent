@@ -33,12 +33,13 @@ import com.api.mapper.ReportRequestMapper;
 import com.api.messaging.JobQueueProducer;
 
 /**
- * Geliştirme 2 — tek tip rapor + otomatik mod seçimi. Spring'siz birim testi (broker/DB gerektirmez).
- * reportType artık istekten OKUNMAZ; mod, kullanıcının kendi hesap/rakip/sektör durumuna göre
- * createRequest içinde otomatik belirlenir:
- *   - Kendi hesap yok            → VALIDATION_ERROR, hiçbir kayıt oluşturulmaz.
- *   - Kendi hesap + rakip var    → mode = BOTH.
- *   - Kendi hesap, rakip yok     → mode = OWN_ONLY (sektör seçili olmalı, aksi halde VALIDATION_ERROR).
+ * Geliştirme 2 — tek tip rapor + otomatik mod seçimi. Rakip hesap özelliğinin kaldırılmasıyla
+ * mod artık her zaman OWN_ONLY'dir (hasMonitoredAccounts/BOTH kaldırıldı). Spring'siz birim
+ * testi (broker/DB gerektirmez). reportType artık istekten OKUNMAZ; mod, kullanıcının kendi
+ * hesap/sektör durumuna göre createRequest içinde otomatik belirlenir:
+ *   - Kendi hesap yok  → VALIDATION_ERROR, hiçbir kayıt oluşturulmaz.
+ *   - Kendi hesap var, sektör YOK → VALIDATION_ERROR.
+ *   - Kendi hesap var, sektör var → mode = OWN_ONLY.
  *
  * jdbcTemplate.query çağrıları SQL metni içeriğine göre dallandırılır (stubJdbc) — aynı desen
  * V11 ücretsiz-hak testinde de kullanılıyordu.
@@ -81,12 +82,11 @@ class ReportRequestServiceTest {
      * jdbcTemplate.query'yi SQL içeriğine göre dallandırır — en spesifik kontrol önce.
      *
      * @param ownAccountId   null ise kullanıcının kendi hesabı yok
-     * @param hasMonitored   en az 1 izlenen rakip hesabı var mı
      * @param hasSector      sektör seçili mi
      * @param hasActiveReq   zaten PENDING/PROCESSING bir isteği var mı (E7 ön kontrol)
      */
     @SuppressWarnings("unchecked")
-    private void stubJdbc(UUID ownAccountId, boolean hasMonitored, boolean hasSector, boolean hasActiveReq) {
+    private void stubJdbc(UUID ownAccountId, boolean hasSector, boolean hasActiveReq) {
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), (Object[]) any()))
                 .thenAnswer(inv -> {
                     String sql = inv.getArgument(0);
@@ -96,9 +96,6 @@ class ReportRequestServiceTest {
                     }
                     if (sql.contains("status IN")) {
                         return hasActiveReq ? List.of(UUID.randomUUID()) : List.of();
-                    }
-                    if (sql.contains("user_monitored_account_id")) {
-                        return hasMonitored ? List.of(UUID.randomUUID()) : List.of();
                     }
                     if (sql.contains("account_name")) {
                         // lookupAccountName (V12 snapshot)
@@ -138,12 +135,12 @@ class ReportRequestServiceTest {
     }
 
     // ============================================================
-    // Geliştirme 2 — mod otomatik belirleme
+    // Geliştirme 2 — mod otomatik belirleme (her zaman OWN_ONLY)
     // ============================================================
 
     @Test
     void kendiHesabiOlmayanKullaniciRaporOlusturamaz() {
-        stubJdbc(null, false, false, false);
+        stubJdbc(null, false, false);
 
         CreateReportRequestDto req = new CreateReportRequestDto();
 
@@ -155,23 +152,9 @@ class ReportRequestServiceTest {
     }
 
     @Test
-    void kendiHesabiVeRakibiOlanKullaniciBOTHOlusturur() {
+    void kendiHesabiVeSektoruOlanKullaniciOWN_ONLYOlusturur() {
         UUID ownAccountId = UUID.randomUUID();
-        stubJdbc(ownAccountId, true, false, false);
-        ArgumentCaptor<ReportRequest> captor = stubSaveAndFlush();
-
-        CreateReportRequestDto req = new CreateReportRequestDto();
-        createWithTx(req);
-
-        ReportRequest saved = captor.getValue();
-        assertEquals("BOTH", saved.getReportType());
-        assertEquals(ownAccountId, saved.getSelectedUserSocialAccountId());
-    }
-
-    @Test
-    void kendiHesabiVarRakipYokSektorSeciliOWN_ONLYOlusturur() {
-        UUID ownAccountId = UUID.randomUUID();
-        stubJdbc(ownAccountId, false, true, false);
+        stubJdbc(ownAccountId, true, false);
         ArgumentCaptor<ReportRequest> captor = stubSaveAndFlush();
 
         CreateReportRequestDto req = new CreateReportRequestDto();
@@ -183,9 +166,9 @@ class ReportRequestServiceTest {
     }
 
     @Test
-    void kendiHesabiVarRakipYokSektorYokValidationError() {
+    void kendiHesabiVarSektorYokValidationError() {
         UUID ownAccountId = UUID.randomUUID();
-        stubJdbc(ownAccountId, false, false, false);
+        stubJdbc(ownAccountId, false, false);
 
         CreateReportRequestDto req = new CreateReportRequestDto();
 
@@ -197,16 +180,17 @@ class ReportRequestServiceTest {
 
     @Test
     void eskiReportTypeAlaniGonderilseDeYokSayilirModYineOtomatikBelirlenir() {
-        // B8 — eski istemci hâlâ reportType="NONE" gönderebilir; alan artık okunmaz.
+        // B8 — eski istemci hâlâ reportType="COMPETITOR_ONLY" gibi artık geçersiz bir değer
+        // gönderebilir; alan artık okunmaz, mod yine kurallara göre otomatik belirlenir.
         UUID ownAccountId = UUID.randomUUID();
-        stubJdbc(ownAccountId, true, false, false);
+        stubJdbc(ownAccountId, true, false);
         ArgumentCaptor<ReportRequest> captor = stubSaveAndFlush();
 
         CreateReportRequestDto req = new CreateReportRequestDto();
-        req.setReportType("NONE");
+        req.setReportType("COMPETITOR_ONLY");
         createWithTx(req);
 
-        assertEquals("BOTH", captor.getValue().getReportType());
+        assertEquals("OWN_ONLY", captor.getValue().getReportType());
     }
 
     // ============================================================
@@ -216,7 +200,7 @@ class ReportRequestServiceTest {
     @Test
     void zatenAktifIstegiOlanKullaniciYeniIstekOlusturamaz() {
         UUID ownAccountId = UUID.randomUUID();
-        stubJdbc(ownAccountId, true, false, true);
+        stubJdbc(ownAccountId, true, true);
 
         CreateReportRequestDto req = new CreateReportRequestDto();
 
@@ -228,7 +212,7 @@ class ReportRequestServiceTest {
     @Test
     void esZamanliCiftTikDbSeviyesindeEngellenir() {
         UUID ownAccountId = UUID.randomUUID();
-        stubJdbc(ownAccountId, true, false, false);
+        stubJdbc(ownAccountId, true, false);
         when(reportRequestRepository.saveAndFlush(any(ReportRequest.class)))
                 .thenThrow(new DataIntegrityViolationException(
                         "duplicate key value violates unique constraint \"uq_report_request_active_lock\""));
@@ -242,7 +226,7 @@ class ReportRequestServiceTest {
     @Test
     void aktifIstekYokkenNormalOlusturmaBasarili() {
         UUID ownAccountId = UUID.randomUUID();
-        stubJdbc(ownAccountId, true, false, false);
+        stubJdbc(ownAccountId, true, false);
         stubSaveAndFlush();
 
         CreateReportRequestDto req = new CreateReportRequestDto();
@@ -259,8 +243,7 @@ class ReportRequestServiceTest {
     void ucretsizRaporHakkiVarsaKrediKontroluAtlanirVeHakTuketilir() {
         appProperties.getPayment().setEnabled(true); // kredi kapısı AÇIK — yine de ücretsiz hak devreye girmeli
         UUID ownAccountId = UUID.randomUUID();
-        // kendi hesap + sektör (rakip yok) -> OWN_ONLY, sektör şartı sağlanmalı
-        stubJdbc(ownAccountId, false, true, false);
+        stubJdbc(ownAccountId, true, false);
         when(freeUsageService.isFreeReportAvailable(userId)).thenReturn(true);
         ArgumentCaptor<ReportRequest> captor = stubSaveAndFlush();
 

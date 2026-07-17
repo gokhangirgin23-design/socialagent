@@ -28,12 +28,12 @@ public class DashboardController {
     private final DashboardService dashboardService;
 
     /**
-     * Dashboard'ı tek çağrıda besler: skor, izlenen sayısı, son analiz,
-     * son rapor, latest insight, uyarılar ve cüzdan.
+     * Dashboard'ı tek çağrıda besler: skor, son analiz, son rapor,
+     * latest insight, uyarılar ve cüzdan.
      */
     @Operation(
             summary = "Dashboard özeti",
-            description = "Hesap skoru, izlenen rakip sayısı, son rapor durumu, structured insight "
+            description = "Hesap skoru, son rapor durumu, structured insight "
                     + "ve cüzdan bilgisini tek çağrıda döndürür.")
     @PostMapping("/summary")
     public DataResponse<DashboardSummaryDto> summary() {

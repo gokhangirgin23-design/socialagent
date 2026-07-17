@@ -30,10 +30,10 @@ import com.api.ai.AiAnalysisService;
  *  - Analiz varsa ve AI Markdown dönerse COMPLETED işaretlenir (true döner).
  *  - Analiz varsa ama AI boş/null dönerse FAILED işaretlenir (false döner).
  *
- * Mock stratejisi:
- *   - loadAnalysisMode → SQL contains "analysis_mode"
+ * Mock stratejisi (Geliştirme — rakip hesap özelliğinin kaldırılması sonrası: yalnızca OWN/SECTOR
+ * kaynakları var, loadMonitoredPosts kaldırıldığından ilgili stub da kaldırıldı):
+ *   - loadReportType       → SQL contains "report_type"
  *   - loadOwnAndSectorPosts → SQL contains "source_type IN" (source_type IN (OWN,SECTOR))
- *   - loadMonitoredPosts   → SQL contains "monitored_account ma"  (join alias adı)
  * PostRaw, package-private olduğu için test paketinden doğrudan erişilebilir.
  */
 class ReportPipelineServiceTest {
@@ -57,14 +57,11 @@ class ReportPipelineServiceTest {
 	@SuppressWarnings("unchecked")
 	@Test
 	void analizYoksaRaporUretilmez() {
-		// analysisMode sorgusu "NONE" döndürsün
-		when(jdbcTemplate.query(contains("analysis_mode"), any(RowMapper.class), (Object[]) any()))
+		// loadReportType sorgusu "NONE" döndürsün
+		when(jdbcTemplate.query(contains("report_type"), any(RowMapper.class), (Object[]) any()))
 				.thenReturn(List.of("NONE"));
 		// OWN+SECTOR sorgusu boş; source_type IN (OWN,SECTOR) koşulundan tanınır
 		when(jdbcTemplate.query(contains("source_type IN"), any(RowMapper.class), (Object[]) any()))
-				.thenReturn(List.of());
-		// MONITORED sorgusu boş; monitored_account ma alias'ından tanınır
-		when(jdbcTemplate.query(contains("monitored_account ma"), any(RowMapper.class), (Object[]) any()))
 				.thenReturn(List.of());
 
 		boolean done = service.generateReport(jobId);
@@ -78,15 +75,12 @@ class ReportPipelineServiceTest {
 	@SuppressWarnings("unchecked")
 	@Test
 	void analizVarVeAiDonersaCompleted() {
-		// analysisMode BOTH
-		when(jdbcTemplate.query(contains("analysis_mode"), any(RowMapper.class), (Object[]) any()))
-				.thenReturn(List.of("BOTH"));
+		// loadReportType OWN_ONLY (karşılaştırmalı prompt)
+		when(jdbcTemplate.query(contains("report_type"), any(RowMapper.class), (Object[]) any()))
+				.thenReturn(List.of("OWN_ONLY"));
 		// OWN+SECTOR sorgusu bir KENDİ HESABIN satırı döndürsün (source_type IN)
 		when(jdbcTemplate.query(contains("source_type IN"), any(RowMapper.class), (Object[]) any()))
 				.thenReturn(List.of(sampleOwnRow()));
-		// MONITORED sorgusu boş (bu test için rakip yok)
-		when(jdbcTemplate.query(contains("monitored_account ma"), any(RowMapper.class), (Object[]) any()))
-				.thenReturn(List.of());
 		when(reportService.ensureReport(eq(jobId))).thenReturn(reportId);
 		when(aiAnalysisService.generateReport(anyString())).thenReturn("# Rapor\nİçerik");
 
@@ -101,12 +95,10 @@ class ReportPipelineServiceTest {
 	@SuppressWarnings("unchecked")
 	@Test
 	void aiBosDonerseFailed() {
-		when(jdbcTemplate.query(contains("analysis_mode"), any(RowMapper.class), (Object[]) any()))
+		when(jdbcTemplate.query(contains("report_type"), any(RowMapper.class), (Object[]) any()))
 				.thenReturn(List.of("OWN_ONLY"));
 		when(jdbcTemplate.query(contains("source_type IN"), any(RowMapper.class), (Object[]) any()))
 				.thenReturn(List.of(sampleOwnRow()));
-		when(jdbcTemplate.query(contains("monitored_account ma"), any(RowMapper.class), (Object[]) any()))
-				.thenReturn(List.of());
 		when(reportService.ensureReport(eq(jobId))).thenReturn(reportId);
 		when(aiAnalysisService.generateReport(anyString())).thenReturn(null); // AI başarısız
 
@@ -120,38 +112,16 @@ class ReportPipelineServiceTest {
 
 	@SuppressWarnings("unchecked")
 	@Test
-	void monitoredVerisiAggregateEdilir() {
-		when(jdbcTemplate.query(contains("analysis_mode"), any(RowMapper.class), (Object[]) any()))
-				.thenReturn(List.of("COMPETITOR_ONLY"));
-		// OWN+SECTOR yok
-		when(jdbcTemplate.query(contains("source_type IN"), any(RowMapper.class), (Object[]) any()))
-				.thenReturn(List.of());
-		// Monitored iki farklı hesap: iki SECTOR + bir RAKİP satırı
-		when(jdbcTemplate.query(contains("monitored_account ma"), any(RowMapper.class), (Object[]) any()))
-				.thenReturn(List.of(sampleMonitoredRow("rakip1"), sampleMonitoredRow("rakip2")));
-		when(reportService.ensureReport(eq(jobId))).thenReturn(reportId);
-		when(aiAnalysisService.generateReport(anyString())).thenReturn("# Sektör Raporu");
-
-		boolean done = service.generateReport(jobId);
-
-		assertTrue(done);
-		verify(aiAnalysisService, times(1)).generateReport(anyString());
-	}
-
-	@SuppressWarnings("unchecked")
-	@Test
 	void alakasizSektorHesabiRapordanDislanir() {
 		// Moda/Lüks Moda vakası: Apify "Lüks Moda" aramasında 2 gerçek moda hesabı + 1 alakasız
 		// emlak hesabı buluyor (kullanıcı adında "moda"/"luks" geçtiği için yanlış eşleşme).
-		when(jdbcTemplate.query(contains("analysis_mode"), any(RowMapper.class), (Object[]) any()))
+		when(jdbcTemplate.query(contains("report_type"), any(RowMapper.class), (Object[]) any()))
 				.thenReturn(List.of("NONE"));
 		when(jdbcTemplate.query(contains("source_type IN"), any(RowMapper.class), (Object[]) any()))
 				.thenReturn(List.of(
 						sampleSectorRow("moda_hesap_1", "kadın giyim"),
 						sampleSectorRow("moda_hesap_2", "erkek giyim"),
 						sampleSectorRow("emlak_hesap", "gayrimenkul")));
-		when(jdbcTemplate.query(contains("monitored_account ma"), any(RowMapper.class), (Object[]) any()))
-				.thenReturn(List.of());
 		when(reportService.ensureReport(eq(jobId))).thenReturn(reportId);
 		ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
 		when(aiAnalysisService.generateReport(promptCaptor.capture())).thenReturn("# Rapor");
@@ -182,14 +152,5 @@ class ReportPipelineServiceTest {
 				"IMAGE",
 				150L, 20L, 500L,
 				"{\"metrics\":{\"contentType\":{\"isReel\":false}},\"visual\":{\"hasHuman\":true,\"hasModel\":false,\"isProductFocused\":true}}");
-	}
-
-	private ReportPipelineService.PostRaw sampleMonitoredRow(String accountName) {
-		return new ReportPipelineService.PostRaw(
-				"RAKİP",
-				accountName,
-				"VIDEO",
-				200L, 30L, 1000L,
-				"{\"metrics\":{\"contentType\":{\"isReel\":true}},\"visual\":{\"hasHuman\":false,\"hasModel\":true,\"isProductFocused\":false}}");
 	}
 }

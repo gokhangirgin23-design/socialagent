@@ -16,7 +16,6 @@ import com.api.dto.DashboardSummaryDto.AccountComparisonRow;
 import com.api.dto.DashboardSummaryDto.AlertInfo;
 import com.api.dto.DashboardSummaryDto.InsightInfo;
 import com.api.dto.DashboardSummaryDto.LastReportInfo;
-import com.api.dto.DashboardSummaryDto.MonitoredInfo;
 import com.api.dto.DashboardSummaryDto.WalletInfo;
 import com.api.entity.UserPayment;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -48,38 +47,34 @@ public class DashboardService {
         // 1) Cüzdan
         WalletInfo wallet = buildWalletInfo(userId);
 
-        // 2) İzlenen hesap sayısı
-        MonitoredInfo monitored = buildMonitoredInfo(userId);
-
-        // 3) Son tamamlanmış isteğin id'si (skor + insight için)
+        // 2) Son tamamlanmış isteğin id'si (skor + insight için)
         UUID lastCompletedRequestId = findLastCompletedRequestId(userId);
 
-        // 4) Hesap skoru (kendi postlar vs diğerleri)
+        // 3) Hesap skoru (kendi postlar vs diğerleri)
         ScoreResult scoreResult = (lastCompletedRequestId != null)
                 ? computeAccountScore(lastCompletedRequestId) : null;
         Integer accountScore = scoreResult != null ? scoreResult.score() : null;
         DashboardSummaryDto.ScoreBreakdown scoreBreakdown = scoreResult != null ? scoreResult.breakdown() : null;
 
-        // 5) Son analiz tarihi (process_finished_date)
+        // 4) Son analiz tarihi (process_finished_date)
         java.time.LocalDateTime lastAnalysisDate = findLastAnalysisDate(userId);
 
-        // 6) En son rapor isteği özeti
+        // 5) En son rapor isteği özeti
         LastReportInfo lastReport = findLastReport(userId);
 
-        // 7) Structured insight JSON (en son COMPLETED/PARTIAL rapordan)
+        // 6) Structured insight JSON (en son COMPLETED/PARTIAL rapordan)
         InsightInfo latestInsight = findLatestInsight(userId);
 
-        // 8) Uyarılar (etkileşim düşüşü, rakip aktivitesi, format trendi)
+        // 7) Uyarılar (etkileşim düşüşü, format trendi)
         List<AlertInfo> alerts = buildAlerts(userId, lastCompletedRequestId);
 
-        // 9) Hesap bazlı kıyaslama verileri (dashboard tablo)
+        // 8) Hesap bazlı kıyaslama verileri (dashboard tablo)
         List<AccountComparisonRow> accountComparison = (lastCompletedRequestId != null)
                 ? buildAccountComparison(lastCompletedRequestId) : List.of();
 
         return DashboardSummaryDto.builder()
                 .accountScore(accountScore)
                 .scoreBreakdown(scoreBreakdown)
-                .monitored(monitored)
                 .lastAnalysisDate(lastAnalysisDate)
                 .lastReport(lastReport)
                 .latestInsight(latestInsight)
@@ -100,14 +95,6 @@ public class DashboardService {
                 w.getBalance().setScale(2, RoundingMode.HALF_UP),
                 w.getCurrency() != null ? w.getCurrency() : "TL",
                 w.getCreditBalance() == null ? 0L : w.getCreditBalance());
-    }
-
-    // ── İzlenen hesap sayısı ────────────────────────────────────────────────
-
-    private MonitoredInfo buildMonitoredInfo(UUID userId) {
-        String sql = "SELECT COUNT(*) FROM user_monitored_account WHERE user_id = ? AND active = 1";
-        Integer count = jdbcTemplate.queryForObject(sql, Integer.class, userId);
-        return new MonitoredInfo(count != null ? count : 0, 5);
     }
 
     // ── Son tamamlanmış istek ───────────────────────────────────────────────
@@ -143,7 +130,7 @@ public class DashboardService {
         }
 
         long ownAvg = queryAvgEngagement(requestId, new String[]{"OWN"});
-        long othersAvg = queryAvgEngagement(requestId, new String[]{"SECTOR", "MONITORED"});
+        long othersAvg = queryAvgEngagement(requestId, new String[]{"SECTOR"});
 
         int relativePoints = computeRelativePoints(ownAvg, othersAvg);
         int activityPoints = computeActivityPoints(ownPostCount);
@@ -323,7 +310,7 @@ public class DashboardService {
         try {
             JsonNode root = MAPPER.readTree(json);
             String topInsight = textOrNull(root, "topInsight");
-            String competitorFinding = textOrNull(root, "competitorFinding");
+            String sectorFinding = textOrNull(root, "sectorFinding");
             String recommendation = textOrNull(root, "recommendation");
             List<String> actionPlan = new ArrayList<>();
             JsonNode apNode = root.path("actionPlan");
@@ -334,7 +321,7 @@ public class DashboardService {
                     }
                 }
             }
-            return new InsightInfo(topInsight, competitorFinding, recommendation, actionPlan);
+            return new InsightInfo(topInsight, sectorFinding, recommendation, actionPlan);
         } catch (Exception ex) {
             log.warn("Insight JSON parse hatası: {}", ex.getMessage());
             return null;
@@ -346,7 +333,7 @@ public class DashboardService {
     /**
      * Son tamamlanmış analizin hesap bazlı özet metriklerini döndürür.
      * Kaynak tipine göre ayrı sorgular çalıştırılır (eski stil "=" join — CLAUDE.md Madde 6).
-     * OWN: 'kendi_hesap', SECTOR: sector_account_name, MONITORED: monitored_account.account_name
+     * OWN: 'kendi_hesap', SECTOR: sector_account_name
      */
     private List<AccountComparisonRow> buildAccountComparison(UUID requestId) {
         record Base(String sourceType, String accountName, long avgLikes, long avgComments, long avgViews, long postCount) {}
@@ -385,43 +372,10 @@ public class DashboardService {
                 rs.getLong("avg_likes"), rs.getLong("avg_comments"),
                 rs.getLong("avg_views"), rs.getLong("post_count")), requestId));
 
-        // MONITORED: rakip hesaplar — monitored_account ile eski stil "=" join
-        String monSql = """
-                SELECT 'MONITORED' AS source_type,
-                       ma.account_name AS account_name,
-                       GREATEST(0, ROUND(AVG(COALESCE(sp.likes_count,    0)))) AS avg_likes,
-                       GREATEST(0, ROUND(AVG(COALESCE(sp.comments_count, 0)))) AS avg_comments,
-                       GREATEST(0, ROUND(AVG(COALESCE(sp.views_count,    0)))) AS avg_views,
-                       COUNT(*) AS post_count
-                FROM social_post sp, monitored_account ma
-                WHERE sp.monitored_account_id = ma.monitored_account_id
-                  AND sp.request_id = ?
-                  AND sp.source_type = 'MONITORED'
-                GROUP BY ma.account_name
-                """;
-        bases.addAll(jdbcTemplate.query(monSql, (rs, i) -> new Base(
-                rs.getString("source_type"), rs.getString("account_name"),
-                rs.getLong("avg_likes"), rs.getLong("avg_comments"),
-                rs.getLong("avg_views"), rs.getLong("post_count")), requestId));
-
         if (bases.isEmpty()) return List.of();
 
         // Reel sayısı: analysis_json içindeki metrics.contentType.isReel
         // post_analysis ile eski stil "=" join; hesap adı yukarıdaki sorgularla aynı mantıkla türetilir
-        String reelSql = """
-                SELECT sp.source_type,
-                       COALESCE(sp.sector_account_name,
-                           CASE WHEN sp.source_type = 'OWN' THEN 'kendi_hesap' ELSE 'sektör' END
-                       ) AS sect_name,
-                       ma.account_name AS mon_name,
-                       pa.analysis_json
-                FROM social_post sp, post_analysis pa, monitored_account ma
-                WHERE sp.social_post_id = pa.social_post_id
-                  AND sp.monitored_account_id = ma.monitored_account_id
-                  AND sp.request_id = ?
-                  AND sp.source_type = 'MONITORED'
-                """;
-        // OWN + SECTOR için ayrı reel sorgusu
         String reelOwnSectorSql = """
                 SELECT sp.source_type,
                        CASE WHEN sp.source_type = 'OWN' THEN 'kendi_hesap'
@@ -438,20 +392,6 @@ public class DashboardService {
         // OWN + SECTOR reels
         jdbcTemplate.query(reelOwnSectorSql, (rs, i) -> {
             String key = rs.getString("source_type") + ":" + rs.getString("acct_name");
-            boolean isReel = false;
-            String json = rs.getString("analysis_json");
-            if (json != null) {
-                try {
-                    JsonNode node = MAPPER.readTree(json).path("metrics").path("contentType").path("isReel");
-                    isReel = node.isBoolean() && node.asBoolean();
-                } catch (Exception ignored) {}
-            }
-            if (isReel) reelMap.merge(key, 1L, Long::sum);
-            return null;
-        }, requestId);
-        // MONITORED reels
-        jdbcTemplate.query(reelSql, (rs, i) -> {
-            String key = "MONITORED:" + rs.getString("mon_name");
             boolean isReel = false;
             String json = rs.getString("analysis_json");
             if (json != null) {
@@ -518,7 +458,7 @@ public class DashboardService {
         String sql = """
                 SELECT media_type, COUNT(*) AS cnt
                 FROM social_post
-                WHERE request_id = ? AND source_type IN ('SECTOR', 'MONITORED')
+                WHERE request_id = ? AND source_type = 'SECTOR'
                   AND media_type IS NOT NULL
                 GROUP BY media_type
                 ORDER BY cnt DESC LIMIT 1

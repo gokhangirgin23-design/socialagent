@@ -37,7 +37,7 @@ class SocialPostServiceTest {
     private SocialPostRepository socialPostRepository;
     private SocialPostService service;
 
-    private final UUID monitoredId = UUID.randomUUID();
+    private final UUID ownAccountId = UUID.randomUUID();
     private final UUID requestId = UUID.randomUUID();
 
     @BeforeEach
@@ -54,7 +54,7 @@ class SocialPostServiceTest {
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(), any()))
                 .thenReturn(List.of(UUID.randomUUID()));
 
-        ScrapeTarget target = ScrapeTarget.monitored("INSTAGRAM", "rakip_hesap", monitoredId);
+        ScrapeTarget target = ScrapeTarget.own("INSTAGRAM", "kendi_hesap", ownAccountId);
         boolean recent = service.isRecentlyAnalyzed(target);
 
         assertTrue(recent);
@@ -65,7 +65,7 @@ class SocialPostServiceTest {
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(), any()))
                 .thenReturn(List.of());
 
-        ScrapeTarget target = ScrapeTarget.monitored("INSTAGRAM", "rakip_hesap", monitoredId);
+        ScrapeTarget target = ScrapeTarget.own("INSTAGRAM", "kendi_hesap", ownAccountId);
         boolean recent = service.isRecentlyAnalyzed(target);
 
         assertFalse(recent);
@@ -108,7 +108,7 @@ class SocialPostServiceTest {
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), anyString(), anyString()))
                 .thenReturn(List.of());
 
-        ScrapeTarget target = ScrapeTarget.monitored("INSTAGRAM", "rakip_hesap", monitoredId);
+        ScrapeTarget target = ScrapeTarget.own("INSTAGRAM", "kendi_hesap", ownAccountId);
         List<ApifyPost> posts = List.of(samplePost("p1"), samplePost("p2"));
 
         int inserted = service.saveRecentPosts(requestId, target, posts);
@@ -123,7 +123,7 @@ class SocialPostServiceTest {
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), anyString(), anyString()))
                 .thenReturn(List.of(UUID.randomUUID()));
 
-        ScrapeTarget target = ScrapeTarget.monitored("INSTAGRAM", "rakip_hesap", monitoredId);
+        ScrapeTarget target = ScrapeTarget.own("INSTAGRAM", "kendi_hesap", ownAccountId);
         List<ApifyPost> posts = List.of(samplePost("p1"));
 
         int inserted = service.saveRecentPosts(requestId, target, posts);

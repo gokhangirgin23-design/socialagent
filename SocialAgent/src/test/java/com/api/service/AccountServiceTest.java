@@ -23,8 +23,6 @@ import org.springframework.jdbc.core.RowMapper;
 
 import com.api.dto.AddOwnAccountRequest;
 import com.api.dto.UserSocialAccountDto;
-import com.api.dto.repository.MonitoredAccountRepository;
-import com.api.dto.repository.UserMonitoredAccountRepository;
 import com.api.dto.repository.UserSocialAccountRepository;
 import com.api.entity.UserSocialAccount;
 import com.api.mapper.UserSocialAccountMapper;
@@ -42,8 +40,6 @@ class AccountServiceTest {
 
 	private JdbcTemplate jdbcTemplate;
 	private UserSocialAccountRepository userSocialAccountRepository;
-	private MonitoredAccountRepository monitoredAccountRepository;
-	private UserMonitoredAccountRepository userMonitoredAccountRepository;
 	private UserSocialAccountMapper userSocialAccountMapper;
 	private AccountDnaCacheService accountDnaCacheService;
 	private AccountService service;
@@ -52,12 +48,10 @@ class AccountServiceTest {
 	void setUp() {
 		jdbcTemplate = mock(JdbcTemplate.class);
 		userSocialAccountRepository = mock(UserSocialAccountRepository.class);
-		monitoredAccountRepository = mock(MonitoredAccountRepository.class);
-		userMonitoredAccountRepository = mock(UserMonitoredAccountRepository.class);
 		userSocialAccountMapper = mock(UserSocialAccountMapper.class);
 		accountDnaCacheService = mock(AccountDnaCacheService.class);
-		service = new AccountService(jdbcTemplate, userSocialAccountRepository, monitoredAccountRepository,
-				userMonitoredAccountRepository, userSocialAccountMapper, accountDnaCacheService);
+		service = new AccountService(jdbcTemplate, userSocialAccountRepository,
+				userSocialAccountMapper, accountDnaCacheService);
 
 		when(userSocialAccountRepository.save(any(UserSocialAccount.class)))
 				.thenAnswer(invocation -> invocation.getArgument(0));

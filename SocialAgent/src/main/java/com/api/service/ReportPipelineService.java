@@ -144,17 +144,14 @@ public class ReportPipelineService {
     }
 
     /**
-     * Hesap bazlı özetleri iki SQL sorgusu + Java aggregate ile üretir.
-     * OWN + SECTOR ve MONITORED ayrı sorgularla çekilir; Java'da birleştirilir.
+     * Hesap bazlı özetleri SQL sorgusu + Java aggregate ile üretir.
      *
      * @param subsectorName kullanıcının alt sektör adı (V10 snapshot); SectorRelevanceFilter'a
      *                       token olarak geçilir (SORUN 1, madde 1.3) — subsector token'larıyla
      *                       örtüşen hesap, diğer sektör hesaplarıyla örtüşmese bile ASLA elenmez.
      */
     private List<AccountReportRow> loadAccountSummaries(UUID requestId, String subsectorName) {
-        List<PostRaw> rawRows = new ArrayList<>();
-        rawRows.addAll(loadOwnAndSectorPosts(requestId));
-        rawRows.addAll(loadMonitoredPosts(requestId));
+        List<PostRaw> rawRows = new ArrayList<>(loadOwnAndSectorPosts(requestId));
 
         if (rawRows.isEmpty()) {
             return List.of();
@@ -215,37 +212,6 @@ public class ReportPipelineService {
                   AND sp.request_id = ?
                   AND sp.source_type IN ('OWN', 'SECTOR')
                 ORDER BY hesap_adi
-                """;
-        return jdbcTemplate.query(sql, (rs, rowNum) -> new PostRaw(
-                rs.getString("kaynak"),
-                rs.getString("hesap_adi"),
-                rs.getString("media_type"),
-                rs.getObject("likes_count", Long.class),
-                rs.getObject("comments_count", Long.class),
-                rs.getObject("views_count", Long.class),
-                rs.getString("analysis_json")), requestId);
-    }
-
-    /**
-     * MONITORED (rakip) hesapların post + analiz verilerini çeker.
-     * monitored_account ile eski stil "=" join (CLAUDE.md Madde 6).
-     */
-    private List<PostRaw> loadMonitoredPosts(UUID requestId) {
-        String sql = """
-                SELECT
-                    'RAKİP' AS kaynak,
-                    ma.account_name AS hesap_adi,
-                    sp.media_type,
-                    sp.likes_count,
-                    sp.comments_count,
-                    sp.views_count,
-                    pa.analysis_json
-                FROM social_post sp, post_analysis pa, monitored_account ma
-                WHERE sp.social_post_id = pa.social_post_id
-                  AND sp.request_id = ?
-                  AND sp.source_type = 'MONITORED'
-                  AND sp.monitored_account_id = ma.monitored_account_id
-                ORDER BY ma.account_name
                 """;
         return jdbcTemplate.query(sql, (rs, rowNum) -> new PostRaw(
                 rs.getString("kaynak"),

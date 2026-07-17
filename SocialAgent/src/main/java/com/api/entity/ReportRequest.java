@@ -30,7 +30,7 @@ public class ReportRequest {
     @Column(name = "user_id")
     private UUID userId;
 
-    // Analiz türü: OWN_ONLY | COMPETITOR_ONLY | NONE (istekten gelir; BOTH kaldırıldı)
+    // Analiz türü: OWN_ONLY | NONE (rakip hesap özelliğinin kaldırılmasıyla COMPETITOR_ONLY/BOTH silindi)
     @Column(name = "report_type")
     private String reportType;
 

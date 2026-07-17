@@ -16,8 +16,7 @@ import lombok.Setter;
  * İlişkiler nesne referansı ile değil, yalnızca ID kolonları ile tutulur (CLAUDE.md Madde 6).
  *
  * Kaynak hesap kimliği source_type kolonuna göre temsil edilir:
- *  - OWN (kendi hesabı): source_type=OWN; sector_account_name + monitored_account_id null.
- *  - MONITORED (rakip): source_type=MONITORED; monitoredAccountId dolu.
+ *  - OWN (kendi hesabı): source_type=OWN; sector_account_name null.
  *  - SECTOR (sektör araştırması): source_type=SECTOR; sectorAccountName dolu (Apify ownerUsername).
  *
  * UNIQUE(platform, platformPostId) — mevcut gönderi varsa save-or-update yapılır (servis katmanı).
@@ -37,11 +36,7 @@ public class SocialPost {
 	@Column(name = "request_id")
 	private UUID requestId;
 
-	// Rakip hesap id'si (yalnızca MONITORED kaynağında dolu; diğerlerinde null)
-	@Column(name = "monitored_account_id")
-	private UUID monitoredAccountId;
-
-	// Gönderinin kaynağı: OWN | MONITORED | SECTOR (kaynak ayrımı bu kolondan yapılır)
+	// Gönderinin kaynağı: OWN | SECTOR (kaynak ayrımı bu kolondan yapılır)
 	@Column(name = "source_type")
 	private String sourceType;
 

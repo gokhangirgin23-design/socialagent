@@ -25,9 +25,6 @@ public class DashboardSummaryDto {
     // accountScore'un kırılımı ("neden bu skor" açıklaması); accountScore null ise bu da null
     private ScoreBreakdown scoreBreakdown;
 
-    // İzlenen rakip hesap bilgisi
-    private MonitoredInfo monitored;
-
     // Son tamamlanan analizin bitiş tarihi; henüz yoksa null
     private LocalDateTime lastAnalysisDate;
 
@@ -37,7 +34,7 @@ public class DashboardSummaryDto {
     // En son COMPLETED/PARTIAL raporun structured insight JSON'u; yoksa null
     private InsightInfo latestInsight;
 
-    // Türetilmiş uyarılar (etkileşim düşüşü, rakip aktivitesi vb.)
+    // Türetilmiş uyarılar (etkileşim düşüşü, format trendi vb.)
     private List<AlertInfo> alerts;
 
     // Kullanıcı cüzdan özeti
@@ -51,20 +48,13 @@ public class DashboardSummaryDto {
     @Getter
     @AllArgsConstructor
     public static class AccountComparisonRow {
-        private String sourceType;   // OWN | SECTOR | MONITORED
+        private String sourceType;   // OWN | SECTOR
         private String accountName;
         private long avgLikes;
         private long avgComments;
         private long avgViews;
         private long reelCount;
         private long postCount;
-    }
-
-    @Getter
-    @AllArgsConstructor
-    public static class MonitoredInfo {
-        private int count;
-        private int max; // sabit 5
     }
 
     @Getter
@@ -79,7 +69,7 @@ public class DashboardSummaryDto {
     @AllArgsConstructor
     public static class InsightInfo {
         private String topInsight;
-        private String competitorFinding;
+        private String sectorFinding;
         private String recommendation;
         private List<String> actionPlan;
     }

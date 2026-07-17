@@ -28,8 +28,9 @@ import lombok.extern.slf4j.Slf4j;
  * | Tür              | Hedefler                                                              |
  * | NONE             | Sektör keyword → Apify top N profil araması → profil URL'leri (D1)   |
  * | OWN_ONLY         | Kendi hesabı + sektör profil URL'leri (D1)                           |
- * | COMPETITOR_ONLY  | Yalnızca rakip (monitored) hesap profil URL'leri                     |
- * | BOTH             | Kendi hesabı + rakip hesap profil URL'leri                           |
+ *
+ * Geliştirme (rakip hesap özelliğinin kaldırılması): COMPETITOR_ONLY/BOTH modları ve MONITORED
+ * hedef tipi tamamen kaldırıldı — resolve() artık yalnızca NONE/OWN_ONLY'yi işler.
  *
  * Lookup'lar JdbcTemplate native; ilişkili tablolar eski stil "=" join (CLAUDE.md Madde 6).
  */
@@ -66,15 +67,6 @@ public class TargetResolver {
                 // Önce kendi hesabı, sonra D1 sektör profilleri
                 addIfPresent(targets, resolveOwn(request.getSelectedUserSocialAccountId()));
                 targets.addAll(resolveSectorByProfiles(request.getUserId()));
-            }
-            case COMPETITOR_ONLY -> {
-                // Yalnızca rakip hesap profil URL'leri
-                targets.addAll(resolveMonitored(request.getUserId()));
-            }
-            case BOTH -> {
-                // Kendi hesabı + rakip hesap profil URL'leri (sektör araştırması yok)
-                addIfPresent(targets, resolveOwn(request.getSelectedUserSocialAccountId()));
-                targets.addAll(resolveMonitored(request.getUserId()));
             }
         }
 
@@ -301,26 +293,6 @@ public class TargetResolver {
                         selectedUserSocialAccountId),
                 selectedUserSocialAccountId);
         return rows.isEmpty() ? null : rows.get(0);
-    }
-
-    /**
-     * Kullanıcının izlediği rakip hesapları MONITORED hedeflerine çevirir.
-     * user_monitored_account ve monitored_account eski stil "=" join (CLAUDE.md Madde 6).
-     */
-    private List<ScrapeTarget> resolveMonitored(UUID userId) {
-        String sql = """
-                SELECT ma.monitored_account_id, ma.platform, ma.account_name
-                FROM user_monitored_account uma, monitored_account ma
-                WHERE uma.user_id = ?
-                  AND uma.monitored_account_id = ma.monitored_account_id
-                  AND uma.active = 1
-                  AND ma.active = 1
-                ORDER BY ma.account_name
-                """;
-        return jdbcTemplate.query(sql, (rs, rowNum) -> ScrapeTarget.monitored(
-                rs.getString("platform"),
-                rs.getString("account_name"),
-                rs.getObject("monitored_account_id", UUID.class)), userId);
     }
 
     // ============================================================

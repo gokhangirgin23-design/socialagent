@@ -70,8 +70,8 @@ class ScrapePipelineServiceTest {
     void analizEdilmemisHedefApifydanCekilirVeYazilir() {
         // loadRequest -> aktif rapor isteği (JPA findById)
         when(reportRequestRepository.findById(requestId)).thenReturn(Optional.of(request()));
-        // Mod çözümü -> tek MONITORED hedef
-        ScrapeTarget target = ScrapeTarget.monitored("INSTAGRAM", "rakip1", UUID.randomUUID());
+        // Mod çözümü -> tek SECTOR hedef
+        ScrapeTarget target = ScrapeTarget.sector("INSTAGRAM", "https://www.instagram.com/sektor1/");
         when(targetResolver.resolve(any(ReportRequest.class))).thenReturn(List.of(target));
         // Tekrar-analiz koruması -> son N günde analiz yok
         when(socialPostService.isRecentlyAnalyzed(any(ScrapeTarget.class))).thenReturn(false);
@@ -93,7 +93,7 @@ class ScrapePipelineServiceTest {
     @Test
     void yakinZamandaAnalizEdilenHedefApifyAtlar() {
         when(reportRequestRepository.findById(requestId)).thenReturn(Optional.of(request()));
-        ScrapeTarget target = ScrapeTarget.monitored("INSTAGRAM", "rakip1", UUID.randomUUID());
+        ScrapeTarget target = ScrapeTarget.sector("INSTAGRAM", "https://www.instagram.com/sektor1/");
         when(targetResolver.resolve(any(ReportRequest.class))).thenReturn(List.of(target));
         // Son N günde analiz edilmiş -> Apify atlanır
         when(socialPostService.isRecentlyAnalyzed(any(ScrapeTarget.class))).thenReturn(true);
@@ -170,7 +170,7 @@ class ScrapePipelineServiceTest {
         freeRequest.setIsFreeUsage(1);
         when(reportRequestRepository.findById(requestId)).thenReturn(Optional.of(freeRequest));
 
-        ScrapeTarget target = ScrapeTarget.monitored("INSTAGRAM", "rakip1", UUID.randomUUID());
+        ScrapeTarget target = ScrapeTarget.sector("INSTAGRAM", "https://www.instagram.com/sektor1/");
         when(targetResolver.resolve(any(ReportRequest.class))).thenReturn(List.of(target));
         when(socialPostService.isRecentlyAnalyzed(any(ScrapeTarget.class))).thenReturn(false);
         when(apifyClient.fetchPostsByUrls(any(List.class), anyInt())).thenReturn(List.of(samplePost("p1")));
@@ -190,7 +190,7 @@ class ScrapePipelineServiceTest {
         ReportRequest r = new ReportRequest();
         r.setRequestId(requestId);
         r.setUserId(UUID.randomUUID());
-        r.setReportType("COMPETITOR_ONLY");
+        r.setReportType("NONE");
         r.setActive(1);
         return r;
     }

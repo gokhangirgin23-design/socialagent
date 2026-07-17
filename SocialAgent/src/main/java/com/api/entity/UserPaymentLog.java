@@ -132,7 +132,7 @@ public class UserPaymentLog {
     @Column(name = "callback_raw")
     private String callbackRaw;
 
-    // Ödeme tamamlanınca oluşturulacak rapor isteğinin tipi (NONE / OWN_ONLY / COMPETITOR_ONLY)
+    // Ödeme tamamlanınca oluşturulacak rapor isteğinin tipi (NONE / OWN_ONLY)
     @Column(name = "pending_report_type")
     private String pendingReportType;
 

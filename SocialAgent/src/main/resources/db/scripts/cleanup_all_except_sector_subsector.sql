@@ -19,28 +19,22 @@ DELETE FROM post_analysis;
 -- 3. report_request'e bağlı rapor (content_request/user_payment_log/notification report_id/reference_id ile buna bağlıydı)
 DELETE FROM report;
 
--- 4. report_request'e ve monitored_account'a bağlı postlar
+-- 4. report_request'e bağlı postlar
 DELETE FROM social_post;
 
 -- 5. user_payment_log'a bağlı cüzdan
 DELETE FROM user_payment;
 
--- 6. kullanıcı <-> izlenen hesap eşleşmesi
-DELETE FROM user_monitored_account;
-
--- 7. rapor isteği (social_post, report, user_payment_log tarafından referans edildi)
+-- 6. rapor isteği (social_post, report, user_payment_log tarafından referans edildi)
 DELETE FROM report_request;
 
--- 8. global izlenen hesap havuzu (user_monitored_account, social_post tarafından referans edildi)
-DELETE FROM monitored_account;
-
--- 9. kullanıcının kendi sosyal hesabı (report_request.selected_user_social_account_id tarafından referans edildi)
+-- 7. kullanıcının kendi sosyal hesabı (report_request.selected_user_social_account_id tarafından referans edildi)
 DELETE FROM user_social_account;
 
--- 10. refresh token
+-- 8. refresh token
 DELETE FROM refresh_token;
 
--- 11. en son: kullanıcı (yukarıdaki tüm tablolar tarafından referans edildi)
+-- 9. en son: kullanıcı (yukarıdaki tüm tablolar tarafından referans edildi)
 DELETE FROM user_info;
 
 -- sector ve subsector kasıtlı olarak silinmedi.

@@ -62,35 +62,6 @@ class TargetResolverTest {
         resolver = new TargetResolver(jdbcTemplate, apifyClient, appProperties);
     }
 
-    @Test
-    void competitorOnlySektorAramasiYapilmaz() {
-        ScrapeTarget rakip = ScrapeTarget.monitored("INSTAGRAM", "rakip1", UUID.randomUUID());
-        doReturn(List.of(rakip))
-                .when(jdbcTemplate).query(anyString(), any(RowMapper.class), any(UUID.class));
-
-        ReportRequest req = request("COMPETITOR_ONLY", null);
-        List<ScrapeTarget> targets = resolver.resolve(req);
-
-        assertEquals(1, targets.size());
-        assertEquals(ScrapeTarget.TargetType.MONITORED, targets.get(0).type());
-        // COMPETITOR_ONLY -> sektör araması yapılmaz
-        verify(apifyClient, never()).searchTopProfiles(anyString(), anyInt());
-    }
-
-    @Test
-    void bothModuSektorAramasiYapilmaz() {
-        ScrapeTarget own = ScrapeTarget.own("INSTAGRAM", "kendi_hesap", ownAccountId);
-        ScrapeTarget rakip = ScrapeTarget.monitored("INSTAGRAM", "rakip1", UUID.randomUUID());
-        doReturn(List.of(own))
-                .doReturn(List.of(rakip))
-                .when(jdbcTemplate).query(anyString(), any(RowMapper.class), any(UUID.class));
-
-        List<ScrapeTarget> targets = resolver.resolve(request("BOTH", ownAccountId));
-
-        verify(apifyClient, never()).searchTopProfiles(anyString(), anyInt());
-        assertEquals(2, targets.size());
-    }
-
     // ============================================================
     // SORUN 1, madde 1.1 — alt sektör öncelikli arama + fallback
     // ============================================================

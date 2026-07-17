@@ -212,14 +212,13 @@ public class ScrapePipelineService {
 
     /**
      * Hedef tipine göre çekilecek son gönderi sayısını döndürür.
-     * OWN: own-posts-limit (-> 5), MONITORED: competitor-posts-limit (-> 2),
+     * OWN: own-posts-limit (-> 5),
      * SECTOR: sector-posts-limit (Geliştirme 2 -> 3, eski recent-posts-limit'ten ayrıştırıldı).
      */
     private int recentLimitFor(ScrapeTarget.TargetType type) {
         AppProperties.Apify cfg = appProperties.getApify();
         return switch (type) {
             case OWN -> cfg.getOwnPostsLimit();
-            case MONITORED -> cfg.getCompetitorPostsLimit();
             case SECTOR -> cfg.getSectorPostsLimit();
         };
     }

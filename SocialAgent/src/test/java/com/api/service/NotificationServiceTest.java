@@ -62,7 +62,7 @@ class NotificationServiceTest {
     void tamamlanmisRaporVarsaPushBildirimiUretilir() {
         // loadCompletedReportTarget -> query(sql, mapper, requestId): tek UUID vararg
         NotificationService.ReportTarget target =
-                new NotificationService.ReportTarget(reportId, userId, "BOTH");
+                new NotificationService.ReportTarget(reportId, userId, "OWN_ONLY");
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(UUID.class)))
                 .thenReturn(List.of(target));
         // idempotency kontrolü -> queryForObject -> 0L (daha önce gönderilmemiş)
@@ -80,7 +80,7 @@ class NotificationServiceTest {
         assertEquals(ReferenceType.REPORT.name(), saved.getReferenceType());
         assertEquals(NotificationChannel.PUSH_NOTIFICATION.name(), saved.getChannel());
         assertEquals(Integer.valueOf(0), saved.getIsRead());
-        assertTrue(saved.getMessage().contains("BOTH"));
+        assertTrue(saved.getMessage().contains("OWN_ONLY"));
 
         verify(pushSender, times(1)).send(eq(userId), anyString(), anyString());
     }

@@ -20,7 +20,7 @@ public class ReportRequestDto {
     // İsteği oluşturan kullanıcının id'si
     private UUID userId;
 
-    // Analiz türü: OWN_ONLY | COMPETITOR_ONLY | BOTH | NONE
+    // Analiz türü: OWN_ONLY | NONE
     private String reportType;
 
     // Kuyruğa basıldı mı? (0/1)

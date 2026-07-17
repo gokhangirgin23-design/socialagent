@@ -90,11 +90,11 @@ public class ReportRequestService {
 
     /**
      * Yeni rapor isteği oluşturur (FAZ CREDIT — kredi kapısı).
-     * Geliştirme 2: reportType istekten OKUNMAZ; mod hesap/rakip durumuna göre otomatik belirlenir.
+     * Geliştirme 2: reportType istekten OKUNMAZ; mod otomatik OWN_ONLY'dir (rakip hesap özelliği
+     * kaldırıldığından BOTH artık hiç üretilmez).
      *
      * Akış:
-     *   1) Validasyon + mod otomatik belirleme (kendi hesap zorunlu; rakip varsa BOTH, yoksa
-     *      OWN_ONLY + sektör zorunlu).
+     *   1) Validasyon (kendi hesap zorunlu; sektör zorunlu).
      *   2) Kredi YETERLİ ise: rapor isteği oluştur + kuyruğa bas (kredi düşümü COMPLETED'de yapılır, #40).
      *   3) Kredi YETERSİZ ise: rapor isteği OLUŞTURULMAZ; insufficientCredits=true + requiredCredits
      *      + creditBalance döner (kullanıcı /payment/packages üzerinden paket satın almalıdır).
@@ -104,23 +104,18 @@ public class ReportRequestService {
     @Transactional
     public ReportRequestDto createRequest(UUID userId, CreateReportRequestDto req) {
 
-        // 1) Mod otomatik belirleme — kendi hesap yoksa hiçbir kayıt oluşturulmadan/kredi
-        // kontrolüne girilmeden anında engellenir.
+        // 1) Validasyon — kendi hesap yoksa hiçbir kayıt oluşturulmadan/kredi kontrolüne
+        // girilmeden anında engellenir; sektör yoksa da aynı şekilde.
         UUID ownAccountId = findOwnAccountId(userId);
         if (ownAccountId == null) {
             throw new ApiException(ResponseCode.VALIDATION_ERROR,
                     "Rapor oluşturmak için önce kendi hesabınızı eklemelisiniz.");
         }
-        AnalysisMode mode;
-        if (hasMonitoredAccounts(userId)) {
-            mode = AnalysisMode.BOTH;
-        } else {
-            mode = AnalysisMode.OWN_ONLY;
-            if (!hasSectorSelected(userId)) {
-                throw new ApiException(ResponseCode.VALIDATION_ERROR,
-                        "Sektör analizi için önce sektör seçmelisiniz.");
-            }
+        if (!hasSectorSelected(userId)) {
+            throw new ApiException(ResponseCode.VALIDATION_ERROR,
+                    "Sektör analizi için önce sektör seçmelisiniz.");
         }
+        AnalysisMode mode = AnalysisMode.OWN_ONLY;
 
         // 2) Ödeme kapısı kapalıysa kredi kontrolü atlanır; doğrudan istek oluşturulur (PAYMENT_ENABLED=false)
         if (!appProperties.getPayment().isEnabled()) {
@@ -413,7 +408,7 @@ public class ReportRequestService {
         if (!hasOwn) {
             canCreate = false;
             blockReason = "Rapor oluşturmak için önce kendi hesabınızı eklemelisiniz.";
-        } else if (!hasMonitoredAccounts(userId) && !hasSectorSelected(userId)) {
+        } else if (!hasSectorSelected(userId)) {
             canCreate = false;
             blockReason = "Sektör analizi için önce sektör seçmelisiniz.";
         }
@@ -504,22 +499,6 @@ public class ReportRequestService {
     }
 
     /**
-     * Kullanıcının en az bir aktif izlenen rakip hesabı var mı?
-     */
-    private boolean hasMonitoredAccounts(UUID userId) {
-        String sql = """
-                SELECT user_monitored_account_id
-                FROM user_monitored_account
-                WHERE user_id = ? AND active = 1
-                LIMIT 1
-                """;
-        List<UUID> rows = jdbcTemplate.query(sql,
-                (rs, rowNum) -> rs.getObject("user_monitored_account_id", UUID.class),
-                userId);
-        return !rows.isEmpty();
-    }
-
-    /**
      * Kullanıcının O ANKİ sektör/alt sektör id'lerini döner ([sectorId, subsectorId]) — V10,
      * rapor oluşturma anında donmuş bir kopyayı report_request'e yazmak için.
      */
@@ -571,12 +550,12 @@ public class ReportRequestService {
      */
     private AnalysisMode parseAnalysisMode(String value) {
         try {
-            // Locale.ROOT şart: Türkçe locale'de "competitor_only".toUpperCase() "COMPETİTOR_ONLY"
-            // üretir ve ASCII enum sabitiyle eşleşmez.
+            // Locale.ROOT şart: Türkçe locale'de "own_only".toUpperCase() beklenmedik sonuç
+            // üretebilir ve ASCII enum sabitiyle eşleşmez.
             return AnalysisMode.valueOf(value.toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
             throw new ApiException(ResponseCode.VALIDATION_ERROR,
-                    "Geçersiz reportType değeri: " + value + ". Geçerli değerler: NONE, OWN_ONLY, COMPETITOR_ONLY");
+                    "Geçersiz reportType değeri: " + value + ". Geçerli değerler: NONE, OWN_ONLY");
         }
     }
 

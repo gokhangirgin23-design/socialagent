@@ -109,8 +109,6 @@ public class AppProperties {
 		private int recentPostsLimit = 5;
 		// Kendi hesabı için çekilecek son gönderi sayısı (Geliştirme 2 -> 5)
 		private int ownPostsLimit = 5;
-		// Rakip (monitored) hesap başına çekilecek son gönderi sayısı (-> 2; rapor süresini kısaltmak için)
-		private int competitorPostsLimit = 2;
 		// Geliştirme 2: sektör hesabı başına çekilecek son gönderi sayısı (-> 3; own=5 + sektör
 		// top5*3 ile toplam veri hacmini makul tutmak için recentPostsLimit'ten ayrıştırıldı —
 		// AI analizi sıralı (post başına 1 çağrı) çalıştığından 5 yerine 3 seçildi)
