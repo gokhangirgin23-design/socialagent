@@ -203,18 +203,10 @@
     <!-- 3 · ACCOUNTS -->
     <section class="panel-view" id="view-accounts">
       <h2>Hesaplar</h2>
-      <p class="sub">İsteğe bağlı: en fazla <b>1 kendi</b> hesabı ve <b>5 rakip</b> Instagram hesabı eklenebilir. (Limitler arayüzde uygulanıyor.) Platform şu an yalnızca <code>INSTAGRAM</code>.</p>
+      <p class="sub">İsteğe bağlı: en fazla <b>1 kendi</b> Instagram hesabı eklenebilir. Platform şu an yalnızca <code>INSTAGRAM</code>.</p>
       <div class="card">
         <h3>Kendi hesabım <code>/account/own/add</code> · <code>/account/own/get</code></h3>
         <div id="ownArea"></div>
-      </div>
-      <div class="card">
-        <h3>Rakip hesaplar <span id="monCount" class="badge">0 / 5</span> <code>/account/monitored/*</code></h3>
-        <div class="flexrow" style="margin-bottom:12px">
-          <div class="field" style="flex:1;margin:0"><label>Rakip Instagram hesap adı</label><input id="monName" placeholder="ör. rakip_marka"></div>
-          <button onclick="addMonitored()" id="btnAddMon">Rakip Ekle</button>
-        </div>
-        <table><thead><tr><th>#</th><th>Hesap</th><th>Platform</th><th>Profil URL</th><th></th></tr></thead><tbody id="monTable"></tbody></table>
       </div>
     </section>
 
@@ -275,7 +267,7 @@
 /* ============================================================
    Durum
    ============================================================ */
-const S = { accessToken:null, refreshToken:null, user:null, reportType:null, ownAccount:null, monitored:[] };
+const S = { accessToken:null, refreshToken:null, user:null, reportType:null, ownAccount:null };
 
 function persist(){ try{ localStorage.setItem('sa_console', JSON.stringify({a:S.accessToken,r:S.refreshToken,u:S.user,b:el('baseUrl').value})); }catch(e){} }
 function restore(){
@@ -356,7 +348,7 @@ function go(step){
   navItem.classList.add('active');
   el('view-'+step).classList.add('active');
   if(step==='settings') loadSectors();
-  if(step==='accounts'){ loadOwn(); loadMonitored(); }
+  if(step==='accounts'){ loadOwn(); }
   if(step==='jobs') prepareJobs();
   if(step==='dashboard'){ loadRequests(); loadReports(); loadNotifications(); }
 }
@@ -457,7 +449,7 @@ function copyTokenFallback(){
   document.body.removeChild(ta);
 }
 function logout(){
-  Object.assign(S,{accessToken:null,refreshToken:null,user:null,reportType:null,ownAccount:null,monitored:[]});
+  Object.assign(S,{accessToken:null,refreshToken:null,user:null,reportType:null,ownAccount:null});
   try{ localStorage.removeItem('sa_console'); }catch(e){}
   el('btnLogout').disabled=true; el('btnRefresh').disabled=true; el('sessionCard').style.display='none';
   ['settings','accounts','jobs','dashboard'].forEach(s=>{unlock(s,false);markDone(s,false);});
@@ -547,46 +539,12 @@ async function addOwn(){
   else if(r.responseCode===3) toast('Bu hesap zaten ekli (DUPLICATE)','err');
   else toast('Eklenemedi','err');
 }
-async function loadMonitored(){
-  const r = await api('/account/monitored/list', {});
-  S.monitored = ok(r) ? r.data : [];
-  renderMonitored();
-}
-function renderMonitored(){
-  const t = el('monTable');
-  el('monCount').textContent = S.monitored.length+' / 5';
-  el('btnAddMon').disabled = S.monitored.length>=5;
-  if(S.monitored.length>=5) el('monName').placeholder='Limit doldu (5)';
-  if(!S.monitored.length){ t.innerHTML='<tr><td colspan="5" class="empty">Henüz rakip hesap yok</td></tr>'; return; }
-  t.innerHTML = S.monitored.map((m,i)=>
-    '<tr><td>'+(i+1)+'</td><td><b>'+esc(m.accountName)+'</b></td><td>'+esc(m.platform)+'</td>'+
-    '<td class="mono" style="font-size:11px">'+esc(m.profileUrl||'')+'</td>'+
-    '<td><button class="danger" style="padding:3px 9px" onclick="removeMon(\''+m.userMonitoredAccountId+'\')">Kaldır</button></td></tr>'
-  ).join('');
-}
-async function addMonitored(){
-  if(S.monitored.length>=5){ toast('Limit 5','err'); return; }
-  const accountName = el('monName').value.trim();
-  if(!accountName){ toast('Hesap adı gir','err'); return; }
-  const r = await api('/account/monitored/add', {platform:'INSTAGRAM', accountName});
-  if(ok(r)){ el('monName').value=''; loadMonitored(); toast('Rakip eklendi','ok'); }
-  else if(r.responseCode===3) toast('Bu hesap zaten izleniyor (DUPLICATE)','err');
-  else toast('Eklenemedi','err');
-}
-async function removeMon(id){
-  const r = await api('/account/monitored/remove', {userMonitoredAccountId:id});
-  if(ok(r)){ loadMonitored(); toast('Kaldırıldı','ok'); }
-  else if(r.responseCode===5) toast('Bulunamadı','err');
-  else toast('Hata','err');
-}
-
 /* ============================================================
    4 · RAPOR İSTEĞİ
    ============================================================ */
 const REPORT_TYPES = [
   {v:'NONE',            l:'Sektör Analizi',            key:'noneSelectable'},
-  {v:'OWN_ONLY',        l:'Kendi Hesabımı Kıyasla',    key:'ownSelectable'},
-  {v:'COMPETITOR_ONLY', l:'Rakip Hesap Analizi',        key:'competitorSelectable'}
+  {v:'OWN_ONLY',        l:'Kendi Hesabımı Kıyasla',    key:'ownSelectable'}
 ];
 async function prepareJobs(){
   // Sektör uyarısı bilgilendirme amaçlı; formu gizlemez (sunucu doğrular)
@@ -640,7 +598,6 @@ async function loadAvailableTypes(){
   const hintLines = [];
   if(!hasSector)               hintLines.push('Sektör seç → <b>Sektör Analizi</b> ve <b>Kendi Hesabımı Kıyasla</b> aktif olur (<a href="#" onclick="go(\'settings\');return false;">Ayarlar</a>)');
   if(!sel.ownSelectable)        hintLines.push('Kendi hesabını ekle → <b>Kendi Hesabımı Kıyasla</b> aktif olur');
-  if(!sel.competitorSelectable) hintLines.push('Rakip hesap ekle → <b>Rakip Hesap Analizi</b> aktif olur');
   if(hints) hints.innerHTML = hintLines.length
     ? '<span style="color:var(--muted);font-size:12px">'+hintLines.join(' &nbsp;|&nbsp; ')+'</span>'
     : '<span style="color:var(--ok);font-size:12px">✓ Tüm analiz tipleri kullanılabilir</span>';

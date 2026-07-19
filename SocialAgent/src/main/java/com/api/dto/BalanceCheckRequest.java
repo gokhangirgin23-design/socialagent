@@ -12,7 +12,7 @@ import lombok.Setter;
 @Setter
 public class BalanceCheckRequest {
 
-    // Kontrol edilecek rapor tipi: OWN_ONLY | COMPETITOR_ONLY | NONE
+    // Kontrol edilecek rapor tipi: OWN_ONLY | NONE
     @NotBlank(message = "reportType zorunludur")
     private String reportType;
 }

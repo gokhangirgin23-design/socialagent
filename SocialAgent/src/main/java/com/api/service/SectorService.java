@@ -47,6 +47,10 @@ public class SectorService {
 	// Subsector entity -> DTO dönüştürücü
 	private final SubsectorMapper subsectorMapper;
 
+	// Sektör/alt sektör değişince Brand DNA cache'ini pasife alır (ContentPrompts.forBrandDna
+	// promptuna sektör bağlamı girdiğinden, sektör değişimi DNA'yı geçersiz kılar)
+	private final AccountDnaCacheService accountDnaCacheService;
+
 	// Sector satırlarını entity'ye çeviren RowMapper
 	private static final RowMapper<Sector> SECTOR_ROW_MAPPER = (rs, rowNum) -> {
 		Sector s = new Sector();
@@ -54,6 +58,7 @@ public class SectorService {
 		s.setSectorId(rs.getObject("sector_id", UUID.class));
 		s.setName(rs.getString("name"));
 		s.setActive(rs.getObject("active", Integer.class));
+		s.setDisplayOrder(rs.getObject("display_order", Integer.class));
 		if (rs.getTimestamp("created_date") != null) {
 			s.setCreatedDate(rs.getTimestamp("created_date").toLocalDateTime());
 		}
@@ -70,6 +75,7 @@ public class SectorService {
 		sub.setSectorId(rs.getObject("sector_id", UUID.class));
 		sub.setName(rs.getString("name"));
 		sub.setActive(rs.getObject("active", Integer.class));
+		sub.setDisplayOrder(rs.getObject("display_order", Integer.class));
 		if (rs.getTimestamp("created_date") != null) {
 			sub.setCreatedDate(rs.getTimestamp("created_date").toLocalDateTime());
 		}
@@ -85,12 +91,12 @@ public class SectorService {
 	 */
 	@Transactional(readOnly = true)
 	public List<SectorDto> listSectors() {
-		// Aktif sektörleri isme göre sıralı çek
+		// Aktif sektörleri verilen iş sırasına göre çek (V13 — eşitlikte isim yedek anahtar)
 		String sql = """
-				SELECT sector_id, name, active, created_date, updated_date
+				SELECT sector_id, name, active, display_order, created_date, updated_date
 				FROM sector
 				WHERE active = 1
-				ORDER BY name
+				ORDER BY display_order, name
 				""";
 		// Native sorgu ile entity listesi al
 		List<Sector> sectors = jdbcTemplate.query(sql, SECTOR_ROW_MAPPER);
@@ -104,12 +110,12 @@ public class SectorService {
 	 */
 	@Transactional(readOnly = true)
 	public List<SubsectorDto> listSubsectors(UUID sectorId) {
-		// Verilen sektöre ait aktif alt sektörleri çek
+		// Verilen sektöre ait aktif alt sektörleri iş sırasına göre çek (V13)
 		String sql = """
-				SELECT subsector_id, sector_id, name, active, created_date, updated_date
+				SELECT subsector_id, sector_id, name, active, display_order, created_date, updated_date
 				FROM subsector
 				WHERE sector_id = ? AND active = 1
-				ORDER BY name
+				ORDER BY display_order, name
 				""";
 		// ? parametresi ile native sorgu
 		List<Subsector> subsectors = jdbcTemplate.query(sql, SUBSECTOR_ROW_MAPPER, sectorId);
@@ -148,7 +154,10 @@ public class SectorService {
 		user.setUpdatedDate(LocalDateTime.now());
 		userInfoRepository.save(user);
 
-		// 5) Veri döndürülmez, yalnızca başarı kodu
+		// 5) Sektör değişimi Brand DNA'yı geçersiz kılar (prompt sektör bağlamı içeriyor)
+		accountDnaCacheService.invalidateAccountDnaCache(userId);
+
+		// 6) Veri döndürülmez, yalnızca başarı kodu
 		return DataResponse.of(ResponseCode.SUCCESS);
 	}
 
@@ -177,7 +186,10 @@ public class SectorService {
 		user.setUpdatedDate(LocalDateTime.now());
 		userInfoRepository.save(user);
 
-		// 5) Veri döndürülmez, yalnızca başarı kodu
+		// 5) Alt sektör değişimi de Brand DNA'yı geçersiz kılar (prompt sektör bağlamı içeriyor)
+		accountDnaCacheService.invalidateAccountDnaCache(userId);
+
+		// 6) Veri döndürülmez, yalnızca başarı kodu
 		return DataResponse.of(ResponseCode.SUCCESS);
 	}
 
@@ -190,7 +202,7 @@ public class SectorService {
 	 */
 	private Sector findActiveSectorById(UUID sectorId) {
 		String sql = """
-				SELECT sector_id, name, active, created_date, updated_date
+				SELECT sector_id, name, active, display_order, created_date, updated_date
 				FROM sector
 				WHERE sector_id = ? AND active = 1
 				""";
@@ -203,7 +215,7 @@ public class SectorService {
 	 */
 	private Subsector findActiveSubsectorById(UUID subsectorId) {
 		String sql = """
-				SELECT subsector_id, sector_id, name, active, created_date, updated_date
+				SELECT subsector_id, sector_id, name, active, display_order, created_date, updated_date
 				FROM subsector
 				WHERE subsector_id = ? AND active = 1
 				""";

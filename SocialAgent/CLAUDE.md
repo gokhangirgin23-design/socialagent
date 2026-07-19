@@ -9,11 +9,12 @@
 
 ## 1. Proje Özeti
 
-**SocialAgent**, sosyal medya hesaplarını (kendi + rakip) Apify ile çekip AI ile analiz eden,
-kullanıcıya Markdown rapor + bildirim üreten bir backend API'dir. **Hem web hem mobil** erişir.
+**SocialAgent**, kullanıcının kendi sosyal medya hesabını + sektörün top hesaplarını Apify ile
+çekip AI ile analiz eden, kullanıcıya Markdown rapor + bildirim üreten bir backend API'dir.
+**Hem web hem mobil** erişir. (Rakip/izlenen hesap özelliği kaldırıldı.)
 
 Akış:
-`Register (Google SSO) → Sektör/Alt sektör → Kendi (tek) & rakip hesaplar (opsiyonel)
+`Register (Google SSO) → Sektör/Alt sektör → Kendi (tek) hesap (opsiyonel)
 → Job oluştur → Scheduler → RabbitMQ → Worker → Apify → AI analiz → Rapor → Bildirim → Dashboard`
 
 ---
@@ -82,10 +83,8 @@ Akış:
 - **sector:** `sector_id(PK)`, `name`
 - **subsector:** `subsector_id(PK)`, `sector_id`, `name` — **UNIQUE(sector_id, name)**
 - **user_social_account:** `user_social_account_id(PK)`, `user_id`, `platform`, `account_name`, `profile_url` — **UNIQUE(user_id, platform, account_name)**
-- **monitored_account:** `monitored_account_id(PK)`, `platform`, `account_name` — **UNIQUE(platform, account_name)**
-- **user_monitored_account:** `user_monitored_account_id(PK)`, `user_id`, `monitored_account_id` — **UNIQUE(user_id, monitored_account_id)**
 - **user_job:** `user_job_id(PK)`, `user_id`, `selected_user_social_account_id`, `analysis_mode`, `job_period`, `analysis_period_days`, `repeat_count`, `current_count`, `completed`
-- **social_post:** `social_post_id(PK)`, `user_job_id`, `monitored_account_id(nullable)`, `platform_sector(nullable)`, `account_name_sector(nullable)`, `platform`, `platform_post_id`, `post_url`, `caption`, `hashtags`, `media_url`, `media_type`, `likes_count`, `comments_count`, `views_count`, `shares_count`, `post_date` — **UNIQUE(platform, platform_post_id)**
+- **social_post:** `social_post_id(PK)`, `user_job_id`, `platform_sector(nullable)`, `account_name_sector(nullable)`, `platform`, `platform_post_id`, `post_url`, `caption`, `hashtags`, `media_url`, `media_type`, `likes_count`, `comments_count`, `views_count`, `shares_count`, `post_date` — **UNIQUE(platform, platform_post_id)** (rakip/izlenen hesap özelliği kaldırıldı — `monitored_account`/`user_monitored_account` tabloları ve `monitored_account_id` kolonu artık yok)
 - **post_analysis:** `post_analysis_id(PK)`, `social_post_id`, `analysis_json (JSONB/CLOB)`
 - **report:** `report_id(PK)`, `user_job_id`, `status`, `report_content (Markdown)`
 - **notification:** `notification_id(PK)`, `user_id`, `title`, `message`, `reference_type`, `reference_id`, `is_read`
@@ -95,7 +94,7 @@ Akış:
 ## 6. Enum / Sabit Değerler
 
 ```
-analysis_mode    : OWN_ONLY | COMPETITOR_ONLY | BOTH | NONE
+analysis_mode    : OWN_ONLY | NONE   (rakip hesap özelliğinin kaldırılmasıyla COMPETITOR_ONLY/BOTH silindi)
 job_period       : DAILY | WEEKLY | MONTHLY | ON_DEMAND     (ON_DEMAND = anlık, repeat yok)
 platform         : INSTAGRAM
 media_type       : IMAGE | VIDEO | CAROUSEL | TEXT
@@ -123,14 +122,13 @@ completed/active : 0 | 1
 3. **Sektör seç:** `sector` listele + kullanıcı `sector_id` güncelle.
 4. **Alt sektör seç:** `subsector` (sector_id'ye göre) + `subsector_id` güncelle.
 5. **Kendi hesabını ekle (opsiyonel, TEK hesap):** `user_social_account` (UNIQUE(user_id, platform, account_name) service kontrolü).
-6. **Takip hesaplarını ekle (opsiyonel):** `monitored_account` upsert (UNIQUE(platform, account_name)) + `user_monitored_account` bağla (UNIQUE(user_id, monitored_account_id)).
-7. **Rapor oluştur → `user_job` insert** (Bölüm 8).
+6. **Rapor oluştur → `user_job` insert** (Bölüm 8).
 
 ---
 
 ## 8. Job Oluşturma Kuralları
 
-- **analysis_mode** seçime göre: kendi(tek) → `OWN_ONLY`, rakip → `COMPETITOR_ONLY`, ikisi → `BOTH`, hiçbiri → `NONE`.
+- **analysis_mode** seçime göre: kendi hesap varsa → `OWN_ONLY`, yoksa → `NONE` (rakip hesap özelliği kaldırıldı).
 - **job_period:** `ON_DEMAND` → anlık, `repeat_count` istenmez. Diğerlerinde `repeat_count` girilir, `current_count=0`.
 - `analysis_period_days`: tekrar-analiz penceresi (varsayılan 7).
 - Insert sonrası `active=1`, `completed=0`.
@@ -154,8 +152,6 @@ completed/active : 0 | 1
 |---|---|
 | `NONE` | sektörün **top 5 Instagram** hesabı |
 | `OWN_ONLY` | sektör top 5 + kullanıcının kendi (tek) hesabı |
-| `COMPETITOR_ONLY` | sadece rakip (monitored) hesaplar |
-| `BOTH` | seçilen hesaplar (kendi + rakip) |
 
 **Sektör "top 5" nasıl belirlenir (D1):**
 1. Kullanıcının `sector`/`subsector` adını **keyword** olarak Apify'ın keyword/profil arama aktörüne ver

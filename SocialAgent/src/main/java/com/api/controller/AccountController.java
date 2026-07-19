@@ -3,7 +3,6 @@ package com.api.controller;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
-import java.util.List;
 import java.util.UUID;
 
 import org.springframework.web.bind.annotation.PostMapping;
@@ -12,10 +11,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.api.common.DataResponse;
-import com.api.dto.AddMonitoredAccountRequest;
 import com.api.dto.AddOwnAccountRequest;
-import com.api.dto.MonitoredAccountDto;
-import com.api.dto.RemoveMonitoredAccountRequest;
 import com.api.dto.UserSocialAccountDto;
 import com.api.security.SecurityUtil;
 import com.api.service.AccountService;
@@ -24,11 +20,11 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 
 /**
- * Hesap yönetimi uçları: kendi hesabı ve izlenen (rakip) hesaplar (hepsi POST — CLAUDE.md Madde 2).
+ * Hesap yönetimi uçları: kullanıcının kendi hesabı (hepsi POST — CLAUDE.md Madde 2).
  * Tüm uçlar JWT gerektiren güvenli uçlardır.
  * userId daima JWT'den SecurityUtil ile alınır; istekten okunmaz (CLAUDE.md Madde 4).
  */
-@Tag(name = "Hesap", description = "Kullanıcının kendi ve rakip (izlenen) sosyal hesap yönetimi")
+@Tag(name = "Hesap", description = "Kullanıcının kendi sosyal hesap yönetimi")
 @RestController
 @RequestMapping("/account")
 @RequiredArgsConstructor
@@ -41,7 +37,7 @@ public class AccountController {
 	 * Kullanıcının kendi sosyal medya hesabını ekler.
 	 * Onboarding adım 5 (opsiyonel).
 	 */
-	@Operation(summary = "Kendi hesabı ekle", description = "Kullanıcının kendi Instagram hesabını ekler (OWN_ONLY/BOTH analizleri için).")
+	@Operation(summary = "Kendi hesabı ekle", description = "Kullanıcının kendi Instagram hesabını ekler (OWN_ONLY analizleri için).")
 	@PostMapping("/own/add")
 	public DataResponse<UserSocialAccountDto> addOwnAccount(@Valid @RequestBody AddOwnAccountRequest request) {
 		// userId JWT'den al
@@ -64,41 +60,12 @@ public class AccountController {
 	}
 
 	/**
-	 * Rakip (izlenen) hesap ekler.
-	 * Onboarding adım 6 (opsiyonel).
+	 * Kullanıcının aktif kendi hesabını kaldırır (soft delete).
 	 */
-	@Operation(summary = "Rakip hesap ekle", description = "İzlenecek rakip Instagram hesabı ekler (COMPETITOR_ONLY için).")
-	@PostMapping("/monitored/add")
-	public DataResponse<MonitoredAccountDto> addMonitoredAccount(
-			@Valid @RequestBody AddMonitoredAccountRequest request) {
-		// userId JWT'den al
+	@Operation(summary = "Kendi hesabı kaldır", description = "Kullanıcının ekli kendi hesabını pasifleştirir.")
+	@PostMapping("/own/remove")
+	public DataResponse<Void> removeOwnAccount() {
 		UUID userId = SecurityUtil.getCurrentUserId();
-		// İş katmanına devret
-		MonitoredAccountDto result = accountService.addMonitoredAccount(userId, request);
-		return DataResponse.success(result);
-	}
-
-	/**
-	 * Kullanıcının izlediği rakip hesapları listeler.
-	 */
-	@Operation(summary = "Rakip hesapları listele", description = "Kullanıcının izlediği rakip hesapları döndürür.")
-	@PostMapping("/monitored/list")
-	public DataResponse<List<MonitoredAccountDto>> listMonitoredAccounts() {
-		// userId JWT'den al; request body gerekmez
-		UUID userId = SecurityUtil.getCurrentUserId();
-		List<MonitoredAccountDto> result = accountService.listMonitoredAccounts(userId);
-		return DataResponse.success(result);
-	}
-
-	/**
-	 * Kullanıcının izlediği bir rakip hesabı kaldırır (soft delete).
-	 */
-	@Operation(summary = "Rakip hesabı kaldır", description = "Belirtilen izlenen rakip hesabı pasifleştirir.")
-	@PostMapping("/monitored/remove")
-	public DataResponse<Void> removeMonitoredAccount(@Valid @RequestBody RemoveMonitoredAccountRequest request) {
-		// userId JWT'den al
-		UUID userId = SecurityUtil.getCurrentUserId();
-		// Soft delete; NOT_FOUND ise ApiException fırlatır
-		return accountService.removeMonitoredAccount(userId, request.getUserMonitoredAccountId());
+		return accountService.removeOwnAccount(userId);
 	}
 }

@@ -24,7 +24,7 @@ public class ReportSummaryDto {
     // Rapor durumu: PENDING | GENERATING | COMPLETED | FAILED
     private String status;
 
-    // Rapor türü (OWN_ONLY | COMPETITOR_ONLY | BOTH | NONE) — join'den gelir
+    // Rapor türü (OWN_ONLY | NONE) — join'den gelir
     private String reportType;
 
     // Raporun oluşturulma tarihi

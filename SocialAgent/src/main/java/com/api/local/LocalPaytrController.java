@@ -1,6 +1,5 @@
 package com.api.local;
 
-import java.math.BigDecimal;
 import java.util.UUID;
 
 import org.springframework.context.annotation.Profile;
@@ -15,16 +14,16 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 /**
- * LOCAL profil — PayTR ödeme akışı için test yardımcıları (FAZ PAYMENT — LOCAL).
+ * LOCAL profil — kredi akışı için test yardımcıları (FAZ CREDIT — LOCAL).
  * Yalnızca local profilde aktif (@Profile("local")). /local/** zaten SecurityConfig'te permitAll.
  *
  * Sahte ödeme SAYFASI artık statik: /local-paytr-pay.html (LocalPaytrGateway oraya GET ile yönlendirir).
- * Bu controller yalnızca bakiye test yardımcılarını barındırır.
+ * Bu controller yalnızca kredi test yardımcılarını barındırır.
  */
 @RestController
 @RequestMapping("/local")
 @Profile("local")
-@Tag(name = "Local — Ödeme Test", description = "LOCAL profil bakiye/ödeme test yardımcıları")
+@Tag(name = "Local — Ödeme Test", description = "LOCAL profil kredi/ödeme test yardımcıları")
 public class LocalPaytrController {
 
     private final PaymentService paymentService;
@@ -33,22 +32,22 @@ public class LocalPaytrController {
         this.paymentService = paymentService;
     }
 
-    /** Test yardımcısı: bakiyeyi elle yükle (PayTR'a hiç girmeden bakiye-yeterli yolu test et). */
-    @Operation(summary = "Bakiye yükle (local test)",
-            description = "Verilen kullanıcının cüzdanına elle bakiye ekler; PayTR'a gitmeden bakiye-yeterli yolu test etmek için.")
+    /** Test yardımcısı: krediyi elle yükle (PayTR'a hiç girmeden yeterli-kredi yolunu test et). */
+    @Operation(summary = "Kredi yükle (local test)",
+            description = "Verilen kullanıcının cüzdanına elle kredi ekler; PayTR'a gitmeden yeterli-kredi yolunu test etmek için.")
     @PostMapping("/payment/add-balance")
-    public String addBalance(@RequestParam("userId") String userId, @RequestParam("amount") String amount) {
+    public String addBalance(@RequestParam("userId") String userId, @RequestParam("credits") String credits) {
         UUID uid = UUID.fromString(userId);
-        paymentService.topupManual(uid, new BigDecimal(amount));
-        return "balance += " + amount + " for user " + userId;
+        paymentService.topupCreditsManual(uid, Integer.parseInt(credits));
+        return "creditBalance += " + credits + " for user " + userId;
     }
 
-    /** Test yardımcısı: bakiyeyi gör. */
-    @Operation(summary = "Bakiye gör (local test)",
-            description = "Verilen kullanıcının güncel cüzdan bakiyesini döndürür.")
+    /** Test yardımcısı: kredi bakiyesini gör. */
+    @Operation(summary = "Kredi bakiyesi gör (local test)",
+            description = "Verilen kullanıcının güncel kredi bakiyesini döndürür.")
     @PostMapping("/payment/wallet")
     public String wallet(@RequestParam("userId") String userId) {
         UUID uid = UUID.fromString(userId);
-        return "balance=" + paymentService.getBalance(uid).toPlainString();
+        return "creditBalance=" + paymentService.getCreditBalance(uid);
     }
 }

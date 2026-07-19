@@ -42,7 +42,6 @@ public class SocialPostService {
     /**
      * Hedef hesap son DEFAULT_ANALYSIS_PERIOD_DAYS gün içinde analiz edildi mi? (tekrar-analiz koruması).
      * Kimlik hedef tipine göre seçilir:
-     *  - MONITORED: monitored_account_id ile post_analysis tarihi kontrol edilir
      *  - OWN:       report_request.selected_user_social_account_id üzerinden kontrol
      *  - SECTOR:    Hashtag explore URL'leri dinamik olduğundan kontrol yapılmaz (her zaman çek)
      *
@@ -60,26 +59,22 @@ public class SocialPostService {
 
         List<UUID> rows;
         switch (target.type()) {
-            case MONITORED -> {
-                // Rakip hesap: monitored_account_id eşleşmesi
-                String sql = """
-                        SELECT sp.social_post_id
-                        FROM social_post sp, post_analysis pa
-                        WHERE sp.social_post_id = pa.social_post_id
-                          AND sp.monitored_account_id = ?
-                          AND pa.created_date >= ?
-                        """;
-                rows = jdbcTemplate.query(sql,
-                        (rs, rowNum) -> rs.getObject("social_post_id", UUID.class),
-                        target.monitoredAccountId(), cutoff);
-            }
             case OWN -> {
-                // Kendi hesabı: report_request.selected_user_social_account_id üzerinden
+                // Kendi hesabı: report_request.selected_user_social_account_id üzerinden.
+                // KRİTİK: sp.source_type = 'OWN' filtresi ZORUNLU — aksi halde aynı istekte
+                // çekilen SECTOR postları da eşleşir (hepsi aynı request_id'ye bağlı), ve OWN
+                // scraping'i hiç başarılı olmamış olsa bile "yakın zamanda analiz edilmiş"
+                // sanılıp bir sonraki denemede Apify'a HİÇ gidilmeden atlanır. Gerçek vakada
+                // bulundu: bi_butik_originals'ın OWN scraping'i başarısız oldu ama 5 SECTOR
+                // postu analiz edildi; hesap mylovebutik olarak değiştirilip tekrar denendiğinde
+                // bu sorgu o eski SECTOR postlarını "OWN analiz edilmiş" sayıp mylovebutik'i
+                // Apify'a hiç göndermedi.
                 String sql = """
                         SELECT sp.social_post_id
                         FROM social_post sp, post_analysis pa, report_request rr
                         WHERE sp.social_post_id = pa.social_post_id
                           AND sp.request_id = rr.request_id
+                          AND sp.source_type = 'OWN'
                           AND rr.selected_user_social_account_id = ?
                           AND pa.created_date >= ?
                         """;
@@ -96,6 +91,42 @@ public class SocialPostService {
                     DEFAULT_ANALYSIS_PERIOD_DAYS, target.type(), target.accountName());
         }
         return recent;
+    }
+
+    /**
+     * Tekrar-analiz koruması devreye girdiğinde (isRecentlyAnalyzed=true), mevcut post'ları
+     * yeni requestId'ye bağlar. Bu olmadan analiz ve rapor sorguları (request_id bazlı)
+     * hiçbir post görmez ve pipeline FAILED döner.
+     *
+     * @param requestId yeni rapor isteğinin id'si
+     * @param target    cache hit olan hedef
+     * @return güncellenen satır sayısı
+     */
+    @Transactional
+    public int relinkExistingPosts(UUID requestId, ScrapeTarget target) {
+        Timestamp now = Timestamp.valueOf(LocalDateTime.now());
+        int updated;
+        switch (target.type()) {
+            case OWN -> {
+                // Kendi hesabı: aynı selected_user_social_account_id'ye ait eski request'lerdeki
+                // OWN post'ları yeni isteğe bağla (source_type ile daralt — SECTOR post'larını koru)
+                String sql = """
+                        UPDATE social_post
+                        SET request_id = ?, updated_date = ?
+                        WHERE source_type = 'OWN'
+                          AND request_id IN (
+                              SELECT rr.request_id
+                              FROM report_request rr
+                              WHERE rr.selected_user_social_account_id = ?
+                          )
+                        """;
+                updated = jdbcTemplate.update(sql, requestId, now, target.selectedUserSocialAccountId());
+            }
+            default -> updated = 0;
+        }
+        log.info("Tekrar-analiz koruması: mevcut post'lar yeni isteğe bağlandı: requestId={}, tip={}, hesap={}, güncellenen={}",
+                requestId, target.type(), target.accountName(), updated);
+        return updated;
     }
 
     /**
@@ -153,11 +184,7 @@ public class SocialPostService {
             sp.setSocialPostId(UUID.randomUUID());
             sp.setRequestId(requestId);
 
-            // Kaynak kimlik kolonları (hedef tipine göre)
-            sp.setMonitoredAccountId(target.type() == ScrapeTarget.TargetType.MONITORED
-                    ? target.monitoredAccountId() : null);
-
-            // source_type kaynak ayrımını taşır (TargetType ile birebir: OWN | MONITORED | SECTOR)
+            // source_type kaynak ayrımını taşır (TargetType ile birebir: OWN | SECTOR)
             sp.setSourceType(target.type().name());
 
             // SECTOR: sector_account_name, hesap adı Apify yanıtından (ownerUsername); diğerlerinde null

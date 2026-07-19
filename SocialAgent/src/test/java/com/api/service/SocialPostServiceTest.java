@@ -37,7 +37,7 @@ class SocialPostServiceTest {
     private SocialPostRepository socialPostRepository;
     private SocialPostService service;
 
-    private final UUID monitoredId = UUID.randomUUID();
+    private final UUID ownAccountId = UUID.randomUUID();
     private final UUID requestId = UUID.randomUUID();
 
     @BeforeEach
@@ -54,7 +54,7 @@ class SocialPostServiceTest {
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(), any()))
                 .thenReturn(List.of(UUID.randomUUID()));
 
-        ScrapeTarget target = ScrapeTarget.monitored("INSTAGRAM", "rakip_hesap", monitoredId);
+        ScrapeTarget target = ScrapeTarget.own("INSTAGRAM", "kendi_hesap", ownAccountId);
         boolean recent = service.isRecentlyAnalyzed(target);
 
         assertTrue(recent);
@@ -65,10 +65,29 @@ class SocialPostServiceTest {
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(), any()))
                 .thenReturn(List.of());
 
-        ScrapeTarget target = ScrapeTarget.monitored("INSTAGRAM", "rakip_hesap", monitoredId);
+        ScrapeTarget target = ScrapeTarget.own("INSTAGRAM", "kendi_hesap", ownAccountId);
         boolean recent = service.isRecentlyAnalyzed(target);
 
         assertFalse(recent);
+    }
+
+    @Test
+    void ownSorgusuSourceTypeOwnFiltresiIcerir() {
+        // KRİTİK regresyon: bu filtre olmadan, aynı isteğe bağlı SECTOR postları da eşleşip
+        // OWN scraping'i hiç başarılı olmamış olsa bile "zaten analiz edilmiş" sanılıyordu —
+        // gerçek vakada bulundu: bi_butik_originals'ın OWN scraping'i başarısız oldu ama 5
+        // SECTOR postu analiz edildi; hesap mylovebutik olarak değiştirilip tekrar denendiğinde
+        // bu sorgu o eski SECTOR postlarını "OWN analiz edilmiş" sayıp mylovebutik'i Apify'a
+        // hiç göndermedi.
+        org.mockito.ArgumentCaptor<String> sqlCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
+        when(jdbcTemplate.query(sqlCaptor.capture(), any(RowMapper.class), any(), any()))
+                .thenReturn(List.of());
+
+        ScrapeTarget target = ScrapeTarget.own("INSTAGRAM", "mylovebutik", UUID.randomUUID());
+        service.isRecentlyAnalyzed(target);
+
+        assertTrue(sqlCaptor.getValue().contains("source_type = 'OWN'"),
+                "OWN sorgusu source_type='OWN' filtresi içermeli: " + sqlCaptor.getValue());
     }
 
     @Test
@@ -89,7 +108,7 @@ class SocialPostServiceTest {
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), anyString(), anyString()))
                 .thenReturn(List.of());
 
-        ScrapeTarget target = ScrapeTarget.monitored("INSTAGRAM", "rakip_hesap", monitoredId);
+        ScrapeTarget target = ScrapeTarget.own("INSTAGRAM", "kendi_hesap", ownAccountId);
         List<ApifyPost> posts = List.of(samplePost("p1"), samplePost("p2"));
 
         int inserted = service.saveRecentPosts(requestId, target, posts);
@@ -104,7 +123,7 @@ class SocialPostServiceTest {
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), anyString(), anyString()))
                 .thenReturn(List.of(UUID.randomUUID()));
 
-        ScrapeTarget target = ScrapeTarget.monitored("INSTAGRAM", "rakip_hesap", monitoredId);
+        ScrapeTarget target = ScrapeTarget.own("INSTAGRAM", "kendi_hesap", ownAccountId);
         List<ApifyPost> posts = List.of(samplePost("p1"));
 
         int inserted = service.saveRecentPosts(requestId, target, posts);

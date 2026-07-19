@@ -11,16 +11,17 @@ import static org.mockito.Mockito.when;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
 
 import com.api.apify.ApifyClient;
 import com.api.apify.ApifyPost;
 import com.api.config.AppProperties;
+import com.api.dto.repository.ReportRequestRepository;
 import com.api.entity.ReportRequest;
 
 /**
@@ -41,6 +42,7 @@ class ScrapePipelineServiceTest {
     private AppProperties appProperties;
     private ReportService reportService;
     private PaymentService paymentService;
+    private ReportRequestRepository reportRequestRepository;
     private ScrapePipelineService pipeline;
 
     private final UUID requestId = UUID.randomUUID();
@@ -57,19 +59,19 @@ class ScrapePipelineServiceTest {
         appProperties = new AppProperties();
         reportService = org.mockito.Mockito.mock(ReportService.class);
         paymentService = org.mockito.Mockito.mock(PaymentService.class);
+        reportRequestRepository = org.mockito.Mockito.mock(ReportRequestRepository.class);
         pipeline = new ScrapePipelineService(jdbcTemplate, targetResolver, apifyClient, socialPostService,
                 analysisPipelineService, reportPipelineService, notificationService, appProperties,
-                reportService, paymentService);
+                reportService, paymentService, null, reportRequestRepository);
     }
 
     @SuppressWarnings("unchecked")
     @Test
     void analizEdilmemisHedefApifydanCekilirVeYazilir() {
-        // loadRequest -> aktif rapor isteği
-        when(jdbcTemplate.query(anyString(), any(RowMapper.class), (Object[]) any()))
-                .thenReturn(List.of(request()));
-        // Mod çözümü -> tek MONITORED hedef
-        ScrapeTarget target = ScrapeTarget.monitored("INSTAGRAM", "rakip1", UUID.randomUUID());
+        // loadRequest -> aktif rapor isteği (JPA findById)
+        when(reportRequestRepository.findById(requestId)).thenReturn(Optional.of(request()));
+        // Mod çözümü -> tek SECTOR hedef
+        ScrapeTarget target = ScrapeTarget.sector("INSTAGRAM", "https://www.instagram.com/sektor1/");
         when(targetResolver.resolve(any(ReportRequest.class))).thenReturn(List.of(target));
         // Tekrar-analiz koruması -> son N günde analiz yok
         when(socialPostService.isRecentlyAnalyzed(any(ScrapeTarget.class))).thenReturn(false);
@@ -90,9 +92,8 @@ class ScrapePipelineServiceTest {
     @SuppressWarnings("unchecked")
     @Test
     void yakinZamandaAnalizEdilenHedefApifyAtlar() {
-        when(jdbcTemplate.query(anyString(), any(RowMapper.class), (Object[]) any()))
-                .thenReturn(List.of(request()));
-        ScrapeTarget target = ScrapeTarget.monitored("INSTAGRAM", "rakip1", UUID.randomUUID());
+        when(reportRequestRepository.findById(requestId)).thenReturn(Optional.of(request()));
+        ScrapeTarget target = ScrapeTarget.sector("INSTAGRAM", "https://www.instagram.com/sektor1/");
         when(targetResolver.resolve(any(ReportRequest.class))).thenReturn(List.of(target));
         // Son N günde analiz edilmiş -> Apify atlanır
         when(socialPostService.isRecentlyAnalyzed(any(ScrapeTarget.class))).thenReturn(true);
@@ -104,11 +105,103 @@ class ScrapePipelineServiceTest {
         verify(notificationService, never()).notifyReportCompleted(any());
     }
 
+    @SuppressWarnings("unchecked")
+    @Test
+    void kendiHesapScrapingBosDonerseRaporFailedOlurSektorVerisiyleDevamEtmez() {
+        // Gerçek vaka: OWN_ONLY raporunda kullanıcının kendi hesabından (bi_butik_originals)
+        // hiç post çekilemedi (özel/yanlış hesap adı), ama pipeline sessizce SECTOR verisiyle
+        // devam edip COMPLETED işaretledi — Brand DNA kullanıcının gerçek ürünüyle alakasız bir
+        // kimliğe (rakip sektör hesaplarından "tesettür") kaydı. Artık bu durumda FAILED olmalı.
+        UUID ownAccountId = UUID.randomUUID();
+        when(reportRequestRepository.findById(requestId)).thenReturn(Optional.of(ownOnlyRequest(ownAccountId)));
+        ScrapeTarget ownTarget = ScrapeTarget.own("INSTAGRAM", "bi_butik_originals", ownAccountId);
+        when(targetResolver.resolve(any(ReportRequest.class))).thenReturn(List.of(ownTarget));
+        when(socialPostService.isRecentlyAnalyzed(any(ScrapeTarget.class))).thenReturn(false);
+        // Apify boş döner (hesap özel/yanlış/scrape hatası)
+        when(apifyClient.fetchPostsByUrls(any(List.class), anyInt())).thenReturn(List.of());
+        // countOwnPosts -> 0 (hiç KENDİ postu yazılmadı)
+        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), (Object[]) any())).thenReturn(0);
+
+        pipeline.processRequest(requestId);
+
+        // Rapor/analiz hiç üretilmemeli — sektör verisiyle sahte bir "kendi hesap" raporu oluşmasın
+        verify(analysisPipelineService, never()).analyzeRequest(any());
+        verify(reportPipelineService, never()).generateReport(any());
+        verify(notificationService, never()).notifyReportCompleted(any());
+        // FAILED olarak işaretlenmeli
+        verify(jdbcTemplate).update(
+                org.mockito.ArgumentMatchers.contains("UPDATE report_request"),
+                eq("FAILED"), anyString(), any(), any(), eq(requestId));
+    }
+
+    // ============================================================
+    // Geliştirme 2 — SECTOR hedefinde yeni sector-posts-limit kullanılır
+    // ============================================================
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void sektorHedefindeYeniSectorPostsLimitKullanilir() {
+        // AppProperties varsayılanı: sectorPostsLimit=3 (own=5, competitor=2'den ayrı bir alan) —
+        // recentLimitFor artık SECTOR için eski recent-posts-limit (5) yerine bunu okumalı.
+        when(reportRequestRepository.findById(requestId)).thenReturn(Optional.of(request()));
+        ScrapeTarget sectorTarget = ScrapeTarget.sector("INSTAGRAM", "https://www.instagram.com/sektor_hesap/");
+        when(targetResolver.resolve(any(ReportRequest.class))).thenReturn(List.of(sectorTarget));
+        when(socialPostService.isRecentlyAnalyzed(any(ScrapeTarget.class))).thenReturn(false);
+        when(apifyClient.fetchPostsByUrls(any(List.class), anyInt())).thenReturn(List.of(samplePost("p1")));
+        when(reportPipelineService.generateReport(eq(requestId))).thenReturn(true);
+
+        pipeline.processRequest(requestId);
+
+        verify(apifyClient).fetchPostsByUrls(any(List.class), eq(3));
+    }
+
+    // ============================================================
+    // V11 — Ücretsiz ilk kullanım: gerçek kredi düşümü ASLA denenmemeli
+    // ============================================================
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void ucretsizRaporTamamlaninca_GercekKrediDusumuHicDenenmez() {
+        // Regresyon: loadRequest() eskiden elle SELECT kolon listesi kullanıyordu ve is_free_usage'ı
+        // hiç seçmiyordu — bu yüzden ücretsiz raporlar bile GERÇEKTEN kredi düşürüyordu (canlıda
+        // yaşandı, bkz. ScrapePipelineService yorumu). Artık JPA findById kullanıldığından bu test
+        // bu bug sınıfının bir daha yaşanmayacağını doğruluyor.
+        ReportRequest freeRequest = request();
+        freeRequest.setIsFreeUsage(1);
+        when(reportRequestRepository.findById(requestId)).thenReturn(Optional.of(freeRequest));
+
+        ScrapeTarget target = ScrapeTarget.sector("INSTAGRAM", "https://www.instagram.com/sektor1/");
+        when(targetResolver.resolve(any(ReportRequest.class))).thenReturn(List.of(target));
+        when(socialPostService.isRecentlyAnalyzed(any(ScrapeTarget.class))).thenReturn(false);
+        when(apifyClient.fetchPostsByUrls(any(List.class), anyInt())).thenReturn(List.of(samplePost("p1")));
+        when(reportPipelineService.generateReport(eq(requestId))).thenReturn(true);
+
+        pipeline.processRequest(requestId);
+
+        verify(paymentService, never()).tryDebitCredits(any(), anyInt(), anyString(), any());
+        // Yine de credit_debited=1 olarak işaretlenmeli (reconciliation'ın sonsuza kadar
+        // "başarısız düşüm" sanıp tekrar tekrar denemesin diye)
+        verify(jdbcTemplate).update(
+                org.mockito.ArgumentMatchers.contains("credit_debited"),
+                eq(1), org.mockito.ArgumentMatchers.isNull(), any(), eq(requestId));
+    }
+
     private ReportRequest request() {
         ReportRequest r = new ReportRequest();
         r.setRequestId(requestId);
         r.setUserId(UUID.randomUUID());
-        r.setReportType("COMPETITOR_ONLY");
+        r.setReportType("NONE");
+        r.setActive(1);
+        return r;
+    }
+
+    private ReportRequest ownOnlyRequest(UUID selectedAccountId) {
+        ReportRequest r = new ReportRequest();
+        r.setRequestId(requestId);
+        r.setUserId(UUID.randomUUID());
+        r.setReportType("OWN_ONLY");
+        r.setSelectedUserSocialAccountId(selectedAccountId);
+        r.setActive(1);
         return r;
     }
 

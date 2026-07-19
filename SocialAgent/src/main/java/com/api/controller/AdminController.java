@@ -11,7 +11,9 @@ import com.api.common.ApiException;
 import com.api.common.DataResponse;
 import com.api.common.ResponseCode;
 import com.api.config.AppProperties;
+import com.api.service.ContentPipelineService;
 import com.api.service.ReportRequestService;
+import com.api.service.ScrapePipelineService;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,6 +35,12 @@ public class AdminController {
 	// Rapor isteği iş mantığı (requeue metodu buradan çağrılır)
 	private final ReportRequestService reportRequestService;
 
+	// Rapor kredi düşümü reconciliation (retryFailedDebits buradan çağrılır)
+	private final ScrapePipelineService scrapePipelineService;
+
+	// İçerik kredi düşümü reconciliation (retryFailedDebits buradan çağrılır)
+	private final ContentPipelineService contentPipelineService;
+
 	/**
 	 * V2: Status-bazlı sweep — FAILED/PARTIAL veya takılı (30 dk+ PROCESSING/PENDING)
 	 * rapor isteklerini attempt_count < 3 koşuluyla yeniden kuyruğa basar.
@@ -51,6 +59,46 @@ public class AdminController {
 		int requeuedCount = reportRequestService.requeueStuck();
 		log.info("Admin requeue-stuck tamamlandı: requeuedCount={}", requeuedCount);
 		return DataResponse.success(Map.of("requeuedCount", requeuedCount));
+	}
+
+	/**
+	 * Reconciliation: rapor teslim edilmiş (status=COMPLETED) ama kredi düşümü hata aldığı
+	 * için düşmemiş (credit_debited=0) kayıtları bulup düşümü tekrar dener.
+	 * Bu durum, rapor üretimi ile kredi düşümünün ayrı transaction'larda olmasından kaynaklanır
+	 * (bkz. ScrapePipelineService.debitOnCompleted) — dünkü olayda olduğu gibi rapor commit
+	 * edilip kredi düşümü SQL hatasıyla başarısız olduğunda bu endpoint mutabakatı sağlar.
+	 *
+	 * Header: X-Admin-Key → env ADMIN_KEY değeriyle eşleşmeli.
+	 * Endpoint: POST /admin/retry-failed-debits
+	 */
+	@PostMapping("/retry-failed-debits")
+	public DataResponse<Map<String, Integer>> retryFailedDebits(
+			@RequestHeader(value = "X-Admin-Key", required = false) String adminKey) {
+
+		doğrulaAdminKey(adminKey);
+
+		int recoveredCount = scrapePipelineService.retryFailedDebits();
+		log.info("Admin retry-failed-debits tamamlandı: recoveredCount={}", recoveredCount);
+		return DataResponse.success(Map.of("recoveredCount", recoveredCount));
+	}
+
+	/**
+	 * Reconciliation: içerik teslim edilmiş (status=COMPLETED) ama kredi düşümü hata aldığı
+	 * için düşmemiş (credit_debited=0) kayıtları bulup düşümü tekrar dener.
+	 * Bkz. ContentPipelineService.debitOnCompleted.
+	 *
+	 * Header: X-Admin-Key → env ADMIN_KEY değeriyle eşleşmeli.
+	 * Endpoint: POST /admin/retry-failed-content-debits
+	 */
+	@PostMapping("/retry-failed-content-debits")
+	public DataResponse<Map<String, Integer>> retryFailedContentDebits(
+			@RequestHeader(value = "X-Admin-Key", required = false) String adminKey) {
+
+		doğrulaAdminKey(adminKey);
+
+		int recoveredCount = contentPipelineService.retryFailedDebits();
+		log.info("Admin retry-failed-content-debits tamamlandı: recoveredCount={}", recoveredCount);
+		return DataResponse.success(Map.of("recoveredCount", recoveredCount));
 	}
 
 	/**

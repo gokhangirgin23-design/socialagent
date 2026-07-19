@@ -38,6 +38,10 @@ public class Subsector {
 	@Column(name = "active")
 	private Integer active;
 
+	// Bağlı sektör içindeki gösterim sırası (küçük önce) — V13 migration
+	@Column(name = "display_order")
+	private Integer displayOrder;
+
 	// Kaydın oluşturulma tarihi
 	@Column(name = "created_date")
 	private LocalDateTime createdDate;

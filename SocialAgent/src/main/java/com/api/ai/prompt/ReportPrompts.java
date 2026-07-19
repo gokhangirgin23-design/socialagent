@@ -11,12 +11,12 @@ import com.api.dto.AccountReportRow;
  *   → Token verimliliği (150 post satırı yerine 5-10 hesap özeti)
  *   → Daha yapısal ve karşılaştırılabilir veri
  *
- * analysisMode'a göre iki rapor tipi:
- *   - OWN_ONLY / BOTH → Karşılaştırmalı: kendi hesabı vs. rakip/sektör
- *   - NONE / COMPETITOR_ONLY → Başarı faktörü: nerede ve neden başarılı
+ * analysisMode'a göre iki rapor tipi (rakip hesap özelliği kaldırıldığından yalnızca bu ikisi kaldı):
+ *   - OWN_ONLY → Karşılaştırmalı: kendi hesabı vs. sektör
+ *   - NONE     → Başarı faktörü: nerede ve neden başarılı
  *
  * Başlıklar: Özet | İçerik Önerileri | Hashtag Önerileri | Paylaşım Takvimi |
- *            Rakiplerden Öğren | Aksiyon Planı
+ *            Sektörden Öğren | Aksiyon Planı
  */
 public final class ReportPrompts {
 
@@ -26,28 +26,41 @@ public final class ReportPrompts {
 	private static final String COMPARISON_RULE = """
 			Sen kıdemli bir sosyal medya strateji danışmanısın. Sana bir kullanıcının Instagram analiz
 			işine ait hesap bazlı istatistikler veriliyor (her hesap için: ortalama beğeni, içerik tipi
-			dağılımı, reel oranı, insan/model kullanımı, ürün odaklılık vb.).
+			dağılımı, reel oranı, insan/model kullanımı, ürün odaklılık, açıklama tonu, görsel temalar vb.).
 
-			Veriler; kullanıcının KENDİ hesabı ile rakip/sektör hesaplarını içermektedir.
+			Veriler; kullanıcının KENDİ hesabı ile sektör hesaplarını içermektedir.
 			Karşılaştırmalı bir Türkçe rapor üret.
 
 			Çıktı kuralları:
 			- SADECE Markdown döndür. Kod bloğu (```), JSON veya ön/son açıklama EKLEME.
 			- Profesyonel, okunaklı ve uygulanabilir bir rapor yaz.
+			- Her ana başlık önüne uygun bir emoji ikon koy (📊 📝 💡 📅 🎯 🚀 🔥 ✨ vb.).
+			- Etkileşim karşılaştırma verilerini mutlaka bir Markdown tablosu olarak göster.
+			- İçerik önerilerinde her format (Reel, Fotoğraf, Story) için somut görsel/sahne/yazı fikirleri ver:
+			  * Hangi tür ortam/sahne çekimi (doğa, ofis, ürün close-up, lifestyle vb.)
+			  * Görselin üzerindeki yazı/mesaj önerileri (viral yazı formatları, CTA'lar)
+			  * Müzik/ses tonu önerileri (enerjik, duygusal, eğlenceli vb.) varsa
+			- Paylaşım açıklaması (caption) yazım önerileri: ton, CTA, anahtar cümleler.
 			- Aşağıdaki başlık iskeletini kullan:
 
-			# Sosyal Medya Analiz Raporu
-			## Özet
-			## Etkileşim Karşılaştırması (Kendi Hesabın vs. Rakip/Sektör)
-			## İçerik Önerileri
-			## Hashtag Önerileri
-			## Paylaşım Takvimi
-			## Rakiplerden Öğren
-			## Aksiyon Planı
+			# 📱 Sosyal Medya Analiz Raporu
+			## 📊 Özet
+			## 📈 Etkileşim Karşılaştırması
+			(tablo: Hesap | Ort. Beğeni | Ort. Yorum | Ort. Görüntülenme | Reel Oranı | İçerik Tipi)
+			## 💡 İçerik Önerileri
+			### 🎬 Reel / Video
+			### 📷 Fotoğraf
+			### 📖 Story
+			## ✍️ Açıklama (Caption) Stratejisi
+			## #️⃣ Hashtag Önerileri
+			## 📅 Paylaşım Takvimi
+			## 🔍 Sektörden Öğren
+			## 🚀 Aksiyon Planı
 
 			Notlar:
 			- Takipçi sayısı yoksa ortalama beğeni + yorum sayısı etkileşim karşılaştırma metriği olarak kullan.
 			- Veri azsa bunu dürüstçe belirt; uydurma sayı/iddia ekleme.
+			- İçerik fikirleri gerçekçi ve sektöre özgü olsun (genel klişelerden kaçın).
 			""";
 
 	private static final String SUCCESS_FACTOR_RULE = """
@@ -59,20 +72,34 @@ public final class ReportPrompts {
 			Çıktı kuralları:
 			- SADECE Markdown döndür. Kod bloğu (```), JSON veya ön/son açıklama EKLEME.
 			- Profesyonel, okunaklı ve uygulanabilir bir rapor yaz.
+			- Her ana başlık önüne uygun bir emoji ikon koy (📊 📝 💡 📅 🎯 🚀 🔥 ✨ vb.).
+			- Başarılı hesapların metriklerini mutlaka bir Markdown tablosu olarak göster.
+			- İçerik önerilerinde her format (Reel, Fotoğraf, Story) için somut görsel/sahne/yazı fikirleri ver:
+			  * Hangi tür ortam/sahne çekimi (doğa, ofis, ürün close-up, lifestyle vb.)
+			  * Görselin üzerindeki yazı/mesaj önerileri (viral yazı formatları, CTA'lar)
+			  * Müzik/ses tonu önerileri varsa
+			- Paylaşım açıklaması (caption) yazım önerileri: ton, CTA, anahtar cümleler.
 			- Aşağıdaki başlık iskeletini kullan:
 
-			# Sosyal Medya Sektör Analiz Raporu
-			## Özet
-			## Başarılı Hesapların Ortak Özellikleri
-			## İçerik Önerileri
-			## Hashtag Önerileri
-			## Paylaşım Takvimi
-			## Rakiplerden Öğren
-			## Aksiyon Planı
+			# 📱 Sosyal Medya Sektör Analiz Raporu
+			## 📊 Özet
+			## 🏆 Başarılı Hesapların Karşılaştırması
+			(tablo: Hesap | Ort. Beğeni | Ort. Yorum | Ort. Görüntülenme | Reel Oranı | İçerik Tipi)
+			## 🔑 Başarı Faktörleri
+			## 💡 İçerik Önerileri
+			### 🎬 Reel / Video
+			### 📷 Fotoğraf
+			### 📖 Story
+			## ✍️ Açıklama (Caption) Stratejisi
+			## #️⃣ Hashtag Önerileri
+			## 📅 Paylaşım Takvimi
+			## 🔍 Sektörden Öğren
+			## 🚀 Aksiyon Planı
 
 			Notlar:
 			- Takipçi sayısı yoksa ortalama beğeni + yorum sayısı etkileşim metriği olarak kullan.
 			- Veri azsa bunu dürüstçe belirt; uydurma sayı/iddia ekleme.
+			- İçerik fikirleri gerçekçi ve sektöre özgü olsun (genel klişelerden kaçın).
 			""";
 
 	/**
@@ -80,10 +107,12 @@ public final class ReportPrompts {
 	 *
 	 * @param summaries hesap başına aggregate istatistikler (AccountReportRow)
 	 * @param analysisMode job'ın analiz modu
+	 * @param sectorName rapor isteğinde donmuş (V10 snapshot) sektör adı; yoksa null
+	 * @param subsectorName rapor isteğinde donmuş (V10 snapshot) alt sektör adı; yoksa null
 	 * @return OpenAI'a verilecek prompt
 	 */
-	public static String forJob(List<AccountReportRow> summaries, String analysisMode) {
-		boolean isComparison = "OWN_ONLY".equals(analysisMode) || "BOTH".equals(analysisMode);
+	public static String forJob(List<AccountReportRow> summaries, String analysisMode, String sectorName, String subsectorName) {
+		boolean isComparison = "OWN_ONLY".equals(analysisMode);
 		String systemRule = isComparison ? COMPARISON_RULE : SUCCESS_FACTOR_RULE;
 
 		StringBuilder sb = new StringBuilder();
@@ -114,21 +143,24 @@ public final class ReportPrompts {
 		return """
 				%s
 
-				Analiz modu: %s
+				%sAnaliz modu: %s
 				Analiz edilen hesap sayısı: %d
 
 				Aşağıda hesap bazlı istatistikler verilmiştir:
 
 				%s
 				Şimdi yukarıdaki verileri sentezleyip Markdown raporu üret.
-				""".formatted(systemRule, safe(analysisMode), summaries.size(), sb.toString());
+				""".formatted(systemRule, sectorContextBlock(sectorName, subsectorName), safe(analysisMode), summaries.size(), sb.toString());
 	}
 
 	/**
 	 * Hesap bazlı özetlerden dashboard structured insight JSON prompt'u üretir.
-	 * Çıktı: {"topInsight":"...","competitorFinding":"...","recommendation":"...","actionPlan":["..."]}
+	 * Çıktı: {"topInsight":"...","sectorFinding":"...","recommendation":"...","actionPlan":["..."]}
+	 *
+	 * @param sectorName rapor isteğinde donmuş (V10 snapshot) sektör adı; yoksa null
+	 * @param subsectorName rapor isteğinde donmuş (V10 snapshot) alt sektör adı; yoksa null
 	 */
-	public static String forInsight(List<AccountReportRow> summaries, String analysisMode) {
+	public static String forInsight(List<AccountReportRow> summaries, String analysisMode, String sectorName, String subsectorName) {
 		StringBuilder sb = new StringBuilder();
 		for (AccountReportRow r : summaries) {
 			sb.append(r.source()).append(" @").append(r.accountName())
@@ -143,12 +175,32 @@ public final class ReportPrompts {
 				Aşağıdaki Instagram analiz istatistiklerine dayanarak kullanıcıya kısa ve yapısal bir içgörü özeti üret.
 
 				SADECE aşağıdaki JSON formatında yanıt ver (Markdown, açıklama veya kod bloğu EKLEME):
-				{"topInsight":"En önemli tek bulgu (1-2 cümle)","competitorFinding":"Rakip/sektör karşılaştırmasından kritik bulgu (1-2 cümle)","recommendation":"En öncelikli uygulama önerisi (1-2 cümle)","actionPlan":["Aksiyon 1","Aksiyon 2","Aksiyon 3"]}
+				{"topInsight":"En önemli tek bulgu (1-2 cümle)","sectorFinding":"Sektör karşılaştırmasından kritik bulgu (1-2 cümle)","recommendation":"En öncelikli uygulama önerisi (1-2 cümle)","actionPlan":["Aksiyon 1","Aksiyon 2","Aksiyon 3"]}
 
-				Analiz modu: %s
+				%sAnaliz modu: %s
 				Veriler:
 				%s
-				""".formatted(safe(analysisMode), sb.toString());
+				""".formatted(sectorContextBlock(sectorName, subsectorName), safe(analysisMode), sb.toString());
+	}
+
+	/**
+	 * SORUN 1, madde 1.4 — kıyaslama/içgörülerin ana sektöre değil kullanıcının ALT sektörüne
+	 * göre yapılmasını sağlayan bağlam bloğu. Alt sektör yoksa yalnızca sektör adı geçilir
+	 * (mevcut davranışa denk — blok boş dönerse prompt eskisiyle birebir aynı kalır).
+	 */
+	private static String sectorContextBlock(String sectorName, String subsectorName) {
+		if (subsectorName != null && !subsectorName.isBlank()) {
+			return """
+					Kullanıcının sektörü: %s, alt sektörü: %s.
+					Kıyaslama ve içgörüler **%s** alt sektörü özelinde yapılmalı; genel %s klişelerinden kaçın.
+					Sektör hesapları bu alt sektörün başarılı örnekleridir.
+
+					""".formatted(safe(sectorName), subsectorName, subsectorName, safe(sectorName));
+		}
+		if (sectorName != null && !sectorName.isBlank()) {
+			return "Kullanıcının sektörü: " + sectorName + ".\n\n";
+		}
+		return "";
 	}
 
 	private static String safe(String v) {

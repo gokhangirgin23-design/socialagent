@@ -18,11 +18,12 @@ import lombok.Getter;
 @AllArgsConstructor
 public class DashboardSummaryDto {
 
-    // 0-100 hesap skoru (kendi vs rakip/sektör etkileşim oranı); rapor yoksa null
+    // 0-100 hesap skoru (kompozit: göreli etkileşim + paylaşım temposu + etkileşim trendi);
+    // kendi gönderisi hiç yoksa null
     private Integer accountScore;
 
-    // İzlenen rakip hesap bilgisi
-    private MonitoredInfo monitored;
+    // accountScore'un kırılımı ("neden bu skor" açıklaması); accountScore null ise bu da null
+    private ScoreBreakdown scoreBreakdown;
 
     // Son tamamlanan analizin bitiş tarihi; henüz yoksa null
     private LocalDateTime lastAnalysisDate;
@@ -33,19 +34,27 @@ public class DashboardSummaryDto {
     // En son COMPLETED/PARTIAL raporun structured insight JSON'u; yoksa null
     private InsightInfo latestInsight;
 
-    // Türetilmiş uyarılar (etkileşim düşüşü, rakip aktivitesi vb.)
+    // Türetilmiş uyarılar (etkileşim düşüşü, format trendi vb.)
     private List<AlertInfo> alerts;
 
     // Kullanıcı cüzdan özeti
     private WalletInfo wallet;
 
+    // Hesap bazlı kıyaslama satırları (son tamamlanmış analizden); yoksa boş liste
+    private List<AccountComparisonRow> accountComparison;
+
     // ── İç veri sınıfları ─────────────────────────────────────────────────
 
     @Getter
     @AllArgsConstructor
-    public static class MonitoredInfo {
-        private int count;
-        private int max; // sabit 5
+    public static class AccountComparisonRow {
+        private String sourceType;   // OWN | SECTOR
+        private String accountName;
+        private long avgLikes;
+        private long avgComments;
+        private long avgViews;
+        private long reelCount;
+        private long postCount;
     }
 
     @Getter
@@ -60,7 +69,7 @@ public class DashboardSummaryDto {
     @AllArgsConstructor
     public static class InsightInfo {
         private String topInsight;
-        private String competitorFinding;
+        private String sectorFinding;
         private String recommendation;
         private List<String> actionPlan;
     }
@@ -77,5 +86,17 @@ public class DashboardSummaryDto {
     public static class WalletInfo {
         private BigDecimal balance;
         private String currency;
+        private long creditBalance;
+    }
+
+    @Getter
+    @AllArgsConstructor
+    public static class ScoreBreakdown {
+        private int relativePoints;   // 0-50: göreli etkileşim (log2 ölçekli)
+        private int activityPoints;   // 0-25: paylaşım temposu
+        private int trendPoints;      // 0-25: etkileşim trendi
+        private long ownPostCount;
+        private long ownAvgEngagement;
+        private long othersAvgEngagement;
     }
 }

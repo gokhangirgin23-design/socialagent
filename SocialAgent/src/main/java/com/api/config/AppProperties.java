@@ -104,10 +104,29 @@ public class AppProperties {
 		private String postActorId = "apify~instagram-post-scraper";
 		// Sektör "top N" profil sayısı (D1 -> 5)
 		private int topProfilesLimit = 5;
-		// Hesap başına çekilecek son gönderi sayısı (-> 5)
+		// Hesap başına çekilecek son gönderi sayısı (eski genel ayar — Geliştirme 2'den beri SECTOR
+		// hedefleri için kullanılmıyor, bkz. sectorPostsLimit; başka bir yerde kullanılmadığından dokunulmadı)
 		private int recentPostsLimit = 5;
+		// Kendi hesabı için çekilecek son gönderi sayısı (Geliştirme 2 -> 5)
+		private int ownPostsLimit = 5;
+		// Geliştirme 2: sektör hesabı başına çekilecek son gönderi sayısı (-> 3; own=5 + sektör
+		// top5*3 ile toplam veri hacmini makul tutmak için recentPostsLimit'ten ayrıştırıldı —
+		// AI analizi sıralı (post başına 1 çağrı) çalıştığından 5 yerine 3 seçildi)
+		private int sectorPostsLimit = 3;
 		// run-sync uzun sürebileceğinden okuma zaman aşımı (sn)
 		private long timeoutSeconds = 120;
+
+		// SORUN 1 — alt sektör bazlı sektör araması (TargetResolver.resolveSectorByProfiles).
+		// Alt sektör aramasını devre dışı bırakmak gerekirse (ör. Apify tarafında kirlilik
+		// tekrar gözlenirse) tek bayrakla eski (sadece sektör) davranışa dönülebilir.
+		private boolean subsectorSearchEnabled = true;
+		// Alt sektör aramasından dönen profil sayısı bu eşiğin altındaysa ana sektör
+		// keyword'üyle ikinci bir arama yapılıp sonuçlar birleştirilir (fallback).
+		// Varsayılan topProfilesLimit/2 (5/2=2) ile tutarlı.
+		private int subsectorMinProfiles = 2;
+		// Alt sektör aramasında Apify'dan çekilecek havuz, topProfilesLimit'in kaç katı
+		// olsun (relevance skorlamasına [1.2] eleyecek daha geniş bir aday listesi sağlar).
+		private int subsectorPoolMultiplier = 2;
 	}
 
 	/**
@@ -194,8 +213,53 @@ public class AppProperties {
 		private String key = "";
 	}
 
+	// İçerik üretimi yapılandırması
+	private Content content = new Content();
+
+	// AWS S3 yapılandırması (görsel depolama)
+	private Aws aws = new Aws();
+
 	// FAZ PAYMENT: ödeme sistemi yapılandırması
 	private Payment payment = new Payment();
+
+	/**
+	 * İçerik üretimi yapılandırması.
+	 * Rapor bazlı görsel + caption üretim kuyruğu ayarları.
+	 */
+	@Getter
+	@Setter
+	public static class Content {
+		// İçerik üretim kuyruğu adı
+		private String queue = "spectiqs.content.queue";
+		// İçerik exchange adı
+		private String exchange = "spectiqs.content.exchange";
+		// Routing-key
+		private String routingKey = "spectiqs.content";
+		// Maksimum düzenleme hakkı
+		private int editLimit = 3;
+		// Görsel üretim için OpenAI modeli
+		private String imageModel = "gpt-image-1.5";
+		// Gemini fallback görsel üretim modeli (OpenAI'dan bağımsız — bug fix: eskiden imageModel paylaşılıyordu)
+		private String geminiImageModel = "gemini-2.5-flash-image";
+		// OpenAI görsel kalite tier'ı — low|medium|high (maliyet: high, medium'un ~4 katı)
+		private String imageQuality = "medium";
+		// Reel video üretimi için Veo modeli
+		private String videoModel = "veo-3.1-generate-preview";
+	}
+
+	/**
+	 * AWS S3 yapılandırması.
+	 * Üretilen görseller S3'e yüklenir; public URL döner.
+	 * Key'ler boşsa S3 yükleme atlanır (URL null kalır).
+	 */
+	@Getter
+	@Setter
+	public static class Aws {
+		private String region = "eu-central-1";
+		private String bucket = "trendora-content";
+		private String accessKeyId;
+		private String secretAccessKey;
+	}
 
 	/**
 	 * Ödeme kapısı yapılandırması.

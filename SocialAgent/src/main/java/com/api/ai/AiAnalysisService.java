@@ -7,6 +7,10 @@ import org.springframework.stereotype.Service;
 import com.api.ai.prompt.AnalysisPrompts;
 import com.api.config.AppProperties;
 import com.api.entity.SocialPost;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import dev.langchain4j.data.message.ImageContent;
 import dev.langchain4j.data.message.TextContent;
@@ -44,6 +48,15 @@ public class AiAnalysisService {
 
 	// AI ayarları (api key'ler, model adları, sıcaklık, timeout)
 	private final AppProperties appProperties;
+
+	private final ObjectMapper objectMapper = new ObjectMapper();
+
+	// result_json trim whitelist'i — metrik şemasının (OPENAI_SCHEMA) beslendiği alanlar (maliyet optimizasyonu)
+	private static final String[] RESULT_JSON_WHITELIST = {
+			"type", "productType", "url", "caption", "hashtags",
+			"likesCount", "commentsCount", "videoViewCount", "videoPlayCount",
+			"ownerFollowersCount", "ownerUsername", "timestamp", "locationName", "isSponsored"
+	};
 
 	// OpenAI metin modeli (key yoksa null -> TEXT analizi atlanır)
 	private ChatLanguageModel openAiModel;
@@ -130,12 +143,58 @@ public class AiAnalysisService {
 			return null;
 		}
 		try {
-			String prompt = AnalysisPrompts.forMetrics(post);
+			String trimmedResultJson = trimResultJson(post.getResultJson());
+			String prompt = AnalysisPrompts.forMetrics(post, trimmedResultJson);
 			String raw = openAiModel.chat(prompt);
 			return cleanJson(raw);
 		} catch (Exception ex) {
 			log.error("OpenAI metrik analizi başarısız: postId={}, hata={}", post.getSocialPostId(), ex.getMessage());
 			return null;
+		}
+	}
+
+	/**
+	 * Ham Apify result_json'unu whitelist ile trim eder (maliyet optimizasyonu).
+	 * latestComments, taggedUsers, childPosts gibi metrik şemasında hiç kullanılmayan gürültü alanları
+	 * atılır; token'ın büyük kısmı bu şekilde tasarruf edilir. Sadece OPENAI_SCHEMA'nın beslendiği
+	 * alanlar + ilk 3 yorumun kırpılmış metni (themes/tone sinyali için) korunur.
+	 * Parse hatası olursa ham JSON aynen döner — analiz asla trim yüzünden bozulmaz.
+	 *
+	 * @param rawJson ham Apify JSON metni
+	 * @return trim edilmiş JSON metni (parse edilemezse ham JSON)
+	 */
+	private String trimResultJson(String rawJson) {
+		if (rawJson == null || rawJson.isBlank()) return rawJson;
+		try {
+			JsonNode root = objectMapper.readTree(rawJson);
+			ObjectNode trimmed = objectMapper.createObjectNode();
+
+			for (String field : RESULT_JSON_WHITELIST) {
+				if (root.hasNonNull(field)) {
+					trimmed.set(field, root.get(field));
+				}
+			}
+
+			// İlk 3 yorumun yalnızca metni, 100 karaktere kırpılmış (themes/tone sinyali için sigorta)
+			JsonNode latestComments = root.path("latestComments");
+			if (latestComments.isArray() && !latestComments.isEmpty()) {
+				ArrayNode comments = objectMapper.createArrayNode();
+				int limit = Math.min(3, latestComments.size());
+				for (int i = 0; i < limit; i++) {
+					String text = latestComments.get(i).path("text").asText(null);
+					if (text != null && !text.isBlank()) {
+						comments.add(text.length() > 100 ? text.substring(0, 100) : text);
+					}
+				}
+				if (!comments.isEmpty()) {
+					trimmed.set("comments", comments);
+				}
+			}
+
+			return trimmed.toString();
+		} catch (Exception ex) {
+			log.warn("result_json trim edilemedi; ham veri kullanılıyor: hata={}", ex.getMessage());
+			return rawJson;
 		}
 	}
 
@@ -164,6 +223,104 @@ public class AiAnalysisService {
 			return cleanJson(raw);
 		} catch (Exception ex) {
 			log.error("Gemini görsel analizi başarısız: postId={}, hata={}", post.getSocialPostId(), ex.getMessage());
+			return null;
+		}
+	}
+
+	/**
+	 * Kullanıcının yüklediği ürün görselini Gemini Vision ile analiz eder.
+	 * Ürün tipi, ideal arka plan ve kaçınılması gerekenler JSON olarak döner.
+	 * İçerik üretiminde görsel prompt'a arka plan kısıtı olarak enjekte edilir.
+	 * Model yoksa veya analiz başarısız olursa null döner — pipeline çalışmaya devam eder.
+	 *
+	 * @param imageUrlOrBase64 S3 URL'i veya data:image/... base64 formatı
+	 */
+	public String analyzeProductImage(String imageUrlOrBase64) {
+		if (geminiModel == null) {
+			log.debug("Gemini modeli yok; ürün görseli analizi atlandı.");
+			return null;
+		}
+		if (imageUrlOrBase64 == null || imageUrlOrBase64.isBlank()) return null;
+		try {
+			String prompt = """
+					Bu görseldeki ürünü analiz et.
+
+					1) productType: Ürünün tam adı ve tipi (spesifik ol — "spor kıyafeti" değil "karate elbisesi").
+
+					2) idealBackground: Bu ÜRÜNE ÖZGÜ, profesyonel ürün fotoğrafçılığında kullanılan
+					   2-3 arka plan seçeneği. Kurallar:
+					   - Ürünün sergilendiği veya satıldığı bağlama uygun olmalı.
+					   - Genel spor/açık hava ortamları (koşu pisti, stadyum, spor salonu genel alanı)
+					     KABUL EDİLMEZ — yalnızca bu ürünün doğal kullandığı alan.
+					   - Örnekler: karate elbisesi → "tatami zemin, beyaz stüdyo, Japon minimalist dojo" |
+					     futbol topu → "yeşil çim yakın çekim, beton zemin, stüdyo beyaz fon" |
+					     mutfak bıçağı → "ahşap kesme tahtası, mermer tezgah, koyu stüdyo fonu"
+					   - Her seçenek virgülle ayrılmış, kısa ve net olmalı.
+
+					3) avoidBackground: Bu ürünle açıkça uyumsuz arka planlar (virgülle ayrılmış).
+
+					Yanıt formatı (JSON dışında hiçbir şey yazma):
+					{"productType": "...", "idealBackground": "...", "avoidBackground": "..."}
+					""";
+
+			ImageContent imgContent;
+			if (imageUrlOrBase64.startsWith("data:")) {
+				// data:image/jpeg;base64,... → base64 datayı ve mime type'ı ayır
+				int semicolon = imageUrlOrBase64.indexOf(';');
+				int comma = imageUrlOrBase64.indexOf(',');
+				String mimeType = (semicolon > 5) ? imageUrlOrBase64.substring(5, semicolon) : "image/jpeg";
+				String base64Data = (comma >= 0) ? imageUrlOrBase64.substring(comma + 1) : imageUrlOrBase64;
+				// TODO(uyum): ImageContent.from(base64, mimeType) imzasını LangChain4j sürümüne göre doğrula
+				imgContent = ImageContent.from(base64Data, mimeType);
+			} else {
+				imgContent = ImageContent.from(imageUrlOrBase64);
+			}
+
+			UserMessage message = UserMessage.from(TextContent.from(prompt), imgContent);
+			ChatResponse response = geminiModel.chat(message);
+			String raw = response.aiMessage().text();
+			String result = cleanJson(raw);
+			log.info("Ürün görseli analizi tamamlandı: sonuç={}", result);
+			return result;
+		} catch (Exception ex) {
+			log.warn("Ürün görseli analizi başarısız (görsel üretim devam eder): hata={}", ex.getMessage());
+			return null;
+		}
+	}
+
+	/**
+	 * Brand DNA JSON üretir (içerik üretimi için).
+	 * generateInsightJson ile aynı OpenAI modelini kullanır.
+	 * Model yoksa null döner → pipeline atlar.
+	 */
+	public String generateBrandDna(String prompt) {
+		if (openAiModel == null) {
+			log.debug("OpenAI modeli yok; Brand DNA üretimi atlandı.");
+			return null;
+		}
+		try {
+			String raw = openAiModel.chat(prompt);
+			return cleanJson(raw);
+		} catch (Exception ex) {
+			log.warn("OpenAI Brand DNA üretimi başarısız: hata={}", ex.getMessage());
+			return null;
+		}
+	}
+
+	/**
+	 * Caption, hashtag, CTA ve paylaşım zamanı JSON üretir (içerik üretimi için).
+	 * Model yoksa null döner → pipeline atlar.
+	 */
+	public String generateContentMetadata(String prompt) {
+		if (openAiModel == null) {
+			log.debug("OpenAI modeli yok; content metadata üretimi atlandı.");
+			return null;
+		}
+		try {
+			String raw = openAiModel.chat(prompt);
+			return cleanJson(raw);
+		} catch (Exception ex) {
+			log.warn("OpenAI content metadata üretimi başarısız: hata={}", ex.getMessage());
 			return null;
 		}
 	}

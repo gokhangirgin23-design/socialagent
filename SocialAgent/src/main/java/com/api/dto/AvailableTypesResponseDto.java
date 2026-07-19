@@ -1,37 +1,31 @@
 package com.api.dto;
 
-import java.math.BigDecimal;
-import java.util.List;
-
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 
 /**
  * POST /report-request/available-types yanıtı.
- * Kullanıcının seçebileceği rapor tiplerini fiyat + cüzdan bakiyesiyle birlikte döndürür.
- * Frontend fiyatı hardcode etmez; bu yanıttan okur.
+ * Geliştirme 2: UI'da tip seçimi kalktığından tek bir rapor "oluşturma durumu" nesnesi döner —
+ * kredi maliyeti, ücretsiz hak, bakiye ve oluşturulabilirlik (canCreate/blockReason).
  */
 @Getter
 @Builder
 @AllArgsConstructor
 public class AvailableTypesResponseDto {
 
-    // Para birimi (TL)
-    private String currency;
+    // Rapor oluşturmanın kredi maliyeti (tüm modlarda tek fiyat)
+    private int creditCost;
 
-    // Kullanıcının anlık cüzdan bakiyesi
-    private BigDecimal balance;
+    // V11: kullanıcının hâlâ ücretsiz ilk rapor hakkı varsa true
+    private boolean free;
 
-    // Seçilebilir rapor tipleri (hesap durumuna göre filtrelenmiş)
-    private List<ReportTypeOption> types;
+    // Kullanıcının anlık kredi bakiyesi
+    private long creditBalance;
 
-    /** Tek bir rapor tipi seçeneği (tip, etiket, fiyat). */
-    @Getter
-    @AllArgsConstructor
-    public static class ReportTypeOption {
-        private String type;
-        private String label;
-        private BigDecimal price;
-    }
+    // Kullanıcı şu an rapor oluşturabilir mi? (kendi hesabı + gerektiğinde sektör şartı)
+    private boolean canCreate;
+
+    // canCreate=false ise kullanıcıya gösterilecek sebep metni; aksi halde null
+    private String blockReason;
 }

@@ -25,7 +25,7 @@ import lombok.extern.slf4j.Slf4j;
  * Service interface yok (CLAUDE.md Madde 1); concrete @Service.
  *
  * Sorumluluklar:
- *   1) notifyReportCompleted: rapor COMPLETED olunca DB'ye notification yaz + mail + push.
+ *   1) notifyReportCompleted: rapor COMPLETED olunca DB'ye notification yaz + push.
  *   2) listNotifications: kullanıcının bildirimlerini sayfalı listele (dashboard).
  *   3) markAsRead: bir bildirimi okundu işaretle (yalnızca sahibi).
  *   4) unreadCount: okunmamış bildirim sayısı (dashboard rozeti).
@@ -44,9 +44,6 @@ public class NotificationService {
     // Notification entity -> DTO dönüştürücü
     private final NotificationMapper notificationMapper;
 
-    // E-posta gönderim adaptörü
-    private final MailSender mailSender;
-
     // Push gönderim adaptörü
     private final PushSender pushSender;
 
@@ -58,11 +55,20 @@ public class NotificationService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void notifyReportCompleted(UUID requestId) {
-        // Tamamlanmış raporu, sahibini ve e-postasını native join ile çek.
-        // report ⋈ report_request ⋈ user_info — eski stil "=" (CLAUDE.md Madde 6).
+        // Tamamlanmış raporu ve sahibini native join ile çek.
+        // report ⋈ report_request — eski stil "=" (CLAUDE.md Madde 6).
         ReportTarget target = loadCompletedReportTarget(requestId);
         if (target == null) {
             log.info("Bildirim için tamamlanmış rapor bulunamadı: requestId={}", requestId);
+            return;
+        }
+
+        // Idempotency: pipeline tekrar çalışırsa çift push gönderilmesin.
+        Long existingPush = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM notification WHERE reference_id = ? AND channel = 'PUSH_NOTIFICATION' AND success = 1",
+                Long.class, target.reportId());
+        if (existingPush != null && existingPush > 0) {
+            log.info("Push bildirimi zaten gönderilmiş, atlandı: reportId={}", target.reportId());
             return;
         }
 
@@ -70,14 +76,11 @@ public class NotificationService {
         LocalDateTime now = LocalDateTime.now();
         String title = "Raporunuz hazır";
         String modeText = (target.reportType() != null) ? target.reportType() : "Analiz";
-        String message = modeText + " raporunuz oluşturuldu. Detay için panele göz atın.";
+        String plainMessage = modeText + " raporunuz oluşturuldu. Detay için panele göz atın.";
 
-        // Her kanalı ayrı ayrı gönder; sonucu ayrı notification satırına yaz.
-        SendResult mailRes = mailSender.send(target.email(), title, message);
-        saveChannelNotification(target, title, message, NotificationChannel.MAIL, mailRes, now);
-
-        SendResult pushRes = pushSender.send(target.userId(), title, message);
-        saveChannelNotification(target, title, message, NotificationChannel.PUSH_NOTIFICATION, pushRes, now);
+        // Push bildirimi gönder; sonucu notification satırına yaz.
+        SendResult pushRes = pushSender.send(target.userId(), title, plainMessage);
+        saveChannelNotification(target, title, plainMessage, NotificationChannel.PUSH_NOTIFICATION, pushRes, now);
     }
 
     /**
@@ -173,15 +176,14 @@ public class NotificationService {
     // ============================================================
 
     /**
-     * Rapor isteği için tamamlanmış raporu, sahibini ve e-postasını native join ile çeker.
-     * report ⋈ report_request ⋈ user_info — eski stil "=" inner join (CLAUDE.md Madde 6).
+     * Rapor isteği için tamamlanmış raporu ve sahibini native join ile çeker.
+     * report ⋈ report_request — eski stil "=" inner join (CLAUDE.md Madde 6).
      */
     private ReportTarget loadCompletedReportTarget(UUID requestId) {
         String sql = """
-                SELECT r.report_id, rr.user_id, rr.report_type, u.email
-                FROM report r, report_request rr, user_info u
+                SELECT r.report_id, rr.user_id, rr.report_type
+                FROM report r, report_request rr
                 WHERE r.request_id = rr.request_id
-                  AND rr.user_id = u.user_id
                   AND r.request_id = ?
                   AND r.status = 'COMPLETED'
                 ORDER BY r.created_date DESC
@@ -189,8 +191,7 @@ public class NotificationService {
         List<ReportTarget> rows = jdbcTemplate.query(sql, (rs, rowNum) -> new ReportTarget(
                 rs.getObject("report_id", UUID.class),
                 rs.getObject("user_id", UUID.class),
-                rs.getString("report_type"),
-                rs.getString("email")),
+                rs.getString("report_type")),
                 requestId);
         return rows.isEmpty() ? null : rows.get(0);
     }
@@ -219,8 +220,8 @@ public class NotificationService {
             };
 
     /**
-     * notifyReportCompleted için iç projeksiyon: rapor + sahip + e-posta.
+     * Bildirim için iç projeksiyon: rapor + sahip.
      */
-    record ReportTarget(UUID reportId, UUID userId, String reportType, String email) {
+    record ReportTarget(UUID reportId, UUID userId, String reportType) {
     }
 }

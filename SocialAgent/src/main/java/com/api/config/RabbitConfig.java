@@ -77,6 +77,24 @@ public class RabbitConfig {
 		return template;
 	}
 
+	// ===== İçerik üretim kuyruğu (rapor bazlı görsel + caption) =====
+
+	@Bean
+	Queue contentQueue() {
+		return new Queue(appProperties.getContent().getQueue(), true);
+	}
+
+	@Bean
+	DirectExchange contentExchange() {
+		return new DirectExchange(appProperties.getContent().getExchange(), true, false);
+	}
+
+	@Bean
+	Binding contentBinding(Queue contentQueue, DirectExchange contentExchange) {
+		return BindingBuilder.bind(contentQueue).to(contentExchange)
+				.with(appProperties.getContent().getRoutingKey());
+	}
+
 	/**
 	 * @RabbitListener container factory'sine JSON converter açıkça bağlanır.
 	 * Spring Boot 4.x'te MessageConverter otomatik enjekte edilmiyor;

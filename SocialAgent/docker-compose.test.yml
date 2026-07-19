@@ -10,6 +10,9 @@ services:
 
     environment:
       SPRING_PROFILES_ACTIVE: test
+      # Madde 3 E2E test — kredi düşüm mekaniğini test etmek için geçici olarak açık.
+      # PayTR satın alma akışı test edilmiyor, sadece mevcut (seed edilmiş) kredi bakiyesinden düşüm.
+      PAYMENT_ENABLED: "true"
 
     ports:
       - "9181:8080"

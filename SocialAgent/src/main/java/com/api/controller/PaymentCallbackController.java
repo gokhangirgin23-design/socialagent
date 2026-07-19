@@ -9,13 +9,12 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.api.service.PaymentService;
 import com.api.service.PaytrGateway;
-import com.api.service.ReportRequestService;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * PayTR STEP 2 — bildirim (callback) ucu (FAZ PAYMENT).
+ * PayTR STEP 2 — bildirim (callback) ucu (FAZ CREDIT).
  *
  * ÖNEMLİ İSTİSNALAR (bilinçli — PayTR protokolü gerektiriyor):
  *  - Bu uç BaseResponse DEĞİL, düz metin "OK" döner. PayTR "OK" almazsa işlemi tamamlanmadı
@@ -26,9 +25,8 @@ import lombok.extern.slf4j.Slf4j;
  * Akış:
  *  1) Hash doğrula (gateway.verifyCallback). GEÇERSİZ → "OK" DÖNME (PayTR retry'lasın;
  *     genelde config/kod bug'ıdır, para askıda kalır, kayıp olmaz).
- *  2) applyCallback → idempotent (merchant_oid + processed). success ise bakiye yüklenir.
- *  3) success + ilk işleme + pending niyet varsa → rapor isteğini oluştur + kuyruğa bas.
- *  4) Düz "OK" dön.
+ *  2) applyCallback → idempotent (merchant_oid + processed). success ise paketin kredisi yüklenir.
+ *  3) Düz "OK" dön.
  */
 @Slf4j
 @Tag(name = "Ödeme", description = "PayTR Direkt API ödeme bildirimi")
@@ -38,9 +36,8 @@ public class PaymentCallbackController {
 
     private final PaytrGateway paytrGateway;
     private final PaymentService paymentService;
-    private final ReportRequestService reportRequestService;
 
-    @Operation(summary = "PayTR bildirim (callback)", description = "PayTR'ın server-to-server ödeme bildirimini idempotent işler; başarılıysa bakiye yükler ve rapor isteğini oluşturur. Düz 'OK' döner; JWT gerektirmez (PayTR protokolü).")
+    @Operation(summary = "PayTR bildirim (callback)", description = "PayTR'ın server-to-server ödeme bildirimini idempotent işler; başarılıysa satın alınan paketin kredisini yükler. Düz 'OK' döner; JWT gerektirmez (PayTR protokolü).")
     @PostMapping("/payment/callback")
     public String callback(
             @RequestParam(value = "merchant_oid", required = false) String merchantOid,
@@ -62,24 +59,11 @@ public class PaymentCallbackController {
         boolean isSuccess = "success".equalsIgnoreCase(status);
         String raw = "merchant_oid=" + merchantOid + "&status=" + status + "&total_amount=" + totalAmount;
 
-        // 2) İdempotent uygula (bakiye yükleme dahil)
-        PaymentService.CallbackResult result = paymentService.applyCallback(
+        // 2) İdempotent uygula (kredi yükleme dahil)
+        paymentService.applyCallback(
                 merchantOid, isSuccess, totalAmount, paymentType, failedCode, failedMsg, testMode, raw);
 
-        // 3) Başarılı + ilk işleme + pending niyet varsa → rapor isteğini oluştur ve kuyruğa bas
-        if (result.success && !result.alreadyProcessed && result.pendingReportType != null) {
-            try {
-                reportRequestService.fulfillPaidRequest(
-                        result.userId, result.pendingReportType, result.pendingSelectedAccountId, merchantOid);
-            } catch (Exception e) {
-                // Rapor isteği oluşturma patlasa bile PayTR'a OK dönmeliyiz (para tahsil edildi,
-                // bakiyede duruyor). Kullanıcı /report-request/create'i tekrar çağırınca bakiyeden üretilir.
-                log.error("Ödeme başarılı ama rapor isteği oluşturulamadı: merchant_oid={}, hata={}",
-                        merchantOid, e.getMessage());
-            }
-        }
-
-        // 4) Her durumda düz "OK"
+        // 3) Her durumda düz "OK"
         return "OK";
     }
 }

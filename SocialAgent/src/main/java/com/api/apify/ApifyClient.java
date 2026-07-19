@@ -119,7 +119,10 @@ public class ApifyClient {
 			double engagement = firstDouble(node, "engagementRate", "engagement", "avgEngagement");
 			// Profil URL'i
 			String url = firstText(node, "url", "profileUrl", "inputUrl");
-			profiles.add(new ApifyProfile(accountName, url, followers, engagement));
+			// SORUN 1, madde 1.2 — alt sektör relevance skorlaması için (AI çağrısı yok, metin eşleştirme)
+			String fullName = firstText(node, "fullName", "displayName", "name");
+			String biography = firstText(node, "biography", "bio", "description");
+			profiles.add(new ApifyProfile(accountName, url, followers, engagement, fullName, biography));
 		}
 		// follower desc, eşitlikte engagement desc sırala
 		profiles.sort(Comparator
